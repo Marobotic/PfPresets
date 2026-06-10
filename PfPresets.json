@@ -1,0 +1,24 @@
+{
+  "Author": "Mayo Botic",
+  "Name": "PF Presets",
+  "InternalName": "PfPresets",
+  "AssemblyVersion": "1.0.6",
+  "Description": "Save and manage Party Finder recruitment presets. Configure duty, objective, roles, conditions, and more - then apply any preset with a single click to instantly set up your Party Finder listing.",
+  "Punchline": "One-click Party Finder presets. Save your recruitment settings and reuse them instantly.",
+  "Changelog": "Fixed duty selection. Applying a preset now sets the correct duty in your Party Finder listing instead of defaulting to \"All\". You no longer need to open the duty menu manually first - it just works.",
+  "RepoUrl": "https://github.com/Marobotic/PfPresets",
+  "ApplicableVersion": "any",
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "AcceptsFeedback": true,
+  "Tags": [
+    "party-finder",
+    "presets",
+    "recruitment",
+    "pf",
+    "lfg"
+  ]
+}

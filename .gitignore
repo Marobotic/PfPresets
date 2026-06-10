@@ -1,0 +1,28 @@
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bin/
+obj/
+
+# Visual Studio cache/options directory
+.vs/
+
+# Rider/JetBrains IDE
+.idea/
+
+# Developer / Local temporary files
+reflector_output.txt
+temp_*/
+scratch/
