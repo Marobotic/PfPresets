@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0
+
+Revamped the design and fixed various bugs, enhanced usability and readability of
+the plugin and more!
+
+---
+
 ## 1.0.6
 
 **Fixed: applying a preset now selects the right duty.**

@@ -736,7 +736,7 @@ namespace PfPresets
                 if (i < preset.Slots.Count)
                 {
                     var slot = preset.Slots[i];
-                    if (slot.Role == RoleType.Nullify)
+                    if (slot.Role == RoleType.Omit)
                     {
                         pSlotFlags[i] = 0; // Empty / disabled slot
                     }
@@ -1436,7 +1436,7 @@ namespace PfPresets
 
         public static string GetGameSlotSummary(ulong mask)
         {
-            if (mask == 0) return "Nullify";
+            if (mask == 0) return "Omit";
             if (mask == AllJobsMask) return "Free";
             if (mask == GetGameRoleMask(RoleType.Tank)) return "Tank";
             if (mask == GetGameRoleMask(RoleType.Healer)) return "Healer";
@@ -1546,7 +1546,7 @@ namespace PfPresets
                 RoleType.MeleeDPS => "Melee DPS",
                 RoleType.PhysRangedDPS => "Physical Ranged DPS",
                 RoleType.MagicRangedDPS => "Magical Ranged DPS",
-                RoleType.Nullify => "Nullify",
+                RoleType.Omit => "Omit",
                 _ => "Unknown",
             };
         }

@@ -173,7 +173,7 @@ namespace PfPresets
         MeleeDPS = 3,
         PhysRangedDPS = 4,
         MagicRangedDPS = 5,
-        Nullify = 6,
+        Omit = 6,
     }
 
     /// <summary>
