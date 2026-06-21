@@ -603,6 +603,16 @@ namespace PfPresets
                     dl.PushClipRect(bp, bpe, true);
                     dl.AddText(new Vector2(bp.X + 9f, bp.Y + (bubbleH - nts.Y) * 0.5f), ImGui.ColorConvertFloat4ToU32(TextPrimary), name);
                     dl.PopClipRect();
+
+                    // Private-party password shown next to the name.
+                    if (preset.FormPrivateParty)
+                    {
+                        float lx = bpe.X + 10f;
+                        DrawGlyphAt(FontAwesomeIcon.Lock, new Vector2(lx, bp.Y + (bubbleH - 15f) * 0.5f), 15f, AccentYellow);
+                        Vector2 pwts = ImGui.CalcTextSize(preset.PasswordDisplay);
+                        dl.AddText(new Vector2(lx + 19f, bp.Y + (bubbleH - pwts.Y) * 0.5f),
+                            ImGui.ColorConvertFloat4ToU32(TextPrimary), preset.PasswordDisplay);
+                    }
                 }
 
                 // ── Duty (category icon + name in blue) ──
@@ -668,16 +678,10 @@ namespace PfPresets
                         ix += misz + mgap;
                     }
                 }
-                // Loot rule (+ password when forming a private party), on one line.
+                // Loot rule.
                 dl.AddText(new Vector2(rightX, cardPos.Y + 40f), ImGui.ColorConvertFloat4ToU32(TextSecondary), "Loot:");
                 float lootValX = rightX + ImGui.CalcTextSize("Loot:").X + 6f;
                 dl.AddText(new Vector2(lootValX, cardPos.Y + 40f), ImGui.ColorConvertFloat4ToU32(TextPrimary), PfAutomation.GetLootRuleName(preset.LootRules));
-                if (preset.FormPrivateParty)
-                {
-                    float py = cardPos.Y + 62f;
-                    DrawGlyphAt(FontAwesomeIcon.Lock, new Vector2(rightX, py), 15f, AccentYellow);
-                    dl.AddText(new Vector2(rightX + 20f, py + 1f), ImGui.ColorConvertFloat4ToU32(TextPrimary), preset.PasswordDisplay);
-                }
 
                 // ── Apply Preset button + kebab menu (always visible, bottom-right) ──
                 const float btnH = 30f, kebabW = 30f, btnGap = 6f;

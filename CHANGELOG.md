@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.1
+
+Moved the private-party password next to the preset name so it's no longer hidden
+behind the Apply Preset button.
+
+---
+
 ## 2.0.0
 
 Revamped the design and fixed various bugs, enhanced usability and readability of
