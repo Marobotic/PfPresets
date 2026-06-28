@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.1.1
+
+**The Auto Refresher now works end to end.** It performs the full
+Edit -> Apply Changes sequence on your listing (exactly like the
+RecruitmentRefresher plugin), so your Party Finder is reliably re-posted
+instead of just opening the window.
+
+Also added:
+- A live countdown timer next to the Auto Refresher toggle showing the time
+  until the next refresh. It starts once your Party Finder is up.
+- A choice of refresh interval: every 15 or 30 minutes.
+- A `/pfp refresh` command to refresh your listing on demand.
+
+---
+
 ## 2.1.0
 
 **Fixed: party job detection now works when members are in different zones.**

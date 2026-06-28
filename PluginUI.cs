@@ -525,7 +525,29 @@ namespace PfPresets
         /// <summary>Vertical space the footer needs at the bottom of the main window. The preset
         /// list reserves this much so the footer (Create button, plus the optional Auto Refresher
         /// toggle above it) is never pushed off-screen.</summary>
-        private float GetFooterHeight() => IsRecruitmentRefresherActive() ? 50f : 94f;
+        private float GetFooterHeight()
+        {
+            if (IsRecruitmentRefresherActive()) return 50f;
+            // The interval selector adds a second row when auto-refresh is enabled.
+            return config.AutoRefresherEnabled ? 124f : 94f;
+        }
+
+        /// <summary>Small segmented-style toggle chip used to pick the refresh interval.</summary>
+        private bool DrawIntervalChip(string label, bool active, Vector2 pos, Vector2 size)
+        {
+            ImGui.SetCursorScreenPos(pos);
+            ImGui.PushStyleColor(ImGuiCol.Button, active ? AccentBlue : BgCard);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? AccentBlue : ColorFromHex("#1c2230"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, active ? AccentBlue : ColorFromHex("#243a54"));
+            ImGui.PushStyleColor(ImGuiCol.Text, active ? ColorFromHex("#0d1117") : TextSecondary);
+            ImGui.PushStyleColor(ImGuiCol.Border, active ? AccentBlue : BorderDefault);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+            bool clicked = ImGui.Button($"{label}##interval_{label}", size);
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(5);
+            return clicked;
+        }
 
         /// <summary>True when the standalone RecruitmentRefresher plugin is installed and loaded.
         /// When it is, our own Auto Refresher is redundant and is hidden.</summary>
@@ -824,7 +846,9 @@ namespace PfPresets
             float buttonY = curPos.Y + 8;
             if (!IsRecruitmentRefresherActive())
             {
-                ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, curPos.Y + 10));
+                float winX = ImGui.GetWindowPos().X;
+                float rowY = curPos.Y + 10;
+                ImGui.SetCursorScreenPos(new Vector2(winX + 12, rowY));
                 bool autoRefresh = config.AutoRefresherEnabled;
                 if (DrawStyledCheckbox("Auto-refresh recruitment##FooterAutoRefresher", ref autoRefresh))
                 {
@@ -832,8 +856,53 @@ namespace PfPresets
                     config.Save();
                 }
                 if (ImGui.IsItemHovered())
-                    PaddedTooltip("Automatically refreshes your Party Finder listing every 30 minutes.");
-                buttonY = ImGui.GetCursorScreenPos().Y + 8;
+                    PaddedTooltip("Automatically re-posts your Party Finder listing on a timer.\nThe countdown starts once your Party Finder is up.");
+                float afterCheckboxY = ImGui.GetCursorScreenPos().Y;
+                buttonY = afterCheckboxY + 8;
+
+                if (autoRefresh)
+                {
+                    var dl = ImGui.GetWindowDrawList();
+
+                    // Countdown to the next auto-refresh, right-aligned on the toggle's row.
+                    // It only ticks while a Party Finder is up (preset-made or manual), mirroring
+                    // the refresher itself; otherwise it shows a dormant "--:--".
+                    string timerText;
+                    Vector4 timerColor;
+                    if (pfAutomation.IsRefreshTimerRunning)
+                    {
+                        double secs = pfAutomation.SecondsUntilNextRefresh;
+                        timerText = $"{(int)(secs / 60):D2}:{(int)(secs % 60):D2}";
+                        timerColor = AccentBlue;
+                    }
+                    else
+                    {
+                        timerText = "--:--";
+                        timerColor = TextMuted;
+                    }
+                    float centerY = rowY + ImGui.GetFrameHeight() * 0.5f;
+                    Vector2 tsz = ImGui.CalcTextSize(timerText);
+                    const float clockSz = 13f, gap = 5f;
+                    float clockStartX = winX + width - 12f - (clockSz + gap + tsz.X);
+                    DrawGlyphAt(FontAwesomeIcon.Clock, new Vector2(clockStartX, centerY - clockSz * 0.5f), clockSz, timerColor);
+                    dl.AddText(new Vector2(clockStartX + clockSz + gap, centerY - tsz.Y * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(timerColor), timerText);
+
+                    // Interval selector row: 15 / 30 minutes.
+                    const float chipH = 22f;
+                    float intervalRowY = afterCheckboxY + 2f;
+                    float lblY = intervalRowY + (chipH - ImGui.GetTextLineHeight()) * 0.5f;
+                    dl.AddText(new Vector2(winX + 12, lblY), ImGui.ColorConvertFloat4ToU32(TextSecondary), "Refresh every");
+                    float chipsX = winX + 12 + ImGui.CalcTextSize("Refresh every").X + 10;
+                    const float chipW = 58f, chipGap = 6f;
+                    int interval = config.AutoRefresherIntervalMinutes == 15 ? 15 : 30;
+                    if (DrawIntervalChip("15 min", interval == 15, new Vector2(chipsX, intervalRowY), new Vector2(chipW, chipH)))
+                    { config.AutoRefresherIntervalMinutes = 15; config.Save(); }
+                    if (DrawIntervalChip("30 min", interval == 30, new Vector2(chipsX + chipW + chipGap, intervalRowY), new Vector2(chipW, chipH)))
+                    { config.AutoRefresherIntervalMinutes = 30; config.Save(); }
+
+                    buttonY = intervalRowY + chipH + 8;
+                }
             }
 
             ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, buttonY));

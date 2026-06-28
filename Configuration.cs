@@ -23,6 +23,9 @@ namespace PfPresets
         // ── Default Values for New Presets ─────────────────────────
         public bool AutoRefresherEnabled { get; set; } = false;
 
+        /// <summary>How often the Auto Refresher re-posts the listing, in minutes (15 or 30).</summary>
+        public int AutoRefresherIntervalMinutes { get; set; } = 30;
+
         [NonSerialized]
         private IDalamudPluginInterface? pluginInterface;
 

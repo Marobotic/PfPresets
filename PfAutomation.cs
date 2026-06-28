@@ -1285,6 +1285,24 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// Faithful port of ECommons' ClickAddonButton (the exact method RecruitmentRefresher
+        /// uses). Unlike <see cref="ClickButton"/>, it fires the button's own native click event
+        /// (its real event type and event pointer) through the addon instead of synthesizing a
+        /// forced ButtonClick. This is what makes the Edit -> Recruit clicks register reliably.
+        /// </summary>
+        private static unsafe bool ClickAddonButton(AtkUnitBase* addon, AtkComponentButton* button)
+        {
+            if (addon == null || button == null || !button->IsEnabled) return false;
+            var ownerNode = button->AtkComponentBase.OwnerNode;
+            if (ownerNode == null) return false;
+            var btnRes = &ownerNode->AtkResNode;
+            var evt = (AtkEvent*)btnRes->AtkEventManager.Event;
+            if (evt == null) return false;
+            addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, btnRes->AtkEventManager.Event);
+            return true;
+        }
+
+        /// <summary>
         /// Reads the label for a single dropdown item using the game's native accessor.
         /// </summary>
         private static unsafe string GetDropDownItemLabel(AtkComponentList* list, int index)
@@ -1640,6 +1658,19 @@ namespace PfPresets
             return this.condition[ConditionFlag.UsingPartyFinder];
         }
 
+        /// <summary>How often the Auto Refresher re-posts the listing, in minutes. Driven by the
+        /// user's choice (15 or 30); falls back to 30 if the stored value is something else.</summary>
+        public double RefreshIntervalMinutes =>
+            config.AutoRefresherIntervalMinutes == 15 ? 15.0 : 30.0;
+
+        /// <summary>True while the refresh countdown is actively ticking: the feature is enabled
+        /// and a Party Finder is currently up (whether it was set up via a preset or by hand).</summary>
+        public bool IsRefreshTimerRunning => config.AutoRefresherEnabled && IsRecruiting();
+
+        /// <summary>Seconds remaining until the next auto-refresh.</summary>
+        public double SecondsUntilNextRefresh =>
+            Math.Max(0.0, (RefreshIntervalMinutes - minutesElapsed) * 60.0);
+
         public unsafe void UpdateAutoRefresher(double deltaMins)
         {
             if (!config.AutoRefresherEnabled)
@@ -1652,7 +1683,7 @@ namespace PfPresets
 
             if (IsRecruiting())
             {
-                if (minutesElapsed >= 30.0)
+                if (minutesElapsed >= RefreshIntervalMinutes)
                 {
                     ExecuteRefreshTask();
                     minutesElapsed = 0;
@@ -1681,167 +1712,51 @@ namespace PfPresets
                 {
                     pluginLog.Information("[AutoRefresher] Starting recruitment auto-refresh...");
 
-                    nint agentPtr = IntPtr.Zero;
-                    unsafe
-                    {
-                        agentPtr = (nint)AgentLookingForGroup.Instance();
-                    }
-                    if (agentPtr == IntPtr.Zero)
-                    {
-                        pluginLog.Warning("[AutoRefresher] AgentLookingForGroup instance is null.");
-                        return;
-                    }
-
-                    // Reapply comment if it got cleared out randomly
-                    string comment = "";
-                    unsafe
-                    {
-                        var agent = (AgentLookingForGroup*)agentPtr;
-                        comment = agent->StoredRecruitmentInfo.CommentString;
-                    }
-                    if (previousCommentString != null && comment != previousCommentString && string.IsNullOrWhiteSpace(comment))
-                    {
-                        pluginLog.Information($"[AutoRefresher] Comment was cleared out, reapplying: '{previousCommentString}'");
-                        unsafe
-                        {
-                            var agent = (AgentLookingForGroup*)agentPtr;
-                            agent->StoredRecruitmentInfo.CommentString = previousCommentString;
-                        }
-                    }
-                    else if (!string.IsNullOrWhiteSpace(comment))
-                    {
-                        previousCommentString = comment;
-                    }
-
-                    // Open Party Finder (recruitment details) using the native function imported
-                    // from RecruitmentRefresher - this is the exact call that makes refresh work.
-                    if (openPartyFinder == null)
-                    {
-                        pluginLog.Warning("[AutoRefresher] OpenPartyFinder function unavailable (signature not found).");
-                        return;
-                    }
-                    unsafe
-                    {
-                        openPartyFinder((void*)agentPtr, playerState.ContentId);
-                    }
-
-                    // Wait for LookingForGroupDetail window to open (timeout: 5 seconds, check every 50ms)
-                    nint detailAddonPtr = IntPtr.Zero;
-                    for (int i = 0; i < 100; i++)
-                    {
-                        await System.Threading.Tasks.Task.Delay(50);
-                        var ptr = (nint)gameGui.GetAddonByName("LookingForGroupDetail");
-                        if (ptr != IntPtr.Zero)
-                        {
-                            bool isVisible = false;
-                            unsafe
-                            {
-                                var addon = (AtkUnitBase*)ptr;
-                                isVisible = addon->IsVisible;
-                            }
-                            if (isVisible)
-                            {
-                                detailAddonPtr = ptr;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (detailAddonPtr == IntPtr.Zero)
-                    {
-                        pluginLog.Warning("[AutoRefresher] Failed to capture LookingForGroupDetail window.");
-                        return;
-                    }
-
-                    // Click Join/Edit button (ID: 109)
-                    nint joinEditBtnPtr = IntPtr.Zero;
-                    unsafe
-                    {
-                        var detailAddon = (AtkUnitBase*)detailAddonPtr;
-                        joinEditBtnPtr = (nint)detailAddon->GetComponentButtonById(109);
-                    }
-                    if (joinEditBtnPtr == IntPtr.Zero)
-                    {
-                        pluginLog.Warning("[AutoRefresher] Join/Edit button not found.");
-                        return;
-                    }
-
-                    bool isJoinEditBtnEnabled = false;
-                    unsafe
-                    {
-                        var joinEditBtn = (AtkComponentButton*)joinEditBtnPtr;
-                        isJoinEditBtnEnabled = joinEditBtn->IsEnabled;
-                    }
-                    if (!isJoinEditBtnEnabled)
-                    {
-                        pluginLog.Warning("[AutoRefresher] Join/Edit button is disabled.");
-                        return;
-                    }
-
-                    pluginLog.Information("[AutoRefresher] Clicking Join/Edit button...");
-                    unsafe
-                    {
-                        var detailAddon = (AtkUnitBase*)detailAddonPtr;
-                        var joinEditBtn = (AtkComponentButton*)joinEditBtnPtr;
-                        ClickButton(detailAddon, joinEditBtn);
-                    }
-
-                    // Wait for LookingForGroupCondition window to open
-                    nint conditionAddonPtr = IntPtr.Zero;
-                    for (int i = 0; i < 100; i++)
-                    {
-                        await System.Threading.Tasks.Task.Delay(50);
-                        var ptr = (nint)gameGui.GetAddonByName("LookingForGroupCondition");
-                        if (ptr != IntPtr.Zero)
-                        {
-                            bool isVisible = false;
-                            unsafe
-                            {
-                                var addon = (AtkUnitBase*)ptr;
-                                isVisible = addon->IsVisible;
-                            }
-                            if (isVisible)
-                            {
-                                conditionAddonPtr = ptr;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (conditionAddonPtr == IntPtr.Zero)
-                    {
-                        pluginLog.Warning("[AutoRefresher] Failed to capture LookingForGroupCondition window.");
-                        return;
-                    }
-
-                    // Wait for RecruitMembersButton to be enabled (up to 2.5 seconds)
-                    bool recruitBtnEnabled = false;
-                    for (int i = 0; i < 50; i++)
+                    // 1. Restore the comment if the client cleared it, then open the listing.
+                    //    All game calls run on the framework thread - clicking native UI buttons
+                    //    off-thread is unreliable, which is why the Edit/Apply clicks weren't
+                    //    registering before.
+                    bool opened = await framework.RunOnFrameworkThread(() =>
                     {
                         unsafe
                         {
-                            var conditionAddon = (AddonLookingForGroupCondition*)conditionAddonPtr;
-                            if (conditionAddon->RecruitMembersButton != null && conditionAddon->RecruitMembersButton->IsEnabled)
+                            var agent = AgentLookingForGroup.Instance();
+                            if (agent == null)
                             {
-                                recruitBtnEnabled = true;
-                                break;
+                                pluginLog.Warning("[AutoRefresher] AgentLookingForGroup instance is null.");
+                                return false;
                             }
+                            if (openPartyFinder == null)
+                            {
+                                pluginLog.Warning("[AutoRefresher] OpenPartyFinder function unavailable (signature not found).");
+                                return false;
+                            }
+
+                            string comment = agent->StoredRecruitmentInfo.CommentString;
+                            if (previousCommentString != null && comment != previousCommentString && string.IsNullOrWhiteSpace(comment))
+                            {
+                                pluginLog.Information($"[AutoRefresher] Comment was cleared out, reapplying: '{previousCommentString}'");
+                                agent->StoredRecruitmentInfo.CommentString = previousCommentString;
+                            }
+                            else if (!string.IsNullOrWhiteSpace(comment))
+                            {
+                                previousCommentString = comment;
+                            }
+
+                            openPartyFinder(agent, playerState.ContentId);
+                            return true;
                         }
-                        await System.Threading.Tasks.Task.Delay(50);
-                    }
+                    });
+                    if (!opened) return;
 
-                    if (!recruitBtnEnabled)
-                    {
-                        pluginLog.Warning("[AutoRefresher] Recruit Members button is disabled.");
+                    // 2. Wait for the listing detail window, then press Edit (button 109).
+                    if (!await WaitForAddonAndClickButton("LookingForGroupDetail", 109, "Edit"))
                         return;
-                    }
 
-                    pluginLog.Information("[AutoRefresher] Clicking Recruit Members button to submit/refresh recruitment...");
-                    unsafe
-                    {
-                        var conditionAddon = (AddonLookingForGroupCondition*)conditionAddonPtr;
-                        ClickButton(&conditionAddon->AtkUnitBase, conditionAddon->RecruitMembersButton);
-                    }
+                    // 3. Wait for the recruitment criteria window, then press Recruit/Apply
+                    //    (button 113) - this re-posts the listing and resets its timer.
+                    if (!await WaitForAddonAndClickButton("LookingForGroupCondition", 113, "Recruit"))
+                        return;
 
                     refreshCount++;
                     pluginLog.Information($"[AutoRefresher] Recruitment auto-refreshed successfully (Count: {refreshCount}).");
@@ -1855,6 +1770,37 @@ namespace PfPresets
                     isRefreshExecuting = false;
                 }
             });
+        }
+
+        /// <summary>
+        /// Polls (off-thread) until the named addon is visible and the given component button is
+        /// enabled, then clicks it on the framework thread via the native event. Returns false on
+        /// timeout (~5s). This mirrors RecruitmentRefresher's Edit -> Recruit sequence.
+        /// </summary>
+        private async System.Threading.Tasks.Task<bool> WaitForAddonAndClickButton(string addonName, uint buttonId, string label)
+        {
+            for (int i = 0; i < 100; i++)
+            {
+                bool clicked = await framework.RunOnFrameworkThread(() =>
+                {
+                    unsafe
+                    {
+                        var addon = (AtkUnitBase*)(nint)gameGui.GetAddonByName(addonName);
+                        if (addon == null || !addon->IsVisible) return false;
+                        var btn = addon->GetComponentButtonById(buttonId);
+                        if (btn == null || !btn->IsEnabled) return false;
+                        return ClickAddonButton(addon, btn);
+                    }
+                });
+                if (clicked)
+                {
+                    pluginLog.Information($"[AutoRefresher] Clicked {label} button.");
+                    return true;
+                }
+                await System.Threading.Tasks.Task.Delay(50);
+            }
+            pluginLog.Warning($"[AutoRefresher] Timed out waiting for the {label} button ({addonName}).");
+            return false;
         }
     }
 }

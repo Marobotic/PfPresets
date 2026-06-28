@@ -105,6 +105,22 @@ namespace PfPresets
 
         private void OnCommand(string command, string args)
         {
+            // "/pfp refresh" triggers the auto-refresh sequence immediately (for testing the
+            // Edit -> Apply flow without waiting out the timer).
+            if (args.Trim().Equals("refresh", StringComparison.OrdinalIgnoreCase))
+            {
+                if (this.pfAutomation.IsRecruiting())
+                {
+                    this.chatGui.Print("[PF Presets] Refreshing Party Finder listing...");
+                    this.pfAutomation.ExecuteRefreshTask();
+                }
+                else
+                {
+                    this.chatGui.Print("[PF Presets] You are not currently recruiting on Party Finder.");
+                }
+                return;
+            }
+
             this.ui.ToggleMainWindow();
         }
 
