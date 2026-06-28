@@ -33,6 +33,10 @@ namespace PfPresets
         private string hoveredPresetId = string.Empty;
         private int hoveredHeaderBtn = 0;
         private string presetToDeleteId = string.Empty;
+
+        // ── Automation status window state ────────────────────────
+        private bool checklistWasOpen = false;
+        private float animatedProgress = 0f;
         private bool showDeleteConfirm = false;
 
         // ── Editor State ──────────────────────────────────────────
@@ -344,16 +348,21 @@ namespace PfPresets
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
 
-            // Settings
-            ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + buttonsStart, cursorScreenPos.Y + 13));
+            // Ko-fi support (red) - replaces the old settings button in the header. Wider than
+            // the icon buttons so it reads as a support button; extends leftward to keep the
+            // 6px gap before Minimize.
+            ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + buttonsStart - 22, cursorScreenPos.Y + 11));
+            ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
             ImGui.PushStyleColor(ImGuiCol.Border, hoveredHeaderBtn == 1 ? BorderHover : BorderDefault);
-            ImGui.PushStyleColor(ImGuiCol.Text, hoveredHeaderBtn == 1 ? TextPrimary : TextSecondary);
+            ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
             ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button($"{FontAwesomeIcon.Cog.ToIconString()}##HeaderSettings", new Vector2(30, 26)))
-                isSettingsWindowVisible = !isSettingsWindowVisible;
+            if (ImGui.Button($"{FontAwesomeIcon.Heart.ToIconString()}##HeaderKofi", new Vector2(52, 30)))
+                Dalamud.Utility.Util.OpenLink("https://ko-fi.com/marobotic");
             ImGui.PopFont();
-            ImGui.PopStyleColor(2);
-            if (ImGui.IsItemHovered()) { hoveredHeaderBtn = 1; PaddedTooltip("Settings"); }
+            ImGui.PopStyleColor(5);
+            if (ImGui.IsItemHovered()) { hoveredHeaderBtn = 1; PaddedTooltip("Support me on Ko-fi!"); }
 
             // Minimize
             ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + buttonsStart + 36, cursorScreenPos.Y + 13));
@@ -423,7 +432,7 @@ namespace PfPresets
         private void DrawPresetList()
         {
             ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 6));
-            float heightRemaining = ImGui.GetContentRegionAvail().Y - 50;
+            float heightRemaining = ImGui.GetContentRegionAvail().Y - GetFooterHeight();
             ImGui.SetCursorPosX(8);
             ImGui.BeginChild("PresetListScroll", new Vector2(ImGui.GetWindowWidth() - 16, heightRemaining), false, ImGuiWindowFlags.None);
 
@@ -488,6 +497,48 @@ namespace PfPresets
                 Vector2 ts = ImGui.CalcTextSize(g);
                 dl.AddText(new Vector2((rectMin.X + rectMax.X - ts.X) * 0.5f, (rectMin.Y + rectMax.Y - ts.Y) * 0.5f),
                     ImGui.ColorConvertFloat4ToU32(color), g);
+            }
+        }
+
+        /// <summary>Draws a FontAwesome icon followed by a text label, centered as a group within
+        /// a rectangle. Used for buttons that mix an icon (icon font) with normal-font text, which
+        /// a single ImGui.Button label cannot do.</summary>
+        private void DrawIconLabelCentered(FontAwesomeIcon icon, string text, Vector2 rectMin, Vector2 rectSize, Vector4 color, float alphaMul = 1f)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            string glyph = icon.ToIconString();
+            Vector2 iconSize;
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                iconSize = ImGui.CalcTextSize(glyph);
+            Vector2 textSize = ImGui.CalcTextSize(text);
+            const float gap = 8f;
+            float startX = rectMin.X + (rectSize.X - (iconSize.X + gap + textSize.X)) * 0.5f;
+            float midY = rectMin.Y + rectSize.Y * 0.5f;
+
+            var col = color; col.W *= alphaMul;
+            uint colU = ImGui.ColorConvertFloat4ToU32(col);
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                dl.AddText(new Vector2(startX, midY - iconSize.Y * 0.5f), colU, glyph);
+            dl.AddText(new Vector2(startX + iconSize.X + gap, midY - textSize.Y * 0.5f), colU, text);
+        }
+
+        /// <summary>Vertical space the footer needs at the bottom of the main window. The preset
+        /// list reserves this much so the footer (Create button, plus the optional Auto Refresher
+        /// toggle above it) is never pushed off-screen.</summary>
+        private float GetFooterHeight() => IsRecruitmentRefresherActive() ? 50f : 94f;
+
+        /// <summary>True when the standalone RecruitmentRefresher plugin is installed and loaded.
+        /// When it is, our own Auto Refresher is redundant and is hidden.</summary>
+        private bool IsRecruitmentRefresherActive()
+        {
+            try
+            {
+                return pluginInterface.InstalledPlugins
+                    .Any(p => (p.Name == "RecruitmentRefresher" || p.InternalName == "RecruitmentRefresher") && p.IsLoaded);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 
@@ -649,7 +700,12 @@ namespace PfPresets
                 if (hasComment)
                 {
                     ImGui.SetCursorScreenPos(new Vector2(cardPos.X + leftX, cardPos.Y + 90f));
-                    ImGui.PushTextWrapPos(leftMaxX);
+                    // PushTextWrapPos expects a window-local X, but leftMaxX is a screen
+                    // coordinate - passing it directly meant the comment never wrapped and ran
+                    // under the Apply button. Convert to local and cap the width at 275px so
+                    // long comments wrap cleanly regardless of window width.
+                    float commentWrapX = MathF.Min(leftMaxX - cardPos.X, leftX + 275f);
+                    ImGui.PushTextWrapPos(commentWrapX);
                     ImGui.TextColored(TextPrimary, preset.Comment);
                     ImGui.PopTextWrapPos();
                 }
@@ -762,25 +818,46 @@ namespace PfPresets
             float width = ImGui.GetWindowWidth();
             ImGui.GetWindowDrawList().AddLine(new Vector2(ImGui.GetWindowPos().X, curPos.Y), new Vector2(ImGui.GetWindowPos().X + width, curPos.Y), ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
 
-            ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, curPos.Y + 8));
+            // Auto Refresher toggle - shown above the Create button, but only when the
+            // standalone RecruitmentRefresher plugin is NOT active. If that plugin is
+            // installed and enabled it handles refreshing, so this toggle disappears.
+            float buttonY = curPos.Y + 8;
+            if (!IsRecruitmentRefresherActive())
+            {
+                ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, curPos.Y + 10));
+                bool autoRefresh = config.AutoRefresherEnabled;
+                if (DrawStyledCheckbox("Auto-refresh recruitment##FooterAutoRefresher", ref autoRefresh))
+                {
+                    config.AutoRefresherEnabled = autoRefresh;
+                    config.Save();
+                }
+                if (ImGui.IsItemHovered())
+                    PaddedTooltip("Automatically refreshes your Party Finder listing every 30 minutes.");
+                buttonY = ImGui.GetCursorScreenPos().Y + 8;
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, buttonY));
             ImGui.PushStyleColor(ImGuiCol.Button, JsOkBg);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, JsOkHover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, JsOkHover);
             ImGui.PushStyleColor(ImGuiCol.Text, ColorFromHex("#eafff0"));
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
 
-            ImGui.PushFont(UiBuilder.IconFont);
-            string plusIcon = FontAwesomeIcon.Plus.ToIconString();
-            ImGui.PopFont();
-
             // Disabled while a preset is being created/edited (the editor window is open).
             bool editingInProgress = isEditorWindowVisible;
             if (editingInProgress) ImGui.BeginDisabled();
-            if (ImGui.Button($"  {plusIcon}  Create New Preset##CreatePreset", new Vector2(width - 24, 30)))
+            Vector2 createBtnPos = ImGui.GetCursorScreenPos();
+            Vector2 createBtnSize = new Vector2(width - 24, 30);
+            if (ImGui.Button("##CreatePreset", createBtnSize))
             {
                 var newPreset = config.AddPreset();
                 OpenEditor(newPreset, true);
             }
+            // The label is drawn manually so the icon uses the FontAwesome icon font; a
+            // plain Button label renders in the normal font, which lacks the glyph (it
+            // showed up as two empty rectangles before).
+            DrawIconLabelCentered(FontAwesomeIcon.PlusCircle, "Create New Preset", createBtnPos, createBtnSize,
+                ColorFromHex("#eafff0"), editingInProgress ? 0.5f : 1.0f);
             if (editingInProgress) ImGui.EndDisabled();
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
@@ -2202,16 +2279,7 @@ namespace PfPresets
 
                 DrawSectionLabel("AUTO REFRESHER");
 
-                bool isRrActive = false;
-                try
-                {
-                    isRrActive = pluginInterface.InstalledPlugins
-                        .Any(p => (p.Name == "RecruitmentRefresher" || p.InternalName == "RecruitmentRefresher") && p.IsLoaded);
-                }
-                catch (Exception)
-                {
-                    // Safe fallback
-                }
+                bool isRrActive = IsRecruitmentRefresherActive();
 
                 if (isRrActive)
                 {
@@ -2267,153 +2335,192 @@ namespace PfPresets
 
         private void DrawChecklistOverlay()
         {
-            if (!pfAutomation.ShowChecklist || pfAutomation.ActivePreset == null) return;
-            var preset = pfAutomation.ActivePreset;
-            var initial = pfAutomation.InitialGameState;
-
-            ImGui.SetNextWindowSize(new Vector2(460, 540), ImGuiCond.FirstUseEver);
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, ColorFromHex("#0d1117e8"));
-            ImGui.PushStyleColor(ImGuiCol.Border, AccentBlue);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 2.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
-
-            bool checklistOpen = true;
-            if (ImGui.Begin("PF Preset Automation Status##Checklist", ref checklistOpen, ImGuiWindowFlags.NoCollapse))
+            if (!pfAutomation.ShowChecklist || pfAutomation.ActivePreset == null)
             {
-                if (!checklistOpen) pfAutomation.DismissChecklist();
+                checklistWasOpen = false;
+                return;
+            }
+            var preset = pfAutomation.ActivePreset;
 
-                ImGui.TextColored(AccentBlue, "Party Finder Preset Automation");
-                ImGui.TextColored(TextSecondary, $"Preset: {preset.Name}");
-                ImGui.Dummy(new Vector2(0, 4));
+            // Reset the animated bar each time a fresh apply begins.
+            if (!checklistWasOpen) { checklistWasOpen = true; animatedProgress = 0f; }
 
-                // Display current automation status
-                ImGui.TextColored(AccentPurple, $"Status: {pfAutomation.AutomationStatus}");
-                ImGui.Dummy(new Vector2(0, 4));
+            bool done = pfAutomation.IsAutomationDone;
+            bool failed = pfAutomation.IsAutomationFailed;
 
-                ImGui.GetWindowDrawList().AddLine(
-                    new Vector2(ImGui.GetWindowPos().X + 16, ImGui.GetCursorScreenPos().Y),
-                    new Vector2(ImGui.GetWindowPos().X + ImGui.GetWindowWidth() - 16, ImGui.GetCursorScreenPos().Y),
-                    ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
-                ImGui.Dummy(new Vector2(0, 8));
+            // Ease the bar toward the real progress so it fills smoothly instead of jumping.
+            float target = done && !failed ? 1f : pfAutomation.AutomationProgress;
+            animatedProgress += (target - animatedProgress) * MathF.Min(1f, ImGui.GetIO().DeltaTime * 9f);
+            if (MathF.Abs(target - animatedProgress) < 0.002f) animatedProgress = target;
 
-                ImGui.TextColored(TextMuted, "Settings Comparison (Preset vs Current Game PF):");
-                ImGui.Dummy(new Vector2(0, 4));
+            var vp = ImGui.GetMainViewport();
+            ImGui.SetNextWindowPos(
+                new Vector2(vp.WorkPos.X + vp.WorkSize.X * 0.5f, vp.WorkPos.Y + vp.WorkSize.Y * 0.5f),
+                ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+            ImGui.SetNextWindowSize(new Vector2(400, 216), ImGuiCond.Always);
 
-                // Scrollable area for the list of settings
-                if (ImGui.BeginChild("ComparisonScroll", new Vector2(-1, 340), true, ImGuiWindowFlags.None))
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
+            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(20, 18));
+
+            // Custom header (no ImGui title bar) to match the main window's design.
+            if (ImGui.Begin("##Checklist",
+                ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize |
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoTitleBar))
+            {
+                Vector2 origin = ImGui.GetCursorScreenPos();
+                float innerW = ImGui.GetContentRegionAvail().X;
+                float contentH = ImGui.GetContentRegionAvail().Y;
+                var dl = ImGui.GetWindowDrawList();
+                float lineH = ImGui.GetTextLineHeight();
+
+                // ── Header: logo box + title + preset name ──
+                Vector2 logoMin = origin;
+                Vector2 logoMax = new Vector2(origin.X + 34, origin.Y + 34);
+                dl.AddRectFilled(logoMin, logoMax, ImGui.ColorConvertFloat4ToU32(ColorFromHex("#1e2a40")), 8f);
+                string logoGlyph = FontAwesomeIcon.ClipboardList.ToIconString();
+                using (pluginInterface.UiBuilder.IconFontHandle.Push())
                 {
-                    // 1. Duty
-                    DrawChecklistComparison("Duty", 
-                        $"{preset.DutyCategoryName} > {preset.DutyName}", 
-                        initial != null ? $"{initial.DutyCategory} > {initial.DutyName}" : "None");
-
-                    // 2. Objective
-                    DrawChecklistComparison("Objective", 
-                        PfAutomation.GetObjectiveName(preset.ObjectiveId), 
-                        initial != null ? initial.Objective : "None");
-
-                    // 3. Roles
-                    DrawChecklistComparison("Roles", 
-                        preset.GetRoleSummary(), 
-                        initial != null ? initial.Roles : "None");
-
-                    // 4. Comment
-                    DrawChecklistComparison("Comment", 
-                        preset.Comment, 
-                        initial != null ? initial.Comment : "");
-
-                    // 5. Private Passcode
-                    string presetPwd = preset.FormPrivateParty ? preset.PrivatePartyPassword : "None";
-                    if (preset.FormPrivateParty && int.TryParse(preset.PrivatePartyPassword, out int pwdVal))
-                    {
-                        presetPwd = pwdVal.ToString("D4");
-                    }
-                    DrawChecklistComparison("Private Passcode", 
-                        presetPwd, 
-                        initial != null ? initial.Password : "None");
-
-                    // 6. Limit Recruiting to World
-                    DrawChecklistComparison("Limit to World", 
-                        preset.LimitRecruitingToWorld ? "Limit to World" : "None", 
-                        initial != null && initial.Flags.Contains("Limit to World") ? "Limit to World" : "None");
-
-                    // 7. One Player Per Job
-                    DrawChecklistComparison("One Player Per Job", 
-                        preset.OnePlayerPerJob ? "One Per Job" : "None", 
-                        initial != null && initial.Flags.Contains("One Per Job") ? "One Per Job" : "None");
-
-                    // 8. Completion Status
-                    string presetComp = preset.CompletionStatusEnabled 
-                        ? PfAutomation.GetCompletionStatusName(preset.CompletionStatusType) 
-                        : "None";
-                    DrawChecklistComparison("Completion Status", 
-                        presetComp, 
-                        initial != null ? initial.Completion : "None");
-
-                    // 9. Loot Rules
-                    DrawChecklistComparison("Loot Rules", 
-                        PfAutomation.GetLootRuleName(preset.LootRules), 
-                        initial != null ? initial.Loot : "Normal");
-
-                    // 10. Languages
-                    var presetLangList = new List<string>();
-                    if (preset.LangJapanese) presetLangList.Add("J");
-                    if (preset.LangEnglish) presetLangList.Add("E");
-                    if (preset.LangGerman) presetLangList.Add("D");
-                    if (preset.LangFrench) presetLangList.Add("F");
-                    string presetLangs = presetLangList.Count > 0 ? string.Join(",", presetLangList) : "None";
-                    DrawChecklistComparison("Languages", 
-                        presetLangs, 
-                        initial != null ? initial.Lang : "None");
-
-                    ImGui.EndChild();
+                    Vector2 gs = ImGui.CalcTextSize(logoGlyph);
+                    dl.AddText(new Vector2(logoMin.X + (34 - gs.X) * 0.5f, logoMin.Y + (34 - gs.Y) * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(AccentBlue), logoGlyph);
                 }
+                dl.AddText(new Vector2(origin.X + 46, origin.Y + 3),
+                    ImGui.ColorConvertFloat4ToU32(TextPrimary), "Applying Preset");
+                string sub = string.IsNullOrEmpty(preset.Name) ? "Unnamed preset" : preset.Name;
+                dl.AddText(new Vector2(origin.X + 46, origin.Y + 20),
+                    ImGui.ColorConvertFloat4ToU32(TextMuted), sub);
 
-                ImGui.Dummy(new Vector2(0, 12));
-                
-                // Done button
-                ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#1a3a2a"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#224832"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#2a5a3c"));
-                ImGui.PushStyleColor(ImGuiCol.Text, AccentGreen);
-                ImGui.PushStyleColor(ImGuiCol.Border, ColorFromHex("#27c93f40"));
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
-                
-                if (ImGui.Button("Close Status Window##DismissChecklist", new Vector2(-1, 30)))
+                // Close button (top-right), matching the main window's header buttons.
+                const float closeSz = 24f;
+                ImGui.SetCursorScreenPos(new Vector2(origin.X + innerW - closeSz, origin.Y + 4));
+                ImGui.PushStyleColor(ImGuiCol.Button, BgCard);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#1c2230"));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#243a54"));
+                ImGui.PushStyleColor(ImGuiCol.Text, TextSecondary);
+                ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+                ImGui.PushFont(UiBuilder.IconFont);
+                if (ImGui.Button($"{FontAwesomeIcon.Times.ToIconString()}##CloseChecklist", new Vector2(closeSz, closeSz)))
                     pfAutomation.DismissChecklist();
-                
+                ImGui.PopFont();
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(5);
+
+                // ── Divider ──
+                float divY = origin.Y + 48;
+                dl.AddLine(new Vector2(origin.X, divY), new Vector2(origin.X + innerW, divY),
+                    ImGui.ColorConvertFloat4ToU32(BorderDefault), 1f);
+
+                // ── Status row: spinner/check + friendly stage text + percentage ──
+                float rowY = origin.Y + 68;
+                string stage = pfAutomation.AutomationStage;
+                Vector4 stageColor = failed ? AccentRed : (done ? AccentGreen : TextPrimary);
+                if (failed)
+                    DrawGlyphAt(FontAwesomeIcon.TimesCircle, new Vector2(origin.X, rowY), 16f, AccentRed);
+                else if (done)
+                    DrawGlyphAt(FontAwesomeIcon.CheckCircle, new Vector2(origin.X, rowY), 16f, AccentGreen);
+                else
+                    DrawSpinner(new Vector2(origin.X + 8f, rowY + lineH * 0.5f), 8f, 2.5f, AccentBlue);
+
+                dl.AddText(new Vector2(origin.X + 26, rowY), ImGui.ColorConvertFloat4ToU32(stageColor), stage);
+
+                if (!done)
+                {
+                    string pct = $"{(int)MathF.Round(animatedProgress * 100f)}%";
+                    Vector2 pts = ImGui.CalcTextSize(pct);
+                    dl.AddText(new Vector2(origin.X + innerW - pts.X, rowY),
+                        ImGui.ColorConvertFloat4ToU32(TextMuted), pct);
+                }
+
+                // ── Progress bar ──
+                Vector4 barFill = failed ? AccentRed : (done ? AccentGreen : AccentBlue);
+                DrawProgressBar(new Vector2(origin.X, origin.Y + 98), innerW, 12f, animatedProgress, barFill);
+
+                // ── Bottom: Done/Close button when finished, else a "please wait" hint ──
+                const float btnH = 34f;
+                float btnY = origin.Y + contentH - btnH;
+                if (done)
+                {
+                    ImGui.SetCursorScreenPos(new Vector2(origin.X, btnY));
+                    if (!failed)
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Button, JsOkBg);
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, JsOkHover);
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, JsOkHover);
+                        ImGui.PushStyleColor(ImGuiCol.Text, ColorFromHex("#eafff0"));
+                    }
+                    else
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Button, JsCancelBg);
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, JsCancelHover);
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, JsCancelHover);
+                        ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
+                    }
+                    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+                    if (ImGui.Button($"{(failed ? "Close" : "Done :)")}##DismissChecklist", new Vector2(innerW, btnH)))
+                        pfAutomation.DismissChecklist();
+                    ImGui.PopStyleVar();
+                    ImGui.PopStyleColor(4);
+                }
+                else
+                {
+                    const string hint = "Setting things up, please wait...";
+                    Vector2 hs = ImGui.CalcTextSize(hint);
+                    dl.AddText(new Vector2(origin.X + (innerW - hs.X) * 0.5f, btnY + (btnH - lineH) * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(TextMuted), hint);
+                }
             }
             ImGui.End();
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor(2);
         }
 
-        private void DrawChecklistComparison(string label, string presetValue, string gameValue)
+        /// <summary>Draws a modern rounded (pill) progress bar matching the plugin theme.</summary>
+        private void DrawProgressBar(Vector2 pos, float width, float height, float progress, Vector4 fill)
         {
-            bool match = presetValue.Equals(gameValue, StringComparison.OrdinalIgnoreCase);
+            progress = Math.Clamp(progress, 0f, 1f);
+            var dl = ImGui.GetWindowDrawList();
+            float r = height * 0.5f;
+            Vector2 max = new Vector2(pos.X + width, pos.Y + height);
 
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (match)
-            {
-                ImGui.TextColored(AccentGreen, FontAwesomeIcon.CheckCircle.ToIconString());
-            }
-            else
-            {
-                ImGui.TextColored(AccentYellow, FontAwesomeIcon.ArrowCircleRight.ToIconString());
-            }
-            ImGui.PopFont();
-            ImGui.SameLine(0, 8);
+            // Track
+            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex("#141b27")), r);
+            dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(BorderDefault), r, ImDrawFlags.None, 1f);
 
-            ImGui.TextColored(TextPrimary, $"{label}:");
-            ImGui.Indent(24);
-            ImGui.TextColored(TextSecondary, $"Preset: {presetValue}");
-            ImGui.TextColored(TextMuted, $"Game PF: {gameValue}");
-            ImGui.Unindent(24);
-            ImGui.Dummy(new Vector2(0, 4));
+            // Fill (kept at least a full pill width so even early progress reads as rounded)
+            if (progress > 0f)
+            {
+                float fw = MathF.Min(MathF.Max(width * progress, height), width);
+                Vector2 fmax = new Vector2(pos.X + fw, max.Y);
+                dl.AddRectFilled(pos, fmax, ImGui.ColorConvertFloat4ToU32(fill), r);
+                // Subtle top sheen for a bit of depth.
+                Vector4 sheen = new Vector4(1f, 1f, 1f, 0.10f);
+                dl.AddRectFilled(pos, new Vector2(pos.X + fw, pos.Y + height * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(sheen), r, ImDrawFlags.RoundCornersTop);
+            }
+        }
+
+        /// <summary>Draws a small rotating arc spinner (animated via ImGui time).</summary>
+        private void DrawSpinner(Vector2 center, float radius, float thickness, Vector4 color)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            uint col = ImGui.ColorConvertFloat4ToU32(color);
+            float t = (float)ImGui.GetTime();
+            const int segs = 24;
+            float start = t * 5f;
+            float arc = MathF.PI * 1.5f;
+            Vector2? prev = null;
+            for (int i = 0; i <= segs; i++)
+            {
+                float a = start + (i / (float)segs) * arc;
+                var p = new Vector2(center.X + MathF.Cos(a) * radius, center.Y + MathF.Sin(a) * radius);
+                if (prev.HasValue) dl.AddLine(prev.Value, p, col, thickness);
+                prev = p;
+            }
         }
 
         // ═══════════════════════════════════════════════════════════

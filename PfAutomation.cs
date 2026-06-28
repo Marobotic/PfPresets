@@ -2,9 +2,11 @@ using System;
 using System.Text;
 using System.Linq;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Party;
 using Dalamud.Game.ClientState.Conditions;
+using FFXIVClientStructs.FFXIV.Client.Game.Group;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
@@ -47,6 +49,14 @@ namespace PfPresets
         private readonly IObjectTable objectTable;
         private readonly ICondition condition;
 
+        // Native "open party finder recruitment for content id" function, imported exactly from
+        // the RecruitmentRefresher plugin (https://github.com/anya-hichu/RecruitmentRefresher).
+        // This opens the player's own recruitment detail window, which is what makes the
+        // auto-refresh actually work (AgentLookingForGroup.OpenListingByContentId does not).
+        private const string OpenPartyFinderSignature = "40 53 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ?? 84 C0 74 07 C6 83 ?? ?? ?? ?? ?? 48 83 C4 20 5B C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 40 53";
+        private unsafe delegate void OpenPartyFinderDelegate(void* agentLfg, ulong contentId);
+        private readonly OpenPartyFinderDelegate? openPartyFinder;
+
         private int refreshCount = 0;
         private double minutesElapsed = 0;
         private string? previousCommentString = null;
@@ -86,6 +96,41 @@ namespace PfPresets
         public string AutomationStatus { get; private set; } = "Idle";
         public GamePfState? InitialGameState { get; private set; }
 
+        /// <summary>Progress of the apply-preset automation, 0..1, for the status window's bar.</summary>
+        public float AutomationProgress
+        {
+            get
+            {
+                int max = (int)AutomationStep.Done;
+                int cur = Math.Clamp((int)currentStep, 0, max);
+                return max == 0 ? 0f : (float)cur / max;
+            }
+        }
+
+        /// <summary>True once the automation has finished, whether it succeeded or failed.</summary>
+        public bool IsAutomationDone => currentStep == AutomationStep.Done;
+
+        /// <summary>True if the automation finished but could not create the listing.</summary>
+        public bool IsAutomationFailed =>
+            currentStep == AutomationStep.Done &&
+            AutomationStatus.StartsWith("Recruitment Failed", StringComparison.Ordinal);
+
+        /// <summary>Friendly, normal-user-facing description of what the automation is doing now.</summary>
+        public string AutomationStage => currentStep switch
+        {
+            AutomationStep.Idle => "Getting ready...",
+            AutomationStep.ClosingAddon => "Closing the old Party Finder window...",
+            AutomationStep.OpeningLfg or AutomationStep.OpeningAddon => "Opening Party Finder...",
+            AutomationStep.WritingDutyCategory or AutomationStep.DelayingAfterCategory => "Choosing the duty category...",
+            AutomationStep.OpeningDutyDropdown or AutomationStep.SelectingDuty
+                or AutomationStep.WritingDutyId or AutomationStep.DelayingAfterDutyId => "Selecting your duty...",
+            AutomationStep.WritingRoles or AutomationStep.DelayingAfterRoles => "Setting up roles...",
+            AutomationStep.WritingEverythingElse or AutomationStep.DelayingAfterSync => "Applying your settings...",
+            AutomationStep.SubmittingAddon => "Posting your listing...",
+            AutomationStep.Done => IsAutomationFailed ? "Something went wrong while posting." : "All set, PF is up!",
+            _ => AutomationStatus,
+        };
+
         private bool waitingForAddon = false;
         private int submitRetryCount = 0;
         private long delayExpirationTime = 0;
@@ -107,7 +152,8 @@ namespace PfPresets
             ICommandManager commandManager,
             IPartyList partyList,
             IObjectTable objectTable,
-            ICondition condition)
+            ICondition condition,
+            ISigScanner sigScanner)
         {
             this.gameGui = gameGui;
             this.pluginLog = pluginLog;
@@ -121,6 +167,20 @@ namespace PfPresets
             this.partyList = partyList;
             this.objectTable = objectTable;
             this.condition = condition;
+
+            // Resolve the native OpenPartyFinder function once at load (imported from
+            // RecruitmentRefresher). If the signature can't be found, auto-refresh is disabled
+            // gracefully rather than throwing.
+            try
+            {
+                var ptr = sigScanner.ScanText(OpenPartyFinderSignature);
+                openPartyFinder = Marshal.GetDelegateForFunctionPointer<OpenPartyFinderDelegate>(ptr);
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Error(ex, "[AutoRefresher] Failed to resolve OpenPartyFinder signature; auto-refresh disabled.");
+                openPartyFinder = null;
+            }
         }
 
         public void Dispose()
@@ -256,10 +316,25 @@ namespace PfPresets
                     return false;
                 }
             }
-            else if (partyList.Length > 0 && partyList.PartyLeaderIndex != 0)
+            else
             {
-                reason = "You are in a party but you are not the leader.";
-                return false;
+                // Use GroupManager (the live party data) rather than IPartyList so that:
+                //  1. Leadership detection is always current - PartyLeaderIndex is read at
+                //     the moment of the check, so a lead that was just passed to us is
+                //     reflected immediately (no caching, no need to watch chat messages).
+                //  2. It works regardless of which zone party members are in.
+                // We compare the current leader's ContentId to our own instead of assuming
+                // the local player sits at index 0 (which is not guaranteed).
+                var groupManager = GroupManager.Instance();
+                if (groupManager != null && groupManager->MainGroup.MemberCount > 0)
+                {
+                    var leader = groupManager->MainGroup.GetPartyMemberByIndex((int)groupManager->MainGroup.PartyLeaderIndex);
+                    if (leader == null || leader->ContentId != playerState.ContentId)
+                    {
+                        reason = "You are in a party but you are not the leader.";
+                        return false;
+                    }
+                }
             }
 
             return true;
@@ -558,11 +633,20 @@ namespace PfPresets
             }
             else
             {
-                foreach (var member in partyList)
+                // Use the InfoProxyPartyMember (the data backing the social/party tab).
+                // Unlike IPartyList, this contains every party member's job regardless of
+                // which zone/map they are in, so detection no longer breaks when members
+                // are spread across different areas.
+                var partyInfo = InfoProxyPartyMember.Instance();
+                if (partyInfo != null)
                 {
-                    if (member.ContentId != playerState.ContentId)
+                    uint count = partyInfo->GetEntryCount();
+                    for (uint i = 0; i < count; i++)
                     {
-                        otherPartyMembers.Add((member.ClassJob.RowId, member.Name.TextValue, member.ContentId));
+                        var entry = partyInfo->GetEntry(i);
+                        if (entry == null) continue;
+                        if (entry->ContentId == playerState.ContentId) continue;
+                        otherPartyMembers.Add(((uint)entry->Job, entry->NameString, entry->ContentId));
                     }
                 }
             }
@@ -1629,11 +1713,16 @@ namespace PfPresets
                         previousCommentString = comment;
                     }
 
-                    // Open Party Finder (recruitment details)
+                    // Open Party Finder (recruitment details) using the native function imported
+                    // from RecruitmentRefresher - this is the exact call that makes refresh work.
+                    if (openPartyFinder == null)
+                    {
+                        pluginLog.Warning("[AutoRefresher] OpenPartyFinder function unavailable (signature not found).");
+                        return;
+                    }
                     unsafe
                     {
-                        var agent = (AgentLookingForGroup*)agentPtr;
-                        agent->OpenListingByContentId(playerState.ContentId);
+                        openPartyFinder((void*)agentPtr, playerState.ContentId);
                     }
 
                     // Wait for LookingForGroupDetail window to open (timeout: 5 seconds, check every 50ms)

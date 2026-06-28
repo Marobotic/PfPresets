@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.1.0
+
+**Fixed: party job detection now works when members are in different zones.**
+Auto-adjust slots now read party jobs from the social party list instead of the
+in-zone party list, so a teammate being on another map no longer wipes out their
+detected job.
+
+**Fixed: party leader detection now updates when lead is passed to you.**
+Previously the plugin could still think you weren't the leader after leadership
+was handed to you, blocking recruitment. It now reads the live party leader at
+the moment you apply a preset, so a passed lead is recognized immediately.
+
+**Fixed: the built-in Auto Refresher now actually works.** It refreshes your
+Party Finder listing every 30 minutes using the same proven method as the
+RecruitmentRefresher plugin. The toggle now also sits as its own section above
+the Create button instead of overlapping it.
+
+**Redesigned the "Applying preset" window.** It now matches the modern look of
+the rest of the plugin, with a friendly play-by-play of what's happening and a
+smooth progress bar. When it finishes you get a clear "All set, PF is up!" and a
+green Done button. The old settings-comparison list has been removed.
+
+Also: moved the Ko-fi support button into the window header (and made it bigger),
+surfaced the Auto Refresher toggle directly in the main window (it hides
+automatically if you have the RecruitmentRefresher plugin), fixed the
+"Create New Preset" button icon, and fixed long preset comments so they wrap
+instead of running under the Apply Preset button.
+
+---
+
 ## 2.0.1
 
 Moved the private-party password next to the preset name so it's no longer hidden

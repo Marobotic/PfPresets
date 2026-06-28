@@ -40,7 +40,8 @@ namespace PfPresets
             IFramework framework,
             IPartyList partyList,
             IObjectTable objectTable,
-            ICondition condition)
+            ICondition condition,
+            ISigScanner sigScanner)
         {
             this.pluginInterface = pluginInterface;
             this.commandManager = commandManager;
@@ -72,7 +73,8 @@ namespace PfPresets
                 this.commandManager,
                 this.partyList,
                 this.objectTable,
-                this.condition);
+                this.condition,
+                sigScanner);
 
             // Initialize UI
             this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, this.textureProvider);
