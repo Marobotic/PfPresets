@@ -2,9 +2,9 @@
     <PropertyGroup>
         <AssemblyName>PfPresets</AssemblyName>
         <RootNamespace>PfPresets</RootNamespace>
-        <Version>2.1.1</Version>
-        <FileVersion>2.1.1</FileVersion>
-        <AssemblyVersion>2.1.1</AssemblyVersion>
+        <Version>2.1.2</Version>
+        <FileVersion>2.1.2</FileVersion>
+        <AssemblyVersion>2.1.2</AssemblyVersion>
         <TargetFramework>net10.0-windows</TargetFramework>
         <Platforms>x64</Platforms>
         <Nullable>enable</Nullable>

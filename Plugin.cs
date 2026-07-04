@@ -5,27 +5,24 @@ using Dalamud.Plugin.Services;
 
 namespace PfPresets
 {
+    /// <summary>
+    /// Plugin entry point: wires up services, registers chat commands, and hooks the
+    /// Dalamud UI/framework events.
+    /// </summary>
     public class Plugin : IDalamudPlugin
     {
         public string Name => "PF Presets";
 
         private readonly IDalamudPluginInterface pluginInterface;
         private readonly ICommandManager commandManager;
-        private readonly IGameGui gameGui;
-        private readonly IDataManager dataManager;
-        private readonly IPluginLog pluginLog;
         private readonly IChatGui chatGui;
-        private readonly ITextureProvider textureProvider;
+        private readonly IObjectTable objectTable;
+        private readonly IFramework framework;
 
         private readonly Configuration config;
         private readonly DutyDataHelper dutyDataHelper;
         private readonly PfAutomation pfAutomation;
         private readonly PluginUI ui;
-
-        private readonly IPartyList partyList;
-        private readonly IObjectTable objectTable;
-        private readonly ICondition condition;
-        private readonly IFramework framework;
 
         public Plugin(
             IDalamudPluginInterface pluginInterface,
@@ -38,21 +35,14 @@ namespace PfPresets
             IClientState clientState,
             IPlayerState playerState,
             IFramework framework,
-            IPartyList partyList,
             IObjectTable objectTable,
             ICondition condition,
             ISigScanner sigScanner)
         {
             this.pluginInterface = pluginInterface;
             this.commandManager = commandManager;
-            this.gameGui = gameGui;
-            this.dataManager = dataManager;
-            this.pluginLog = pluginLog;
             this.chatGui = chatGui;
-            this.textureProvider = textureProvider;
-            this.partyList = partyList;
             this.objectTable = objectTable;
-            this.condition = condition;
             this.framework = framework;
 
             // Load configuration
@@ -60,29 +50,27 @@ namespace PfPresets
             this.config.Initialize(this.pluginInterface);
 
             // Initialize helpers
-            this.dutyDataHelper = new DutyDataHelper(this.dataManager, this.pluginLog);
+            this.dutyDataHelper = new DutyDataHelper(dataManager, pluginLog);
             this.pfAutomation = new PfAutomation(
-                this.gameGui,
-                this.pluginLog,
+                gameGui,
+                pluginLog,
                 this.chatGui,
                 this.config,
                 clientState,
                 playerState,
                 framework,
                 this.dutyDataHelper,
-                this.commandManager,
-                this.partyList,
                 this.objectTable,
-                this.condition,
+                condition,
                 sigScanner);
 
             // Initialize UI
-            this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, this.textureProvider);
+            this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, textureProvider);
 
             // Register commands
             var mainCommandInfo = new CommandInfo(OnCommand)
             {
-                HelpMessage = "Opens the PF Presets window.",
+                HelpMessage = "Opens the PF Presets window. Use \"/pfp refresh\" to re-post your listing now.",
                 ShowInHelp = true,
             };
             this.commandManager.AddHandler("/pfp", mainCommandInfo);
@@ -99,14 +87,14 @@ namespace PfPresets
             this.pluginInterface.UiBuilder.OpenMainUi += this.ui.ToggleMainWindow;
             this.pluginInterface.UiBuilder.OpenConfigUi += this.ui.ToggleSettingsWindow;
 
-            // Hook Framework Update for AutoRefresher
+            // Hook Framework Update for the Auto Refresher
             this.framework.Update += OnFrameworkUpdate;
         }
 
         private void OnCommand(string command, string args)
         {
-            // "/pfp refresh" triggers the auto-refresh sequence immediately (for testing the
-            // Edit -> Apply flow without waiting out the timer).
+            // "/pfp refresh" triggers the auto-refresh sequence immediately (the same
+            // Edit -> Apply flow the timer runs).
             if (args.Trim().Equals("refresh", StringComparison.OrdinalIgnoreCase))
             {
                 if (this.pfAutomation.IsRecruiting())
@@ -133,7 +121,7 @@ namespace PfPresets
                 return;
             }
 
-            chatGui.Print("[PF Presets Debug] Dumping Agent fields:");
+            chatGui.Print("[PF Presets Debug] Agent fields:");
             chatGui.Print($"  OwnListingId: {agent->OwnListingId}");
             chatGui.Print($"  ListingContentId: {agent->ListingContentId}");
             chatGui.Print($"  ListingAccountId: {agent->ListingAccountId}");
@@ -141,41 +129,12 @@ namespace PfPresets
             chatGui.Print($"  CategoryTab: {agent->CategoryTab}");
             chatGui.Print($"  GroupTypeTab: {agent->GroupTypeTab}");
             chatGui.Print($"  SelectedCategory: {agent->StoredRecruitmentInfo.SelectedCategory}");
-            chatGui.Print($"  SelectedDutyId: {agent->StoredRecruitmentInfo.SelectedDutyId}");
-
-            chatGui.Print("[PF Presets Debug] Searching ContentFinderCondition sheet:");
-            try
-            {
-                var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>();
-                if (sheet != null)
-                {
-                    string[] searchTerms = { "Cloud of Darkness", "Futures Rewritten", "Omega Protocol", "Dancing Mad" };
-                    foreach (var row in sheet)
-                    {
-                        string name = row.Name.ToString();
-                        foreach (var term in searchTerms)
-                        {
-                            if (name.Contains(term, StringComparison.OrdinalIgnoreCase))
-                            {
-                                chatGui.Print($"  [Excel] RowId: {row.RowId} | Name: '{name}' | ContentType: {row.ContentType.RowId}");
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    chatGui.Print("  [Excel] ContentFinderCondition sheet not found!");
-                }
-            }
-            catch (Exception ex)
-            {
-                chatGui.Print($"  [Excel] Error: {ex.Message}");
-            }
+            chatGui.Print($"  SelectedDutyId: {agent->StoredRecruitmentInfo.SelectedDutyId} ({dutyDataHelper.GetDutyName(agent->StoredRecruitmentInfo.SelectedDutyId)})");
 
             var localPlayer = this.objectTable.LocalPlayer;
             if (localPlayer != null)
             {
-                chatGui.Print($"[PF Presets Debug] Local Player:");
+                chatGui.Print("[PF Presets Debug] Local Player:");
                 chatGui.Print($"  OnlineStatus ID: {localPlayer.OnlineStatus.RowId}");
                 if (localPlayer.OnlineStatus.RowId > 0)
                 {
@@ -204,6 +163,10 @@ namespace PfPresets
             this.commandManager.RemoveHandler("/pfp");
             this.commandManager.RemoveHandler("/pfpresets");
             this.commandManager.RemoveHandler("/pfpdebug");
+
+            // Unsubscribes any in-flight automation from Framework.Update and stops the
+            // background refresh task from touching the game after unload.
+            this.pfAutomation.Dispose();
         }
     }
 }

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
-using Newtonsoft.Json;
 
 namespace PfPresets
 {
@@ -10,7 +9,6 @@ namespace PfPresets
     public class Configuration : IPluginConfiguration
     {
         public int Version { get; set; } = 0;
-        public string PluginVersion { get; set; } = "1.0.4";
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
@@ -18,9 +16,8 @@ namespace PfPresets
         // ── UI Preferences ────────────────────────────────────────
         public int PanelWidth { get; set; } = 420;
         public int PanelHeight { get; set; } = 520;
-        public string LastSelectedPresetId { get; set; } = string.Empty;
 
-        // ── Default Values for New Presets ─────────────────────────
+        // ── Auto Refresher ────────────────────────────────────────
         public bool AutoRefresherEnabled { get; set; } = false;
 
         /// <summary>How often the Auto Refresher re-posts the listing, in minutes (15 or 30).</summary>

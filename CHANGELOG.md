@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.2
+
+**Added a confirmation prompt before deleting a preset**, so a misclick no longer wipes
+a preset instantly.
+
+**Fixed a rare crash** that could happen if the plugin was unloaded or updated while it
+was in the middle of applying a preset.
+
+**Made duty selection safer.** If a high-end duty has been renamed or removed by a game
+patch, the plugin now leaves the listing's duty unset instead of posting a wrong one.
+
+**Removed two options that never did anything.** "Unselect Classes" and the item-level
+"or Above" toggle were saved but never applied to the Party Finder, so they're gone.
+
+Under the hood, the whole codebase was reorganized (Data / Game / UI) for maintainability.
+No change to your saved presets.
+
+---
+
 ## 2.1.1
 
 **The Auto Refresher now works end to end.** It performs the full
