@@ -26,3 +26,6 @@ obj/
 reflector_output.txt
 temp_*/
 scratch/
+
+# Claude Code local settings (machine-specific, not project config)
+.claude/

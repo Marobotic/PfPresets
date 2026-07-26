@@ -18,6 +18,7 @@ namespace PfPresets
     ///   PluginUI.JobSelector.cs - the per-slot job/role selector
     ///   PluginUI.Settings.cs    - the settings window
     ///   PluginUI.Checklist.cs   - the "applying preset" status overlay
+    ///   PluginUI.Share.cs       - the preset export / import windows
     /// </summary>
     public partial class PluginUI
     {
@@ -32,9 +33,25 @@ namespace PfPresets
         private bool isSettingsWindowVisible = false;
         private bool isEditorWindowVisible = false;
 
+        /// <summary>The running plugin's version, shown under the title. Read from the assembly so
+        /// it always matches the build in use and never needs updating by hand. The trailing
+        /// revision is dropped when it's 0, so 3.0.0.0 reads "v3.0.0" but 3.0.0.1 keeps its digit.</summary>
+        private static readonly string VersionLabel = BuildVersionLabel();
+
+        private static string BuildVersionLabel()
+        {
+            var v = typeof(PluginUI).Assembly.GetName().Version;
+            if (v == null)
+                return string.Empty;
+            return v.Revision > 0
+                ? $"v{v.Major}.{v.Minor}.{v.Build}.{v.Revision}"
+                : $"v{v.Major}.{v.Minor}.{v.Build}";
+        }
+
         // ── Per-frame caches (reset at the top of Draw) ───────────
         private bool? rrActiveThisFrame;
         private (bool Ok, string Reason)? canRecruitThisFrame;
+        private bool? partyHasNonBattleJobThisFrame;
 
         public PluginUI(
             IDalamudPluginInterface pluginInterface,
@@ -57,14 +74,26 @@ namespace PfPresets
         {
             rrActiveThisFrame = null;
             canRecruitThisFrame = null;
+            partyHasNonBattleJobThisFrame = null;
 
+            // PushPluginTheme pushes onto ImGui's process-global color stack, shared with Dalamud
+            // and every other plugin. The finally guarantees we pop exactly what we pushed even if a
+            // draw call throws, so a bug in our UI can never leak styling into other plugins.
             int themeColors = PushPluginTheme();
-            DrawMainWindow();
-            DrawEditorWindow();
-            DrawSettingsWindow();
-            DrawChecklistOverlay();
-            DrawJobSelectorWindow();
-            ImGui.PopStyleColor(themeColors);
+            try
+            {
+                DrawMainWindow();
+                DrawEditorWindow();
+                DrawSettingsWindow();
+                DrawChecklistOverlay();
+                DrawJobSelectorWindow();
+                DrawShareExportWindow();
+                DrawShareImportWindow();
+            }
+            finally
+            {
+                ImGui.PopStyleColor(themeColors);
+            }
         }
 
         /// <summary>True when the standalone RecruitmentRefresher plugin is installed and loaded.
@@ -100,6 +129,15 @@ namespace PfPresets
             }
             reason = canRecruitThisFrame.Value.Reason;
             return canRecruitThisFrame.Value.Ok;
+        }
+
+        /// <summary>Whether a non-battle job (crafter/gatherer) is currently in the party, computed
+        /// at most once per frame. Used to flag the Apply button when the game's party-composition
+        /// warning is expected.</summary>
+        private bool PartyHasNonBattleJobCached()
+        {
+            partyHasNonBattleJobThisFrame ??= pfAutomation.PartyHasNonBattleJob();
+            return partyHasNonBattleJobThisFrame.Value;
         }
 
         // ══════════════════════════════════════════════════════════

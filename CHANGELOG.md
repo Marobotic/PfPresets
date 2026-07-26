@@ -1,5 +1,53 @@
 # Changelog
 
+## 3.0.0.1
+
+**New: share presets with a one-line code.** Pick **Share** on any preset's menu and you get a
+single line of text with a copy button — paste it in Discord and anyone running PF Presets can
+use your setup. The **Import** button next to *Create New Preset* takes one back in, either
+pasted into the box or pulled straight off your clipboard. Codes that aren't PF Presets codes
+(or that got cut off mid-copy) are rejected with a plain explanation instead of importing
+something broken.
+
+**New: `/pfp apply <name>`.** Posts a preset without opening the window, so a preset can live on
+a hotbar macro. Partial names work as long as they're unambiguous. Added `/pfp list` to see the
+exact names.
+
+**Auto Refresher is no longer locked to 15 or 30 minutes.** Double-click the interval to type any
+value from 1 to 55. Next to it there's a new **Stop after** limit — set it and the refresher stops
+renewing your listing after that many hours, so a Party Finder can't sit up all night unattended.
+Your listing isn't cancelled when the limit hits; it just expires the way it normally would.
+"Never" (the default) keeps the old behaviour.
+
+**Fixed: a renamed duty could post the wrong listing.** Presets recorded their duty by name and,
+when that name no longer matched, silently fell back to the *first duty in the category* — so a
+patch that renamed your duty could put up a listing for something else entirely. Presets now
+store the duty's id, which patches don't change, and when a duty genuinely can't be identified
+the listing is left with no duty set instead of guessing. Your existing presets are upgraded
+automatically the first time you load this version.
+
+---
+
+## 3.0.0
+
+**New: Auto-adjust locked job slots.** A new toggle under the Auto Refresher. While you're
+recruiting as party leader, if a member leaves, any Party Finder slot locked to a single job
+is automatically widened to that job's role five seconds later - e.g. White Mage becomes regen
+healers, Red Mage becomes casters, Viper becomes melee - so the freed seat is easier to fill.
+If a slot is somehow locked to a non-combat job, it falls back to the standard auto-fill
+composition instead.
+
+**Fixed a serious crash.** Duplicating or reordering a preset from a card's menu could crash
+the plugin and, worse, corrupt the interface of Dalamud and every other plugin. That's fixed,
+and the rendering is now hardened so a plugin error can never leak its styling into others.
+
+**Taller preset cards** so long descriptions are fully visible instead of being cut off.
+
+**Ko-fi support button** added to the "Applying Preset" window (next to the close button), and
+the header support button now reads "Support me on Ko-Fi" with the heart.
+
+---
+
 ## 2.1.2
 
 **Added a confirmation prompt before deleting a preset**, so a misclick no longer wipes

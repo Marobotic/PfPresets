@@ -22,6 +22,14 @@ namespace PfPresets
         /// <see cref="DutyCategories.Names"/> (0 = None).</summary>
         public int DutyCategoryId { get; set; } = 0;
 
+        /// <summary>
+        /// ContentFinderCondition row id of the selected duty - the authoritative reference.
+        /// 0 means "no specific duty" (or a synthetic entry, see <see cref="DutyDataHelper"/>),
+        /// in which case <see cref="DutyName"/> is used as the fallback. Presets saved before
+        /// 3.0.0.1 have 0 here and are back-filled from the name on load.
+        /// </summary>
+        public uint DutyRowId { get; set; } = 0;
+
         /// <summary>Cached display name for the duty (so we don't need Lumina to show it).</summary>
         public string DutyName { get; set; } = "None";
 

@@ -55,27 +55,45 @@ namespace PfPresets
                 flags |= ImGuiWindowFlags.NoResize;
 
             bool isOpen = isMainWindowVisible;
-            if (ImGui.Begin("PfPresets##Main", ref isOpen, flags))
+            // Begin/End and the style pushes above live on ImGui's process-global stacks, shared
+            // with Dalamud and every other plugin. These try/finally blocks guarantee End() still
+            // runs (so ImGui recovers the window's stack) and our pushes are always popped, so a
+            // throw inside the window can never leave the stacks unbalanced and bleed into other
+            // plugins' UI.
+            try
             {
-                isMainWindowVisible = isOpen;
-
-                if (!isMinimized)
-                    PersistWindowSize();
-
-                DrawTitleBar();
-
-                if (!isMinimized)
+                bool visible = ImGui.Begin("PfPresets##Main", ref isOpen, flags);
+                try
                 {
-                    DrawSearchBar();
-                    DrawPresetList();
-                    DrawFooter();
-                }
+                    if (visible)
+                    {
+                        isMainWindowVisible = isOpen;
 
-                DrawDeleteConfirmModal();
+                        if (!isMinimized)
+                            PersistWindowSize();
+
+                        DrawTitleBar();
+
+                        if (!isMinimized)
+                        {
+                            DrawSearchBar();
+                            DrawPresetList();
+                            DrawFooter();
+                        }
+
+                        DrawDeleteConfirmModal();
+                    }
+                }
+                finally
+                {
+                    ImGui.End();
+                }
             }
-            ImGui.End();
-            ImGui.PopStyleVar(5);
-            ImGui.PopStyleColor(2);
+            finally
+            {
+                ImGui.PopStyleVar(5);
+                ImGui.PopStyleColor(2);
+            }
         }
 
         /// <summary>Saves user resizes of the main window into the configuration.</summary>
@@ -126,7 +144,7 @@ namespace PfPresets
             ImGui.TextColored(TextPrimary, "PF Presets");
 
             ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + 52, cursorScreenPos.Y + 27));
-            ImGui.TextColored(TextMuted, $"{config.Presets.Count} presets");
+            ImGui.TextColored(TextMuted, VersionLabel);
 
             float buttonsStart = width - 114;
             ImGui.PushStyleColor(ImGuiCol.Button, BgCard);
@@ -135,20 +153,28 @@ namespace PfPresets
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
 
-            // Ko-fi support (red). Wider than the icon buttons so it reads as a support button;
-            // extends leftward to keep the 6px gap before Minimize.
-            ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + buttonsStart - 22, cursorScreenPos.Y + 11));
+            // Ko-fi support (red). Sized to fit the heart glyph + label; anchored so its right edge
+            // keeps the 6px gap before Minimize and it grows leftward. The label mixes the icon font
+            // (heart) with the normal font (text), which a plain Button can't do, so the button is
+            // drawn empty and DrawIconLabelCentered paints the heart + text on top.
+            const string kofiLabel = "Support me on Ko-Fi";
+            float kofiHeartW;
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                kofiHeartW = ImGui.CalcTextSize(FontAwesomeIcon.Heart.ToIconString()).X;
+            float kofiW = kofiHeartW + 8f + ImGui.CalcTextSize(kofiLabel).X + 24f;
+            float kofiRightEdge = buttonsStart + 30f; // matches the previous 52px button's right edge
+            Vector2 kofiPos = new Vector2(cursorScreenPos.X + kofiRightEdge - kofiW, cursorScreenPos.Y + 11);
+            Vector2 kofiSize = new Vector2(kofiW, 30);
+            ImGui.SetCursorScreenPos(kofiPos);
             ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
             ImGui.PushStyleColor(ImGuiCol.Border, hoveredHeaderBtn == 1 ? BorderHover : BorderDefault);
-            ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button($"{FontAwesomeIcon.Heart.ToIconString()}##HeaderKofi", new Vector2(52, 30)))
+            if (ImGui.Button("##HeaderKofi", kofiSize))
                 Dalamud.Utility.Util.OpenLink("https://ko-fi.com/marobotic");
-            ImGui.PopFont();
-            ImGui.PopStyleColor(5);
-            if (ImGui.IsItemHovered()) { hoveredHeaderBtn = 1; PaddedTooltip("Support me on Ko-fi!"); }
+            ImGui.PopStyleColor(4);
+            if (ImGui.IsItemHovered()) hoveredHeaderBtn = 1;
+            DrawIconLabelCentered(FontAwesomeIcon.Heart, kofiLabel, kofiPos, kofiSize, TextPrimary);
 
             // Minimize
             ImGui.SetCursorScreenPos(new Vector2(cursorScreenPos.X + buttonsStart + 36, cursorScreenPos.Y + 13));
@@ -222,7 +248,12 @@ namespace PfPresets
             ImGui.SetCursorPosX(8);
             ImGui.BeginChild("PresetListScroll", new Vector2(ImGui.GetWindowWidth() - 16, heightRemaining), false, ImGuiWindowFlags.None);
 
-            var filteredPresets = config.Presets;
+            // Snapshot the list so a card action (Duplicate / Move / Delete) can safely mutate
+            // config.Presets while we're rendering. Enumerating the live list and mutating it in
+            // the same frame throws "Collection was modified" (List<T> bumps its version on Add AND
+            // on the indexer-set the Move swap uses), which — mid-render — leaves the shared ImGui
+            // stack unbalanced. Any re-order/addition simply shows on the next frame.
+            var filteredPresets = config.Presets.ToList();
             if (!string.IsNullOrWhiteSpace(searchQuery))
             {
                 string q = searchQuery.ToLowerInvariant();
@@ -278,7 +309,7 @@ namespace PfPresets
             bool isHovered = (hoveredPresetId == preset.Id);
             float cardWidth = ImGui.GetContentRegionAvail().X;
             bool hasComment = !string.IsNullOrEmpty(preset.Comment);
-            float cardHeight = hasComment ? 128f : 110f;
+            float cardHeight = hasComment ? 150f : 110f;
 
             ImGui.PushStyleColor(ImGuiCol.ChildBg, BgCard);
             ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f);
@@ -415,21 +446,32 @@ namespace PfPresets
                 float applyW = rightW - kebabW - btnGap;
                 float btnRowY = cardPos.Y + cardHeight - btnH - 8f;
                 bool canRecruit = CanRecruitCached(out var reason);
+                // When a non-battle job (crafter/gatherer) is in the party, applying a battle-duty
+                // listing makes the game raise a composition warning. Recruiting still works (the
+                // plugin auto-confirms it), so the button turns yellow as a heads-up rather than
+                // being disabled.
+                bool compWarn = canRecruit && PartyHasNonBattleJobCached();
 
                 Vector2 applyPos = new Vector2(rightX, btnRowY);
-                Vector4 applyBg = canRecruit ? JsOkBg : ColorFromHex("#3a4456");
-                Vector4 applyText = canRecruit ? JsOkText : new Vector4(0.85f, 0.89f, 0.96f, 0.45f);
+                Vector4 applyBg = !canRecruit ? ColorFromHex("#3a4456") : (compWarn ? AccentYellow : JsOkBg);
+                Vector4 applyHover = !canRecruit ? applyBg : (compWarn ? ColorFromHex("#e8a91e") : JsOkHover);
+                Vector4 applyText = !canRecruit ? new Vector4(0.85f, 0.89f, 0.96f, 0.45f) : (compWarn ? ColorFromHex("#3a2c00") : JsOkText);
                 ImGui.SetCursorScreenPos(applyPos);
                 ImGui.PushStyleColor(ImGuiCol.Button, applyBg);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, canRecruit ? JsOkHover : applyBg);
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, canRecruit ? JsOkHover : applyBg);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, applyHover);
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, applyHover);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
                 bool applyClicked = ImGui.Button($"##apply_{preset.Id}", new Vector2(applyW, btnH));
                 ImGui.PopStyleVar();
                 ImGui.PopStyleColor(3);
                 if (applyClicked && canRecruit) pfAutomation.ApplyPreset(preset);
-                if (!canRecruit && ImGui.IsItemHovered())
-                    PaddedTooltip($"Cannot recruit: {reason}");
+                if (ImGui.IsItemHovered())
+                {
+                    if (!canRecruit)
+                        PaddedTooltip($"Cannot recruit: {reason}");
+                    else if (compWarn)
+                        PaddedTooltip("A non-battle job (crafter/gatherer) is in your party.\nThe game will warn about party composition - the listing still\nposts, and PF Presets confirms the warning for you.");
+                }
 
                 // Play icon + label drawn together as a centered group (no overlap).
                 {
@@ -463,7 +505,9 @@ namespace PfPresets
                 if (ImGui.BeginPopup($"presetmenu_{preset.Id}"))
                 {
                     if (ImGui.Selectable("  Edit")) OpenEditor(preset, false);
+                    // Safe to mutate config.Presets here: DrawPresetList iterates a snapshot.
                     if (ImGui.Selectable("  Duplicate")) config.DuplicatePreset(preset.Id);
+                    if (ImGui.Selectable("  Share")) OpenShareExport(preset);
                     ImGui.Separator();
                     if (ImGui.Selectable("  Move Up")) config.MovePresetUp(preset.Id);
                     if (ImGui.Selectable("  Move Down")) config.MovePresetDown(preset.Id);
@@ -553,33 +597,93 @@ namespace PfPresets
         /// toggle above it) is never pushed off-screen.</summary>
         private float GetFooterHeight()
         {
-            if (IsRecruitmentRefresherActive()) return 50f;
-            // The interval selector adds a second row when auto-refresh is enabled.
-            return config.AutoRefresherEnabled ? 124f : 94f;
+            float h = 50f; // Create button + padding
+            // The Auto Refresher toggle is hidden when the standalone RecruitmentRefresher plugin
+            // is doing the refreshing; the interval selector adds a second row when it's enabled.
+            if (!IsRecruitmentRefresherActive())
+            {
+                h += 44f; // auto-refresh checkbox row
+                if (config.AutoRefresherEnabled)
+                    h += 30f; // interval selector row
+            }
+            h += 34f; // "auto-adjust locked jobs" checkbox row (always shown)
+            return h;
         }
 
-        /// <summary>Small segmented-style toggle chip used to pick the refresh interval.</summary>
-        private bool DrawIntervalChip(string label, bool active, Vector2 pos, Vector2 size)
+        // Which editable chip (if any) is currently in text-entry mode, and its in-progress value.
+        private string chipEditingId = string.Empty;
+        private int chipEditValue = 0;
+        private bool chipEditFocusPending = false;
+
+        /// <summary>
+        /// A small chip showing a number that turns into a text field on double-click. Used for the
+        /// refresh interval and the stop-after cap, which are free-form numbers but are read far more
+        /// often than they're changed - so the resting state stays a compact label, not an input box.
+        /// Returns true on the frame the value is committed.
+        /// </summary>
+        private bool DrawEditableNumberChip(
+            string id, ref int value, string suffix, string? zeroLabel,
+            int min, int max, Vector2 pos, Vector2 size, string tooltip)
         {
             ImGui.SetCursorScreenPos(pos);
-            ImGui.PushStyleColor(ImGuiCol.Button, active ? AccentBlue : BgCard);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? AccentBlue : ColorFromHex("#1c2230"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, active ? AccentBlue : ColorFromHex("#243a54"));
-            ImGui.PushStyleColor(ImGuiCol.Text, active ? ColorFromHex("#0d1117") : TextSecondary);
-            ImGui.PushStyleColor(ImGuiCol.Border, active ? AccentBlue : BorderDefault);
+
+            if (chipEditingId == id)
+            {
+                ImGui.SetNextItemWidth(size.X);
+                PushFramedInput();
+                if (chipEditFocusPending)
+                {
+                    ImGui.SetKeyboardFocusHere();
+                    chipEditFocusPending = false;
+                }
+                // step/step_fast of 0 hides InputInt's +/- buttons so it stays chip-sized.
+                bool entered = ImGui.InputInt($"##chipedit_{id}", ref chipEditValue, 0, 0, "%d",
+                    ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+                // Committing on deactivate too means clicking away saves rather than silently
+                // discarding what was typed.
+                bool deactivated = ImGui.IsItemDeactivated();
+                PopFramedInput();
+
+                if (entered || deactivated)
+                {
+                    value = Math.Clamp(chipEditValue, min, max);
+                    chipEditingId = string.Empty;
+                    return true;
+                }
+                return false;
+            }
+
+            string label = (value <= 0 && zeroLabel != null) ? zeroLabel : $"{value} {suffix}";
+            ImGui.PushStyleColor(ImGuiCol.Button, BgCard);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#1c2230"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#243a54"));
+            ImGui.PushStyleColor(ImGuiCol.Text, AccentBlue);
+            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
-            bool clicked = ImGui.Button($"{label}##interval_{label}", size);
+            ImGui.Button($"{label}##chip_{id}", size);
             ImGui.PopStyleVar(2);
             ImGui.PopStyleColor(5);
-            return clicked;
+
+            if (ImGui.IsItemHovered())
+            {
+                PaddedTooltip(tooltip);
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    chipEditingId = id;
+                    chipEditValue = value;
+                    chipEditFocusPending = true;
+                }
+            }
+            return false;
         }
 
         private void DrawFooter()
         {
             Vector2 curPos = ImGui.GetCursorScreenPos();
             float width = ImGui.GetWindowWidth();
-            ImGui.GetWindowDrawList().AddLine(new Vector2(ImGui.GetWindowPos().X, curPos.Y), new Vector2(ImGui.GetWindowPos().X + width, curPos.Y), ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
+            float winX = ImGui.GetWindowPos().X;
+            ImGui.GetWindowDrawList().AddLine(new Vector2(winX, curPos.Y), new Vector2(winX + width, curPos.Y), ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
 
             // Auto Refresher toggle - shown above the Create button, but only when the
             // standalone RecruitmentRefresher plugin is NOT active. If that plugin is
@@ -587,7 +691,6 @@ namespace PfPresets
             float buttonY = curPos.Y + 8;
             if (!IsRecruitmentRefresherActive())
             {
-                float winX = ImGui.GetWindowPos().X;
                 float rowY = curPos.Y + 10;
                 ImGui.SetCursorScreenPos(new Vector2(winX + 12, rowY));
                 bool autoRefresh = config.AutoRefresherEnabled;
@@ -616,6 +719,12 @@ namespace PfPresets
                         timerText = $"{(int)(secs / 60):D2}:{(int)(secs % 60):D2}";
                         timerColor = AccentBlue;
                     }
+                    else if (pfAutomation.HasReachedMaxDuration)
+                    {
+                        // The cap ended refreshing; the listing is still up but is no longer renewed.
+                        timerText = "stopped";
+                        timerColor = AccentYellow;
+                    }
                     else
                     {
                         timerText = "--:--";
@@ -629,29 +738,72 @@ namespace PfPresets
                     dl.AddText(new Vector2(clockStartX + clockSz + gap, centerY - tsz.Y * 0.5f),
                         ImGui.ColorConvertFloat4ToU32(timerColor), timerText);
 
-                    // Interval selector row: 15 / 30 minutes.
-                    const float chipH = 22f;
+                    // Interval + duration-cap row. Both values are free-form: the chip shows the
+                    // number and double-clicking it turns the chip into a text field.
+                    const float chipH = 22f, chipW = 62f;
                     float intervalRowY = afterCheckboxY + 2f;
                     float lblY = intervalRowY + (chipH - ImGui.GetTextLineHeight()) * 0.5f;
-                    dl.AddText(new Vector2(winX + 12, lblY), ImGui.ColorConvertFloat4ToU32(TextSecondary), "Refresh every");
-                    float chipsX = winX + 12 + ImGui.CalcTextSize("Refresh every").X + 10;
-                    const float chipW = 58f, chipGap = 6f;
-                    int interval = config.AutoRefresherIntervalMinutes == 15 ? 15 : 30;
-                    if (DrawIntervalChip("15 min", interval == 15, new Vector2(chipsX, intervalRowY), new Vector2(chipW, chipH)))
-                    { config.AutoRefresherIntervalMinutes = 15; config.Save(); }
-                    if (DrawIntervalChip("30 min", interval == 30, new Vector2(chipsX + chipW + chipGap, intervalRowY), new Vector2(chipW, chipH)))
-                    { config.AutoRefresherIntervalMinutes = 30; config.Save(); }
+                    uint labelCol = ImGui.ColorConvertFloat4ToU32(TextSecondary);
+
+                    const string everyLabel = "Refresh every";
+                    dl.AddText(new Vector2(winX + 12, lblY), labelCol, everyLabel);
+                    float intervalChipX = winX + 12 + ImGui.CalcTextSize(everyLabel).X + 8;
+
+                    int interval = Math.Clamp(config.AutoRefresherIntervalMinutes,
+                        PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes);
+                    if (DrawEditableNumberChip(
+                            "interval", ref interval, "min", null,
+                            PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes,
+                            new Vector2(intervalChipX, intervalRowY), new Vector2(chipW, chipH),
+                            $"How often to re-post your listing.\nDouble-click to change ({PfAutomation.MinRefreshMinutes}-{PfAutomation.MaxRefreshMinutes} minutes).\nA listing expires after 60 minutes."))
+                    {
+                        config.AutoRefresherIntervalMinutes = interval;
+                        config.Save();
+                    }
+
+                    const string stopLabel = "Stop after";
+                    float stopLabelX = intervalChipX + chipW + 14;
+                    dl.AddText(new Vector2(stopLabelX, lblY), labelCol, stopLabel);
+                    float hoursChipX = stopLabelX + ImGui.CalcTextSize(stopLabel).X + 8;
+
+                    int maxHours = Math.Clamp(config.AutoRefresherMaxHours, 0, PfAutomation.MaxRefreshDurationHours);
+                    if (DrawEditableNumberChip(
+                            "maxhours", ref maxHours, "h", "Never",
+                            0, PfAutomation.MaxRefreshDurationHours,
+                            new Vector2(hoursChipX, intervalRowY), new Vector2(chipW, chipH),
+                            $"Stop auto-refreshing after this long, so a listing doesn't\nstay up all night unattended. Your listing isn't cancelled -\nit just expires normally.\nDouble-click to change (0 = never stop, max {PfAutomation.MaxRefreshDurationHours}h)."))
+                    {
+                        config.AutoRefresherMaxHours = maxHours;
+                        config.Save();
+                    }
 
                     buttonY = intervalRowY + chipH + 8;
                 }
             }
 
-            // Create button. Disabled while a preset is being created/edited.
+            // Auto-adjust locked jobs toggle. Independent of the Auto Refresher (and of the
+            // external RecruitmentRefresher plugin), so it's shown regardless. When a party member
+            // leaves while recruiting, any slot locked to a single job is broadened to that job's
+            // role so the freed seat is easier to fill.
+            ImGui.SetCursorScreenPos(new Vector2(winX + 12, buttonY));
+            bool autoAdjust = config.AutoAdjustLockedJobsEnabled;
+            if (DrawStyledCheckbox("Automatically adjust 1-slot locked jobs during recruitment##FooterAutoAdjust", ref autoAdjust))
+            {
+                config.AutoAdjustLockedJobsEnabled = autoAdjust;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                PaddedTooltip("While you're recruiting as party leader, if a member leaves, any Party Finder\nslot locked to a single job is widened to that job's role (e.g. White Mage ->\nregen healers, Viper -> melee) so the seat is easier to fill.");
+            buttonY = ImGui.GetCursorScreenPos().Y + 8;
+
+            // Create button, with the Import button sharing its row. Both are disabled while a
+            // preset is being created/edited.
+            const float importW = 34f, importGap = 6f;
             ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 12, buttonY));
             bool editingInProgress = isEditorWindowVisible;
             if (editingInProgress) ImGui.BeginDisabled();
             Vector2 createBtnPos = ImGui.GetCursorScreenPos();
-            Vector2 createBtnSize = new Vector2(width - 24, 30);
+            Vector2 createBtnSize = new Vector2(width - 24 - importW - importGap, 30);
             if (DrawPrimaryButton("##CreatePreset", createBtnSize))
             {
                 var newPreset = config.AddPreset();
@@ -661,9 +813,21 @@ namespace PfPresets
             // plain Button label renders in the normal font, which lacks the glyph.
             DrawIconLabelCentered(FontAwesomeIcon.PlusCircle, "Create New Preset", createBtnPos, createBtnSize,
                 JsOkText, editingInProgress ? 0.5f : 1.0f);
+            bool createHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
+
+            Vector2 importPos = new Vector2(createBtnPos.X + createBtnSize.X + importGap, buttonY);
+            ImGui.SetCursorScreenPos(importPos);
+            if (DrawSecondaryButton("##ImportPreset", new Vector2(importW, 30)))
+                OpenShareImport();
+            DrawGlyphCentered(FontAwesomeIcon.FileImport, importPos,
+                new Vector2(importPos.X + importW, importPos.Y + 30), JsText);
+            bool importHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
             if (editingInProgress) ImGui.EndDisabled();
-            if (editingInProgress && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+
+            if (editingInProgress && (createHovered || importHovered))
                 PaddedTooltip("Finish or close the current preset first.");
+            else if (importHovered)
+                PaddedTooltip("Import a preset from a share code.");
             ImGui.Dummy(new Vector2(0, 12));
         }
     }

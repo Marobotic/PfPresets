@@ -91,6 +91,30 @@ namespace PfPresets
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(5);
 
+                // Ko-fi support button (red, heart + label), immediately left of the close button
+                // so it's big and obvious. The heart uses the icon font and the text the normal
+                // font, so the button is drawn empty and DrawIconLabelCentered paints both on top.
+                const string kofiLabel = "Support me on Ko-Fi";
+                float kofiHeartW;
+                using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                    kofiHeartW = ImGui.CalcTextSize(FontAwesomeIcon.Heart.ToIconString()).X;
+                float kofiW = kofiHeartW + 8f + ImGui.CalcTextSize(kofiLabel).X + 22f;
+                Vector2 kofiPos = new Vector2(origin.X + innerW - closeSz - 6f - kofiW, origin.Y + 4);
+                Vector2 kofiSize = new Vector2(kofiW, closeSz);
+                ImGui.SetCursorScreenPos(kofiPos);
+                ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
+                ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+                if (ImGui.Button("##KofiChecklist", kofiSize))
+                    Dalamud.Utility.Util.OpenLink("https://ko-fi.com/marobotic");
+                ImGui.PopStyleVar(2);
+                ImGui.PopStyleColor(4);
+                if (ImGui.IsItemHovered()) PaddedTooltip("Support me on Ko-Fi!");
+                DrawIconLabelCentered(FontAwesomeIcon.Heart, kofiLabel, kofiPos, kofiSize, TextPrimary);
+
                 // ── Divider ──
                 float divY = origin.Y + 48;
                 dl.AddLine(new Vector2(origin.X, divY), new Vector2(origin.X + innerW, divY),

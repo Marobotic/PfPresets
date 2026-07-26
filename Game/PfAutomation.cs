@@ -74,12 +74,14 @@ namespace PfPresets
             WritingEverythingElse,
             DelayingAfterSync,
             SubmittingAddon,
+            ConfirmingComposition,
             Done,
         }
 
         private AutomationStep currentStep = AutomationStep.Idle;
         private bool waitingForAddon = false;
         private int submitRetryCount = 0;
+        private int confirmAttempts = 0;
         private long delayExpirationTime = 0;
 
         // Retry counter for forcing the duty dropdown list to populate.
@@ -121,7 +123,7 @@ namespace PfPresets
                 or AutomationStep.WritingDutyId or AutomationStep.DelayingAfterDutyId => "Selecting your duty...",
             AutomationStep.WritingRoles or AutomationStep.DelayingAfterRoles => "Setting up roles...",
             AutomationStep.WritingEverythingElse or AutomationStep.DelayingAfterSync => "Applying your settings...",
-            AutomationStep.SubmittingAddon => "Posting your listing...",
+            AutomationStep.SubmittingAddon or AutomationStep.ConfirmingComposition => "Posting your listing...",
             AutomationStep.Done => IsAutomationFailed ? "Something went wrong while posting." : "All set, PF is up!",
             _ => AutomationStatus,
         };
@@ -216,6 +218,64 @@ namespace PfPresets
 
             return true;
         }
+
+        /// <summary>True when the local player leads the current party (or is solo). Unlike
+        /// <see cref="CanRecruit"/> this makes no claim about whether a listing is already up, so
+        /// it's usable while actively recruiting (e.g. the locked-slot auto-adjuster).</summary>
+        public unsafe bool IsPartyLeader()
+        {
+            var crossRealmProxy = InfoProxyCrossRealm.Instance();
+            if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
+                return InfoProxyCrossRealm.IsLocalPlayerPartyLeader();
+
+            var groupManager = GroupManager.Instance();
+            if (groupManager != null && groupManager->MainGroup.MemberCount > 0)
+            {
+                var leader = groupManager->MainGroup.GetPartyMemberByIndex((int)groupManager->MainGroup.PartyLeaderIndex);
+                return leader != null && leader->ContentId == playerState.ContentId;
+            }
+
+            return true; // solo: you are effectively the leader of your own listing
+        }
+
+        /// <summary>True when any current party member (including you) is on a non-combat job -
+        /// crafter or gatherer. Applying a battle-duty listing with such a job in the party makes
+        /// the game raise the "party composition" warning, so the UI flags it in advance.</summary>
+        public unsafe bool PartyHasNonBattleJob()
+        {
+            if (IsNonBattleJob(GetLocalPlayerJobId()))
+                return true;
+
+            var crossRealmProxy = InfoProxyCrossRealm.Instance();
+            if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
+            {
+                for (int i = 0; i < crossRealmProxy->GroupCount; i++)
+                {
+                    var group = crossRealmProxy->CrossRealmGroups[i];
+                    for (int c = 0; c < group.GroupMemberCount; c++)
+                        if (IsNonBattleJob(group.GroupMembers[c].ClassJobId))
+                            return true;
+                }
+                return false;
+            }
+
+            var partyInfo = InfoProxyPartyMember.Instance();
+            if (partyInfo != null)
+            {
+                uint count = partyInfo->GetEntryCount();
+                for (uint i = 0; i < count; i++)
+                {
+                    var entry = partyInfo->GetEntry(i);
+                    if (entry != null && IsNonBattleJob((uint)entry->Job))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>A ClassJob row id that is a real job but not a combat one (crafter/gatherer):
+        /// it has no entry in <see cref="JobData"/>, which only lists Disciples of War/Magic.</summary>
+        private static bool IsNonBattleJob(uint jobId) => jobId > 0 && JobData.FindById(jobId) == null;
 
         // ══════════════════════════════════════════════════════════
         //  APPLY PRESET
@@ -361,6 +421,7 @@ namespace PfPresets
                 case AutomationStep.WritingEverythingElse: StepWritingEverythingElse(); break;
                 case AutomationStep.DelayingAfterSync: StepDelay("Stabilization delay complete. Proceeding to submit.", null, AutomationStep.SubmittingAddon, 200); break;
                 case AutomationStep.SubmittingAddon: StepSubmittingAddon(); break;
+                case AutomationStep.ConfirmingComposition: StepConfirmingComposition(); break;
             }
         }
 
@@ -629,7 +690,12 @@ namespace PfPresets
                 AutomationStatus = "Submitting Party Finder listing...";
                 AtkHelpers.ClickButton(&addon->AtkUnitBase, addon->RecruitMembersButton);
 
-                FinishAutomation("Recruitment Listing Created!");
+                // The game may raise a "cannot carry out the selected objective with this party
+                // composition" confirmation (e.g. a crafter/gatherer is in the party). Watch for it
+                // for a short window and auto-confirm so the listing still posts.
+                confirmAttempts = 0;
+                currentStep = AutomationStep.ConfirmingComposition;
+                delayExpirationTime = Environment.TickCount64 + 150;
             }
             else
             {
@@ -640,6 +706,57 @@ namespace PfPresets
                     FinishAutomation("Recruitment Failed: Button not enabled");
                 }
             }
+        }
+
+        /// <summary>After clicking Recruit, briefly watches for the party-composition confirmation
+        /// dialog and clicks Yes if it appears; otherwise finishes once the short window elapses.</summary>
+        private unsafe void StepConfirmingComposition()
+        {
+            if (TryConfirmCompositionDialog())
+            {
+                FinishAutomation("Recruitment Listing Created!");
+                return;
+            }
+
+            // Wait briefly for the dialog to appear; if it never does, the listing posted cleanly.
+            confirmAttempts++;
+            if (confirmAttempts >= 12) // ~12 * 50ms ≈ 0.6s after the Recruit click
+            {
+                FinishAutomation("Recruitment Listing Created!");
+                return;
+            }
+            delayExpirationTime = Environment.TickCount64 + 50;
+        }
+
+        /// <summary>
+        /// If the game's "You cannot carry out the selected objective with this party composition.
+        /// Proceed anyway?" dialog is up, clicks Yes and returns true. Safe to call every frame;
+        /// returns false when the dialog isn't present or its Yes button isn't ready yet. Shared by
+        /// the apply flow, the Auto Refresher, and the locked-slot adjuster.
+        /// </summary>
+        private unsafe bool TryConfirmCompositionDialog()
+        {
+            var addonPtr = (nint)gameGui.GetAddonByName("SelectYesno");
+            if (addonPtr == IntPtr.Zero) return false;
+            var addon = (AtkUnitBase*)addonPtr;
+            if (!addon->IsVisible) return false;
+
+            var yesno = (AddonSelectYesno*)addonPtr;
+
+            // The prompt is identical every time; match a distinctive part so we never confirm an
+            // unrelated yes/no dialog. If the text can't be read, still confirm - this only runs in
+            // the brief window right after we click Recruit.
+            string prompt = yesno->PromptText != null ? yesno->PromptText->NodeText.ToString() : string.Empty;
+            bool isCompositionWarning = string.IsNullOrEmpty(prompt)
+                || prompt.Contains("party composition", StringComparison.OrdinalIgnoreCase)
+                || prompt.Contains("cannot carry out", StringComparison.OrdinalIgnoreCase);
+            if (!isCompositionWarning) return false;
+
+            if (yesno->YesButton == null || !AtkHelpers.ClickAddonButton(addon, yesno->YesButton))
+                return false;
+
+            pluginLog.Information($"[PF Presets] Auto-confirmed party-composition warning: \"{prompt}\"");
+            return true;
         }
 
         private void FinishAutomation(string status)
@@ -726,26 +843,31 @@ namespace PfPresets
             *((byte*)recruitment + OffsetSpecificDutyFlag) = (byte)(dutyId != 0 ? 2 : 0);
         }
 
-        /// <summary>Finds the preset's duty in its category, falling back to a fuzzy name match
-        /// and finally the category's first duty (to avoid an unintended "All" selection).</summary>
+        /// <summary>
+        /// Resolves the preset's duty. The stored ContentFinderCondition row id is authoritative and
+        /// is language- and rename-proof; the display name is only consulted for presets saved before
+        /// row ids existed (or for the synthetic high-end entries, which have no stable id).
+        ///
+        /// Returns null when the duty genuinely can't be identified. The caller then leaves the
+        /// listing on "All duties" rather than guessing - posting a *wrong* duty is far worse than
+        /// posting an unset one.
+        /// </summary>
         private DutyEntry? ResolveDuty(PfPresetData preset)
         {
-            var duties = dutyDataHelper.GetDutiesByType(preset.DutyCategoryName);
-            if (duties.Count == 0) return null;
-
-            var duty = duties.FirstOrDefault(d => d.Name.Equals(preset.DutyName, StringComparison.OrdinalIgnoreCase));
-            if (duty != null) return duty;
-
-            duty = duties.FirstOrDefault(d => d.Name.Contains(preset.DutyName, StringComparison.OrdinalIgnoreCase))
-                 ?? duties.FirstOrDefault(d => preset.DutyName.Contains(d.Name, StringComparison.OrdinalIgnoreCase));
-            if (duty != null)
+            if (preset.DutyRowId != 0 && !DutyDataHelper.IsSyntheticRowId(preset.DutyRowId))
             {
-                pluginLog.Warning($"Exact duty '{preset.DutyName}' not found in category '{preset.DutyCategoryName}'. Using similar duty '{duty.Name}' instead.");
-                return duty;
+                var byId = dutyDataHelper.GetDutyEntry(preset.DutyRowId);
+                if (byId != null)
+                    return byId;
+
+                pluginLog.Warning($"Duty row id {preset.DutyRowId} ('{preset.DutyName}') is no longer in the game data; falling back to a name lookup.");
             }
 
-            pluginLog.Warning($"Duty '{preset.DutyName}' not found in category '{preset.DutyCategoryName}'. No similar duties found. Using first duty in category as fallback.");
-            return duties[0];
+            var byName = dutyDataHelper.FindDutyByName(preset.DutyCategoryName, preset.DutyName);
+            if (byName == null)
+                pluginLog.Warning($"Duty '{preset.DutyName}' not found in category '{preset.DutyCategoryName}'. Leaving the listing's duty unset.");
+
+            return byName;
         }
 
         private unsafe void WriteGeneralSettingsToMemory(PfPresetData preset)

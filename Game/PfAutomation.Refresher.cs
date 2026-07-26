@@ -30,6 +30,22 @@ namespace PfPresets
         private string? previousCommentString = null;
         private bool isRefreshExecuting = false;
 
+        /// <summary>Total time the current listing has been kept alive by the refresher, in hours.
+        /// Reset whenever recruitment stops. Deliberately not persisted: the cap is about one
+        /// unattended session, so logging out or ending the listing starts the budget over.</summary>
+        private double hoursRecruiting = 0;
+
+        /// <summary>Set once the runtime cap is hit so we stop refreshing and only say so once.</summary>
+        private bool maxDurationReached = false;
+
+        /// <summary>Bounds for the user-set refresh interval. A Party Finder listing expires after
+        /// 60 minutes, so anything at or past that would let it lapse before the refresh fires.</summary>
+        public const int MinRefreshMinutes = 1;
+        public const int MaxRefreshMinutes = 55;
+
+        /// <summary>Upper bound for the "stop after" cap, in hours (0 = no limit).</summary>
+        public const int MaxRefreshDurationHours = 24;
+
         /// <summary>
         /// Resolves the native OpenPartyFinder function once at load. If the signature can't be
         /// found (e.g. after a game patch), auto-refresh is disabled gracefully rather than throwing.
@@ -54,28 +70,55 @@ namespace PfPresets
             return this.condition[ConditionFlag.UsingPartyFinder];
         }
 
-        /// <summary>How often the Auto Refresher re-posts the listing, in minutes. Driven by the
-        /// user's choice (15 or 30); falls back to 30 if the stored value is something else.</summary>
+        /// <summary>How often the Auto Refresher re-posts the listing, in minutes. Free-form, clamped
+        /// to <see cref="MinRefreshMinutes"/>..<see cref="MaxRefreshMinutes"/> so a bad stored value
+        /// can never stall the timer or let the listing expire.</summary>
         public double RefreshIntervalMinutes =>
-            config.AutoRefresherIntervalMinutes == 15 ? 15.0 : 30.0;
+            Math.Clamp(config.AutoRefresherIntervalMinutes, MinRefreshMinutes, MaxRefreshMinutes);
 
-        /// <summary>True while the refresh countdown is actively ticking: the feature is enabled
-        /// and a Party Finder is currently up (whether it was set up via a preset or by hand).</summary>
-        public bool IsRefreshTimerRunning => config.AutoRefresherEnabled && IsRecruiting();
+        /// <summary>True while the refresh countdown is actively ticking: the feature is enabled,
+        /// a Party Finder is up (preset-made or manual), and the runtime cap hasn't been hit.</summary>
+        public bool IsRefreshTimerRunning => config.AutoRefresherEnabled && IsRecruiting() && !maxDurationReached;
+
+        /// <summary>True once the "stop after N hours" cap has ended refreshing for this listing.</summary>
+        public bool HasReachedMaxDuration => maxDurationReached;
 
         /// <summary>Seconds remaining until the next auto-refresh.</summary>
         public double SecondsUntilNextRefresh =>
             Math.Max(0.0, (RefreshIntervalMinutes - minutesElapsed) * 60.0);
 
+        /// <summary>Hours the current listing has been kept alive by the refresher.</summary>
+        public double HoursRecruiting => hoursRecruiting;
+
         /// <summary>Called every framework update; counts up while recruiting and triggers a
-        /// refresh when the interval elapses.</summary>
+        /// refresh when the interval elapses, until the optional runtime cap is reached.</summary>
         public void UpdateAutoRefresher(double deltaMins)
         {
             if (!config.AutoRefresherEnabled || !IsRecruiting())
             {
+                // Recruitment ended (or the feature was turned off): the next listing starts with a
+                // fresh interval and a fresh duration budget.
                 previousCommentString = null;
                 refreshCount = 0;
                 minutesElapsed = 0;
+                hoursRecruiting = 0;
+                maxDurationReached = false;
+                return;
+            }
+
+            if (maxDurationReached)
+                return;
+
+            hoursRecruiting += deltaMins / 60.0;
+
+            int maxHours = Math.Clamp(config.AutoRefresherMaxHours, 0, MaxRefreshDurationHours);
+            if (maxHours > 0 && hoursRecruiting >= maxHours)
+            {
+                // Stop renewing but leave the listing alone - it expires on its own, exactly as it
+                // would have if the refresher had never been running.
+                maxDurationReached = true;
+                pluginLog.Information($"[AutoRefresher] Reached the {maxHours}h limit after {refreshCount} refresh(es); no longer re-posting.");
+                chatGui.Print($"[PF Presets] Auto-refresh stopped after {maxHours} hour(s). Your listing will expire normally.");
                 return;
             }
 
@@ -109,38 +152,7 @@ namespace PfPresets
                     // 1. Restore the comment if the client cleared it, then open the listing.
                     //    All game calls run on the framework thread - clicking native UI buttons
                     //    off-thread is unreliable.
-                    bool opened = await framework.RunOnFrameworkThread(() =>
-                    {
-                        unsafe
-                        {
-                            var agent = AgentLookingForGroup.Instance();
-                            if (agent == null)
-                            {
-                                pluginLog.Warning("[AutoRefresher] AgentLookingForGroup instance is null.");
-                                return false;
-                            }
-                            if (openPartyFinder == null)
-                            {
-                                pluginLog.Warning("[AutoRefresher] OpenPartyFinder function unavailable (signature not found).");
-                                return false;
-                            }
-
-                            string comment = agent->StoredRecruitmentInfo.CommentString;
-                            if (previousCommentString != null && comment != previousCommentString && string.IsNullOrWhiteSpace(comment))
-                            {
-                                pluginLog.Information($"[AutoRefresher] Comment was cleared out, reapplying: '{previousCommentString}'");
-                                agent->StoredRecruitmentInfo.CommentString = previousCommentString;
-                            }
-                            else if (!string.IsNullOrWhiteSpace(comment))
-                            {
-                                previousCommentString = comment;
-                            }
-
-                            openPartyFinder(agent, playerState.ContentId);
-                            return true;
-                        }
-                    });
-                    if (!opened) return;
+                    if (!await OpenOwnListing()) return;
 
                     // 2. Wait for the listing detail window, then press Edit (button 109).
                     if (!await WaitForAddonAndClickButton("LookingForGroupDetail", 109, "Edit"))
@@ -150,6 +162,9 @@ namespace PfPresets
                     //    (button 113) - this re-posts the listing and resets its timer.
                     if (!await WaitForAddonAndClickButton("LookingForGroupCondition", 113, "Recruit"))
                         return;
+
+                    // 4. Confirm the party-composition warning if the game raises it.
+                    await ConfirmCompositionDialogAsync();
 
                     refreshCount++;
                     pluginLog.Information($"[AutoRefresher] Recruitment auto-refreshed successfully (Count: {refreshCount}).");
@@ -163,6 +178,63 @@ namespace PfPresets
                     isRefreshExecuting = false;
                 }
             });
+        }
+
+        /// <summary>
+        /// Restores the listing comment if the client cleared it, then opens the player's own
+        /// recruitment detail window via the native OpenPartyFinder function. Runs on the framework
+        /// thread. Returns false if the agent or the native function is unavailable. Shared by the
+        /// Auto Refresher and the locked-slot auto-adjuster.
+        /// </summary>
+        private Task<bool> OpenOwnListing()
+        {
+            return framework.RunOnFrameworkThread(() =>
+            {
+                unsafe
+                {
+                    var agent = AgentLookingForGroup.Instance();
+                    if (agent == null)
+                    {
+                        pluginLog.Warning("[AutoRefresher] AgentLookingForGroup instance is null.");
+                        return false;
+                    }
+                    if (openPartyFinder == null)
+                    {
+                        pluginLog.Warning("[AutoRefresher] OpenPartyFinder function unavailable (signature not found).");
+                        return false;
+                    }
+
+                    string comment = agent->StoredRecruitmentInfo.CommentString;
+                    if (previousCommentString != null && comment != previousCommentString && string.IsNullOrWhiteSpace(comment))
+                    {
+                        pluginLog.Information($"[AutoRefresher] Comment was cleared out, reapplying: '{previousCommentString}'");
+                        agent->StoredRecruitmentInfo.CommentString = previousCommentString;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(comment))
+                    {
+                        previousCommentString = comment;
+                    }
+
+                    openPartyFinder(agent, playerState.ContentId);
+                    return true;
+                }
+            });
+        }
+
+        /// <summary>
+        /// After a Recruit/Apply click, watches briefly (~0.6s) for the game's party-composition
+        /// confirmation dialog and clicks Yes if it appears. No-op when it doesn't. Shared by the
+        /// Auto Refresher and the locked-slot adjuster; the apply flow handles it in its own step.
+        /// </summary>
+        private async Task ConfirmCompositionDialogAsync()
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                if (disposed) return;
+                bool confirmed = await framework.RunOnFrameworkThread(() => TryConfirmCompositionDialog());
+                if (confirmed) return;
+                await Task.Delay(50);
+            }
         }
 
         /// <summary>

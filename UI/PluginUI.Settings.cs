@@ -44,7 +44,7 @@ namespace PfPresets
                         config.AutoRefresherEnabled = autoRefresh;
                         config.Save();
                     }
-                    ImGui.TextColored(TextSecondary, "Automatically re-posts your Party Finder listing\nevery 15 or 30 minutes (set in the main window).");
+                    ImGui.TextColored(TextSecondary, "Automatically re-posts your Party Finder listing.\nSet the interval and the stop-after limit in the main window.");
                 }
 
                 ImGui.Dummy(new Vector2(0, 16));

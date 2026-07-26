@@ -17,9 +17,13 @@ framework used with XIVLauncher).
 - **Role & job control** — per-slot role or individual job selection with the same
   categories as the in-game window, or let the game auto-adjust roles
   ("Seek Job Distributions").
-- **Auto Refresher** — re-posts your listing every 15 or 30 minutes (Edit → Recruit,
-  exactly like doing it by hand), with a live countdown in the main window. Disabled
-  automatically if you already run the standalone RecruitmentRefresher plugin.
+- **Share presets** — every preset exports to a single-line code you can paste into Discord.
+  *Share* on a preset's menu opens the code with a copy button; the **Import** button next to
+  *Create New Preset* takes one back in, either pasted or straight off your clipboard.
+- **Auto Refresher** — re-posts your listing on a timer (Edit → Recruit, exactly like doing
+  it by hand), with a live countdown in the main window. Double-click the interval to set any
+  value from 1 to 55 minutes, and optionally have it stop on its own after a set number of
+  hours. Disabled automatically if you already run the standalone RecruitmentRefresher plugin.
 - **Party-aware** — works with cross-world parties and detects party leadership live, so
   a freshly passed lead is recognized immediately.
 
@@ -38,7 +42,13 @@ framework used with XIVLauncher).
 | Command | Effect |
 | --- | --- |
 | `/pfp` or `/pfpresets` | Toggle the PF Presets window |
+| `/pfp apply <name>` | Post a preset by name — put this in a hotbar macro |
+| `/pfp list` | List your presets and the duty each one is set to |
 | `/pfp refresh` | Re-post your current listing immediately |
+
+`apply` matches the preset name case-insensitively, and accepts a unique prefix or partial
+name (`/pfp apply savage` finds "M4S Savage Prog"). If the name is ambiguous it says so
+rather than guessing.
 
 ## Building
 
@@ -53,12 +63,17 @@ framework used with XIVLauncher).
 
 ```
 Plugin.cs            Entry point: service wiring, chat commands
-Configuration.cs     Saved settings and preset CRUD
-Data/                Preset model, job/duty static data, bitmask conversions
+Configuration.cs     Saved settings, preset CRUD, and config migrations
+Data/                Preset model, job/duty static data, bitmask conversions, share codec
 Game/                Native Party Finder automation (memory writes, UI clicks, refresher)
 UI/                  ImGui windows (one partial class file per window) and the theme
 repo/                The Dalamud plugin repository served from GitHub (repo.json + zips)
 ```
+
+Presets reference their duty by `ContentFinderCondition` row id (`PfPresetData.DutyRowId`),
+with the display name kept only as a fallback for presets saved before 3.0.0.1 and for the
+handful of high-end duties missing from the game sheet. `Configuration.Migrate` back-fills
+the ids on first load.
 
 ## Credits
 

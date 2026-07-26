@@ -18,6 +18,17 @@ namespace PfPresets
         private List<DutyEntry>? cachedDuties;
         private Dictionary<uint, DutyEntry>? dutyById;
 
+        /// <summary>
+        /// Row ids at or above this are synthetic: entries we add for high-end duties missing from
+        /// the ContentFinderCondition sheet. They are assigned in list order, so they can shift
+        /// between game versions and must never be written to game memory or stored in a preset as
+        /// a stable reference - the duty name stays authoritative for those.
+        /// </summary>
+        public const uint SyntheticRowIdStart = 1000000;
+
+        /// <summary>True for the synthetic high-end entries described on <see cref="SyntheticRowIdStart"/>.</summary>
+        public static bool IsSyntheticRowId(uint rowId) => rowId >= SyntheticRowIdStart;
+
         private static readonly string[] HighEndDutyNames = new string[]
         {
             "The Cloud of Darkness (Chaotic)",
@@ -84,7 +95,7 @@ namespace PfPresets
                 }
 
                 // Add missing High-end duties to cachedDuties for lookup & search consistency
-                uint mockIdStart = 1000000;
+                uint mockIdStart = SyntheticRowIdStart;
                 foreach (var name in HighEndDutyNames)
                 {
                     if (!cachedDuties.Any(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
@@ -198,6 +209,25 @@ namespace PfPresets
             return cachedDuties
                 .Where(d => d.ContentTypeName == contentTypeName)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Finds a duty by display name within a content-type category, exactly first and then by
+        /// substring either way round. Returns null when nothing matches - callers must treat that
+        /// as "no duty" rather than guessing, so a renamed duty never posts the wrong listing.
+        /// </summary>
+        public DutyEntry? FindDutyByName(string contentTypeName, string dutyName)
+        {
+            if (string.IsNullOrWhiteSpace(dutyName))
+                return null;
+
+            var duties = GetDutiesByType(contentTypeName);
+            if (duties.Count == 0)
+                return null;
+
+            return duties.FirstOrDefault(d => d.Name.Equals(dutyName, StringComparison.OrdinalIgnoreCase))
+                ?? duties.FirstOrDefault(d => d.Name.Contains(dutyName, StringComparison.OrdinalIgnoreCase))
+                ?? duties.FirstOrDefault(d => dutyName.Contains(d.Name, StringComparison.OrdinalIgnoreCase));
         }
 
         private void EnsureLoaded()

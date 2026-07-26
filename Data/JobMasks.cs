@@ -26,6 +26,14 @@ namespace PfPresets
             return idx == -1 ? -1 : idx + 1;
         }
 
+        /// <summary>The ClassJob row ID for a game-side slot bit (the inverse of
+        /// <see cref="GetGameJobBitIndex"/>), or 0 if the bit maps to no known job.</summary>
+        public static uint GetJobIdFromGameBit(int gameBit)
+        {
+            int idx = gameBit - 1;
+            return (idx >= 0 && idx < SortedCombatJobIds.Count) ? SortedCombatJobIds[idx] : 0;
+        }
+
         /// <summary>Converts a plugin bitfield (BitIndex space) to the game's slot mask.</summary>
         public static ulong ToGameMask(ulong bitIndexMask)
         {
@@ -52,6 +60,20 @@ namespace PfPresets
             foreach (var job in JobData.AllJobsAndClasses)
             {
                 if (JobData.GetRoleForCategory(job.Category) == role)
+                    mask |= 1UL << job.BitIndex;
+            }
+            return mask;
+        }
+
+        /// <summary>Bitfield (BitIndex space) of every job and class in the given sub-category.
+        /// Finer-grained than <see cref="GetRoleMask"/>: it keeps the pure/barrier healer split, so
+        /// e.g. a White Mage broadens to regen healers (WHM/AST/CNJ), not all healers.</summary>
+        public static ulong GetCategoryMask(JobCategory category)
+        {
+            ulong mask = 0;
+            foreach (var job in JobData.AllJobsAndClasses)
+            {
+                if (job.Category == category)
                     mask |= 1UL << job.BitIndex;
             }
             return mask;

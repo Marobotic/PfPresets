@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "plugin": "PfPresets",
+  "pluginName": "PF Presets",
+  "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
+  "releases": [
+    {
+      "version": "3.0.0.1",
+      "date": "2026-07-25",
+      "published": true,
+      "headline": "Preset sharing, macro support, and a refresher you can actually tune",
+      "notes": "Ships the 3.0.0 features as well - 3.0.0 was never served from the plugin repo, so users upgrade straight from 2.1.2 to this.",
+      "changes": [
+        {
+          "type": "new",
+          "title": "Share presets with a one-line code",
+          "body": "Pick Share on any preset's menu and you get a single line of text with a copy button - paste it in Discord and anyone running PF Presets can use your setup. The Import button next to Create New Preset takes one back in, either pasted into the box or pulled straight off your clipboard. Codes that aren't PF Presets codes, or that got cut off mid-copy, are rejected with a plain explanation instead of importing something broken."
+        },
+        {
+          "type": "new",
+          "title": "/pfp apply <name>",
+          "body": "Posts a preset without opening the window, so a preset can live on a hotbar macro. Partial names work as long as they're unambiguous. Added /pfp list to see the exact names."
+        },
+        {
+          "type": "changed",
+          "title": "Auto Refresher is no longer locked to 15 or 30 minutes",
+          "body": "Double-click the interval to type any value from 1 to 55. Next to it there's a new Stop after limit - set it and the refresher stops renewing your listing after that many hours, so a Party Finder can't sit up all night unattended. Your listing isn't cancelled when the limit hits; it just expires the way it normally would. 'Never' (the default) keeps the old behaviour."
+        },
+        {
+          "type": "fixed",
+          "title": "A renamed duty could post the wrong listing",
+          "body": "Presets recorded their duty by name and, when that name no longer matched, silently fell back to the first duty in the category - so a patch that renamed your duty could put up a listing for something else entirely. Presets now store the duty's id, which patches don't change, and when a duty genuinely can't be identified the listing is left with no duty set instead of guessing. Existing presets are upgraded automatically on first load."
+        },
+        {
+          "type": "changed",
+          "title": "The window header shows the plugin version",
+          "body": "The line under the title now reads the running version instead of the preset count."
+        },
+        {
+          "type": "internal",
+          "title": "Config schema v1",
+          "body": "Configuration.Migrate back-fills duty row ids for presets saved by earlier versions. Preset share codes are versioned behind a PFP1 magic prefix so the format can change later without breaking old codes silently."
+        }
+      ]
+    },
+    {
+      "version": "3.0.0",
+      "date": "2026-07-25",
+      "published": false,
+      "headline": "Auto-adjusting locked job slots",
+      "notes": "Developed but never served from repo.json - its features reached users as part of 3.0.0.1.",
+      "changes": [
+        {
+          "type": "new",
+          "title": "Auto-adjust locked job slots",
+          "body": "A toggle under the Auto Refresher. While you're recruiting as party leader, if a member leaves, any Party Finder slot locked to a single job is automatically widened to that job's role five seconds later - White Mage becomes regen healers, Red Mage becomes casters, Viper becomes melee - so the freed seat is easier to fill. If a slot is somehow locked to a non-combat job, it falls back to the standard auto-fill composition instead."
+        },
+        {
+          "type": "fixed",
+          "title": "A serious crash when duplicating or reordering presets",
+          "body": "Duplicating or reordering a preset from a card's menu could crash the plugin and, worse, corrupt the interface of Dalamud and every other plugin. Rendering is now hardened so a plugin error can never leak its styling into others."
+        },
+        {
+          "type": "changed",
+          "title": "Taller preset cards",
+          "body": "Long descriptions are fully visible instead of being cut off."
+        },
+        {
+          "type": "changed",
+          "title": "Ko-fi support button",
+          "body": "Added to the Applying Preset window next to the close button; the header button now reads 'Support me on Ko-Fi' with the heart."
+        }
+      ]
+    },
+    {
+      "version": "2.1.2",
+      "date": "2026-07-04",
+      "published": true,
+      "headline": "Safety fixes and a delete confirmation",
+      "changes": [
+        {
+          "type": "new",
+          "title": "Confirmation prompt before deleting a preset",
+          "body": "A misclick no longer wipes a preset instantly."
+        },
+        {
+          "type": "fixed",
+          "title": "A rare crash on unload mid-apply",
+          "body": "Could happen if the plugin was unloaded or updated while it was in the middle of applying a preset."
+        },
+        {
+          "type": "fixed",
+          "title": "Safer duty selection",
+          "body": "If a high-end duty has been renamed or removed by a game patch, the plugin leaves the listing's duty unset instead of posting a wrong one."
+        },
+        {
+          "type": "removed",
+          "title": "Two options that never did anything",
+          "body": "'Unselect Classes' and the item-level 'or Above' toggle were saved but never applied to the Party Finder."
+        },
+        {
+          "type": "internal",
+          "title": "Codebase reorganised into Data / Game / UI",
+          "body": "No change to saved presets."
+        }
+      ]
+    },
+    {
+      "version": "2.1.1",
+      "date": "2026-06-28",
+      "published": true,
+      "headline": "The Auto Refresher works end to end",
+      "changes": [
+        {
+          "type": "fixed",
+          "title": "Auto Refresher performs the full Edit to Apply Changes sequence",
+          "body": "Matching the RecruitmentRefresher plugin's approach, so your Party Finder is reliably re-posted instead of just opening the window."
+        },
+        {
+          "type": "new",
+          "title": "Live countdown timer",
+          "body": "Sits next to the Auto Refresher toggle and shows the time until the next refresh. It starts once your Party Finder is up."
+        },
+        {
+          "type": "new",
+          "title": "Choice of refresh interval",
+          "body": "Every 15 or 30 minutes."
+        },
+        {
+          "type": "new",
+          "title": "/pfp refresh command",
+          "body": "Refreshes your listing on demand."
+        }
+      ]
+    },
+    {
+      "version": "2.1.0",
+      "date": "2026-06-28",
+      "published": true,
+      "headline": "Party detection fixes and a redesigned status window",
+      "changes": [
+        {
+          "type": "fixed",
+          "title": "Party job detection works when members are in different zones",
+          "body": "Auto-adjust slots read party jobs from the social party list instead of the in-zone party list, so a teammate being on another map no longer wipes out their detected job."
+        },
+        {
+          "type": "fixed",
+          "title": "Party leader detection updates when lead is passed to you",
+          "body": "The plugin could still think you weren't the leader after leadership was handed to you, blocking recruitment. It now reads the live party leader at the moment you apply a preset."
+        },
+        {
+          "type": "fixed",
+          "title": "The built-in Auto Refresher actually works",
+          "body": "Refreshes every 30 minutes using the same proven method as the RecruitmentRefresher plugin. The toggle sits as its own section above the Create button instead of overlapping it."
+        },
+        {
+          "type": "changed",
+          "title": "Redesigned the Applying Preset window",
+          "body": "Matches the modern look of the rest of the plugin, with a friendly play-by-play and a smooth progress bar. Finishing shows 'All set, PF is up!' and a green Done button. The old settings-comparison list was removed."
+        },
+        {
+          "type": "changed",
+          "title": "Assorted UI fixes",
+          "body": "Moved the Ko-fi button into the window header and made it bigger, surfaced the Auto Refresher toggle in the main window (hidden automatically if you have RecruitmentRefresher), fixed the Create New Preset button icon, and fixed long preset comments so they wrap instead of running under the Apply Preset button."
+        }
+      ]
+    },
+    {
+      "version": "2.0.1",
+      "date": "2026-06-21",
+      "published": true,
+      "headline": "Private-party password moved out from behind the Apply button",
+      "changes": [
+        {
+          "type": "changed",
+          "title": "Password shown next to the preset name",
+          "body": "It's no longer hidden behind the Apply Preset button."
+        }
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "date": "2026-06-21",
+      "published": true,
+      "headline": "Design revamp",
+      "changes": [
+        {
+          "type": "changed",
+          "title": "Revamped design, usability and readability",
+          "body": "Reworked the look of the plugin throughout and fixed various bugs."
+        }
+      ]
+    },
+    {
+      "version": "1.0.6",
+      "date": "2026-06-10",
+      "published": true,
+      "headline": "Applying a preset selects the right duty",
+      "changes": [
+        {
+          "type": "fixed",
+          "title": "Presets no longer post as 'All'",
+          "body": "Applying a preset would often leave your listing set to All instead of the duty you saved, and you had to manually open the in-game duty menu once before presets would work. Applying a preset now sets the correct duty on its own."
+        }
+      ]
+    },
+    {
+      "version": "1.0.5",
+      "date": null,
+      "published": true,
+      "headline": "Initial releases",
+      "notes": "Covers 1.0.5 and earlier; individual release dates were not recorded.",
+      "changes": [
+        {
+          "type": "new",
+          "title": "Party Finder preset manager",
+          "body": "Save and manage Party Finder recruitment presets - duty, objective, roles, conditions, languages and more - and apply them with one click."
+        }
+      ]
+    }
+  ]
+}

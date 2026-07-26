@@ -51,6 +51,11 @@ namespace PfPresets
 
             // Initialize helpers
             this.dutyDataHelper = new DutyDataHelper(dataManager, pluginLog);
+
+            // Upgrade an older config now that duty data is available (v0 presets need it to
+            // back-fill their duty row ids).
+            this.config.Migrate(this.dutyDataHelper, pluginLog);
+
             this.pfAutomation = new PfAutomation(
                 gameGui,
                 pluginLog,
@@ -70,7 +75,8 @@ namespace PfPresets
             // Register commands
             var mainCommandInfo = new CommandInfo(OnCommand)
             {
-                HelpMessage = "Opens the PF Presets window. Use \"/pfp refresh\" to re-post your listing now.",
+                HelpMessage = "Opens the PF Presets window. \"/pfp apply <name>\" posts a preset, "
+                            + "\"/pfp refresh\" re-posts your listing, \"/pfp list\" shows your presets.",
                 ShowInHelp = true,
             };
             this.commandManager.AddHandler("/pfp", mainCommandInfo);
@@ -93,9 +99,17 @@ namespace PfPresets
 
         private void OnCommand(string command, string args)
         {
+            string trimmed = args.Trim();
+
+            // Split the leading verb from its argument so "apply Savage Prog" keeps the spaces in
+            // the preset name.
+            int space = trimmed.IndexOf(' ');
+            string verb = space < 0 ? trimmed : trimmed.Substring(0, space);
+            string rest = space < 0 ? string.Empty : trimmed.Substring(space + 1).Trim();
+
             // "/pfp refresh" triggers the auto-refresh sequence immediately (the same
             // Edit -> Apply flow the timer runs).
-            if (args.Trim().Equals("refresh", StringComparison.OrdinalIgnoreCase))
+            if (verb.Equals("refresh", StringComparison.OrdinalIgnoreCase))
             {
                 if (this.pfAutomation.IsRecruiting())
                 {
@@ -109,7 +123,58 @@ namespace PfPresets
                 return;
             }
 
+            // "/pfp apply <name>" posts a preset without opening the window, so presets can live
+            // on a hotbar macro.
+            if (verb.Equals("apply", StringComparison.OrdinalIgnoreCase))
+            {
+                OnApplyCommand(rest);
+                return;
+            }
+
+            // "/pfp list" - so you can find the exact name to pass to apply.
+            if (verb.Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                if (this.config.Presets.Count == 0)
+                {
+                    this.chatGui.Print("[PF Presets] You have no presets yet.");
+                    return;
+                }
+                this.chatGui.Print($"[PF Presets] {this.config.Presets.Count} preset(s):");
+                foreach (var preset in this.config.Presets)
+                    this.chatGui.Print($"  {preset.Name}  ({preset.DutyName})");
+                return;
+            }
+
+            if (trimmed.Length > 0)
+            {
+                this.chatGui.Print($"[PF Presets] Unknown command \"{trimmed}\". Try: /pfp apply <name>, /pfp refresh, /pfp list");
+                return;
+            }
+
             this.ui.ToggleMainWindow();
+        }
+
+        /// <summary>Handles "/pfp apply &lt;name&gt;": resolves the name and runs the same apply flow
+        /// the card's Apply button uses, reporting anything that stops it to chat.</summary>
+        private void OnApplyCommand(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                this.chatGui.Print("[PF Presets] Usage: /pfp apply <preset name>");
+                return;
+            }
+
+            var preset = this.config.FindPresetByName(name, out bool ambiguous);
+            if (preset == null)
+            {
+                this.chatGui.Print(ambiguous
+                    ? $"[PF Presets] \"{name}\" matches more than one preset. Use the full name."
+                    : $"[PF Presets] No preset named \"{name}\". Use /pfp list to see them.");
+                return;
+            }
+
+            // ApplyPreset reports its own precondition failures (not the leader, already recruiting…).
+            this.pfAutomation.ApplyPreset(preset);
         }
 
         private unsafe void OnDebugCommand(string command, string args)
@@ -150,6 +215,7 @@ namespace PfPresets
         private void OnFrameworkUpdate(IFramework _)
         {
             this.pfAutomation.UpdateAutoRefresher(this.framework.UpdateDelta.TotalMinutes);
+            this.pfAutomation.UpdateLockedSlotAdjuster();
         }
 
         public void Dispose()

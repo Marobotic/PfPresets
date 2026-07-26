@@ -22,6 +22,7 @@ namespace PfPresets
         private string editorComment = string.Empty;
         private string editorPassword = string.Empty;
         private int editorDutyCategoryId = 0;
+        private uint editorDutyRowId = 0;
         private string editorDutyName = "None";
         private string editorDutyCategoryName = "None";
         private int editorObjectiveId = 0;
@@ -54,6 +55,7 @@ namespace PfPresets
             editorComment = preset.Comment;
             editorPassword = preset.PrivatePartyPassword;
             editorDutyCategoryId = preset.DutyCategoryId;
+            editorDutyRowId = preset.DutyRowId;
             editorDutyName = preset.DutyName;
             editorDutyCategoryName = preset.DutyCategoryName;
             editorObjectiveId = preset.ObjectiveId;
@@ -90,6 +92,7 @@ namespace PfPresets
             editingPreset.Comment = editorComment;
             editingPreset.PrivatePartyPassword = editorPassword;
             editingPreset.DutyCategoryId = editorDutyCategoryId;
+            editingPreset.DutyRowId = editorDutyRowId;
             editingPreset.DutyName = editorDutyName;
             editingPreset.DutyCategoryName = editorDutyCategoryName;
             editingPreset.ObjectiveId = editorObjectiveId;
@@ -310,6 +313,12 @@ namespace PfPresets
                 CancelEditor();
         }
 
+        /// <summary>The row id to persist for a chosen duty: real sheet ids are stable and worth
+        /// storing, synthetic high-end ids are not (they shift with the game data), so those save as
+        /// 0 and fall back to matching on the name.</summary>
+        private static uint StorableRowId(uint rowId)
+            => DutyDataHelper.IsSyntheticRowId(rowId) ? 0u : rowId;
+
         // ── Duty Category Selector (matches in-game dropdown) ─────
         private void DrawDutyCategorySelector()
         {
@@ -339,11 +348,17 @@ namespace PfPresets
                         editorDutyCategoryId = i;
                         editorDutyCategoryName = DutyCategories.Names[i];
                         if (i == 0)
+                        {
                             editorDutyName = "None";
+                            editorDutyRowId = 0;
+                        }
                         else
                         {
+                            // Default to the category's first duty so the selection is never left
+                            // pointing at a duty from the previous category.
                             var d = dutyDataHelper.GetDutiesByType(editorDutyCategoryName);
                             editorDutyName = d.Count > 0 ? d[0].Name : editorDutyCategoryName;
+                            editorDutyRowId = d.Count > 0 ? StorableRowId(d[0].RowId) : 0;
                         }
                     }
                     var cdl = ImGui.GetWindowDrawList();
@@ -383,7 +398,10 @@ namespace PfPresets
                             var duty = duties[di];
                             bool isSel = duty.Name.Equals(editorDutyName, StringComparison.OrdinalIgnoreCase);
                             if (ImGui.Selectable($"{duty.Name}##duty_{di}", isSel))
+                            {
                                 editorDutyName = duty.Name;
+                                editorDutyRowId = StorableRowId(duty.RowId);
+                            }
                             if (isSel)
                                 ImGui.SetItemDefaultFocus();
                         }
@@ -392,9 +410,12 @@ namespace PfPresets
                 }
                 else
                 {
-                    // Manual text input fallback if Lumina doesn't have duties for this category
+                    // Manual text input fallback if Lumina doesn't have duties for this category.
+                    // A hand-typed name has no row id behind it, so clear the stored one rather than
+                    // leaving it pointing at whatever was picked before.
                     ImGui.SetNextItemWidth(-1);
-                    ImGui.InputTextWithHint("##DutyManual", "Type duty name...", ref editorDutyName, 128);
+                    if (ImGui.InputTextWithHint("##DutyManual", "Type duty name...", ref editorDutyName, 128))
+                        editorDutyRowId = 0;
                 }
 
                 PopFramedInput();
