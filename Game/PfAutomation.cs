@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Group;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -36,6 +37,10 @@ namespace PfPresets
 
         /// <summary>Maximum comment length in characters (the buffer keeps 1 byte for the terminator).</summary>
         public const int MaxCommentLength = 191;
+
+        /// <summary>AgentLookingForGroup.SearchAreaTab value for the Data Centre tab, the only one
+        /// recruitment can be set up from (1 = World, 2 = Private).</summary>
+        private const byte SearchAreaTabDataCentre = 0;
 
         /// <summary>AddonLookingForGroupCondition: AtkComponentCheckBox*[4] for the J/E/D/F
         /// language checkboxes.</summary>
@@ -186,6 +191,21 @@ namespace PfPresets
                 return false;
             }
 
+            // Inside a duty the Party Finder can't be set up at all, and while queued the game
+            // drops your registration the moment a listing is posted - so neither is a state we
+            // should let the user apply from.
+            if (IsInDuty())
+            {
+                reason = "You are in a duty.";
+                return false;
+            }
+
+            if (IsInDutyQueue())
+            {
+                reason = "You are in the Duty Finder queue.";
+                return false;
+            }
+
             var crossRealmProxy = InfoProxyCrossRealm.Instance();
             if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
             {
@@ -218,6 +238,19 @@ namespace PfPresets
 
             return true;
         }
+
+        /// <summary>True while the player is inside a duty. The game uses several "bound by duty"
+        /// flags depending on the content type, so all of them are checked.</summary>
+        public bool IsInDuty() =>
+            condition[ConditionFlag.BoundByDuty] ||
+            condition[ConditionFlag.BoundByDuty56] ||
+            condition[ConditionFlag.BoundByDuty95];
+
+        /// <summary>True while the player is registered in the Duty Finder queue, including the
+        /// window where the duty has popped and is waiting to be accepted.</summary>
+        public bool IsInDutyQueue() =>
+            condition[ConditionFlag.InDutyQueue] ||
+            condition[ConditionFlag.WaitingForDutyFinder];
 
         /// <summary>True when the local player leads the current party (or is solo). Unlike
         /// <see cref="CanRecruit"/> this makes no claim about whether a listing is already up, so
@@ -373,6 +406,11 @@ namespace PfPresets
 
             pluginLog.Information("Opening LFG window first natively via agent...");
 
+            // Recruiting is only possible from the Data Centre tab. If the player last left the
+            // Party Finder on World or Private, the Recruit button drives a different flow and
+            // the setup sequence falls apart, so force the tab back before the window opens.
+            EnsureDataCentreTab(agent);
+
             // If LookingForGroup is already open and visible we can skip agent->Show().
             var lfgAddon = GetVisibleAddon("LookingForGroup");
             if (lfgAddon != null)
@@ -454,6 +492,10 @@ namespace PfPresets
             if (recruitBtn != null && recruitBtn->IsEnabled)
             {
                 pluginLog.Information("LookingForGroup window is visible. Writing memory and clicking Recruit Members button.");
+                // Re-assert the tab on the click frame: the window may already have been open on
+                // World or Private, where the memory write in OpenAddonWindow lands before the
+                // addon reads it.
+                EnsureDataCentreTab(AgentLookingForGroup.Instance());
                 WriteSettingsToMemory(ActivePreset!);
                 AutomationStatus = "Opening recruitment window...";
                 currentStep = AutomationStep.OpeningAddon;
@@ -788,6 +830,21 @@ namespace PfPresets
         // ══════════════════════════════════════════════════════════
         //  MEMORY WRITES
         // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Forces the Party Finder's search-area tab to Data Centre (0; the others are 1 = World,
+        /// 2 = Private). Recruitment is set up from this tab, and the window remembers whichever
+        /// one was last used, so anyone who left it on World or Private would otherwise get a
+        /// half-applied preset. Safe to call repeatedly - it only writes when the tab differs.
+        /// </summary>
+        private unsafe void EnsureDataCentreTab(AgentLookingForGroup* agent)
+        {
+            if (agent == null || agent->SearchAreaTab == SearchAreaTabDataCentre)
+                return;
+
+            pluginLog.Information($"Party Finder was on search-area tab {agent->SearchAreaTab}; switching to Data Centre.");
+            agent->SearchAreaTab = SearchAreaTabDataCentre;
+        }
 
         private unsafe void WriteSettingsToMemory(PfPresetData preset)
         {

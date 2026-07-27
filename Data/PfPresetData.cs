@@ -60,7 +60,10 @@ namespace PfPresets
         };
 
         // ── Role Options ──────────────────────────────────────────
-        public bool AutoAdjustRoles { get; set; } = false;
+        /// <summary>Mirrors the in-game "Seek Job Distributions" option. On by default: it's what
+        /// most listings want, and it fills around whoever is already in your party. Existing
+        /// presets keep whatever they were saved with - this only affects newly created ones.</summary>
+        public bool AutoAdjustRoles { get; set; } = true;
         public bool RemoveRoleRestrictions { get; set; } = false;
         public bool OnePlayerPerJob { get; set; } = false;
 

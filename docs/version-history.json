@@ -5,6 +5,29 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "3.0.0.2",
+      "date": "2026-07-27",
+      "published": true,
+      "headline": "Two Party Finder state fixes",
+      "changes": [
+        {
+          "type": "fixed",
+          "title": "Apply was available while queued or in a duty",
+          "body": "The Apply button stayed green while you were sitting in the Duty Finder queue, and posting a listing from there drops your queue registration. It is now disabled - with the reason on hover - for the Duty Finder queue (including a popped duty awaiting acceptance) and while inside a duty."
+        },
+        {
+          "type": "fixed",
+          "title": "Presets half-applied from the World or Private tab",
+          "body": "The Party Finder remembers which of its three search-area tabs (Data Centre, World, Private) was last used, but recruitment can only be set up from Data Centre. Starting from either of the others broke the setup sequence partway. Applying a preset now forces the tab back to Data Centre first, whether or not the window is already open."
+        },
+        {
+          "type": "changed",
+          "title": "Auto-Adjust Roles is on by default for new presets",
+          "body": "Mirrors the in-game 'Seek Job Distributions' option. It is what most listings want and it fills around whoever is already in your party. Only newly created presets are affected - saved presets keep whatever they were set to, since the field has always been serialised."
+        }
+      ]
+    },
+    {
       "version": "3.0.0.1",
       "date": "2026-07-25",
       "published": true,

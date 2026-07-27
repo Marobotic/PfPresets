@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.0.0.2
+
+**Fixed: Apply stayed available while you were queued or in a duty.** The button showed green
+and could be clicked while you were sitting in the Duty Finder queue — and posting a listing
+from there drops your queue registration. It's now disabled, with the reason shown on hover,
+for both the Duty Finder queue (including a popped duty waiting to be accepted) and while
+you're inside a duty.
+
+**Fixed: presets half-applied if the Party Finder was left on the World or Private tab.**
+The Party Finder remembers whichever of its three tabs — Data Centre, World, Private — you
+used last, but recruitment can only be set up from Data Centre. Landing on either of the
+others broke the setup sequence partway through. Applying a preset now switches back to the
+Data Centre tab first, whether the window is already open or not.
+
+**"Auto-Adjust Roles (Seek Job Distributions)" is now on by default for new presets.** It's
+what most listings want, and it fills around whoever is already in your party. Presets you
+already saved are untouched and keep whatever they were set to.
+
+---
+
 ## 3.0.0.1
 
 **New: share presets with a one-line code.** Pick **Share** on any preset's menu and you get a
