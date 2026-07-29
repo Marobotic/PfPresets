@@ -30,6 +30,8 @@ namespace PfPresets
         private bool editorOnePlayerPerJob = false;
         private bool editorRemoveRoleRestrictions = false;
         private bool editorAutoAdjustRoles = false;
+        private bool editorAllowDoubleCaster = false;
+        private bool editorNoteDoubleCaster = false;
         private bool editorLimitToWorld = false;
         private bool editorPrivateParty = false;
         private bool editorCompletionStatus = false;
@@ -63,6 +65,8 @@ namespace PfPresets
             editorOnePlayerPerJob = preset.OnePlayerPerJob;
             editorRemoveRoleRestrictions = preset.RemoveRoleRestrictions;
             editorAutoAdjustRoles = preset.AutoAdjustRoles;
+            editorAllowDoubleCaster = preset.AllowDoubleCaster;
+            editorNoteDoubleCaster = preset.NoteDoubleCasterInComment;
             editorLimitToWorld = preset.LimitRecruitingToWorld;
             editorPrivateParty = preset.FormPrivateParty;
             editorCompletionStatus = preset.CompletionStatusEnabled;
@@ -100,6 +104,8 @@ namespace PfPresets
             editingPreset.OnePlayerPerJob = editorOnePlayerPerJob;
             editingPreset.RemoveRoleRestrictions = editorRemoveRoleRestrictions;
             editingPreset.AutoAdjustRoles = editorAutoAdjustRoles;
+            editingPreset.AllowDoubleCaster = editorAllowDoubleCaster;
+            editingPreset.NoteDoubleCasterInComment = editorNoteDoubleCaster;
             editingPreset.LimitRecruitingToWorld = editorLimitToWorld;
             editingPreset.FormPrivateParty = editorPrivateParty;
             editingPreset.CompletionStatusEnabled = editorCompletionStatus;
@@ -583,6 +589,8 @@ namespace PfPresets
                 ImGui.PushStyleColor(ImGuiCol.Text, TextMuted);
                 ImGui.TextWrapped("Roles will be automatically sought by the game client based on the selected high-end duty when applying this preset.");
                 ImGui.PopStyleColor();
+
+                DrawDoubleCasterOptions();
             }
 
             ImGui.Dummy(new Vector2(0, 4));
@@ -639,6 +647,42 @@ namespace PfPresets
                 index += chunkLen;
             }
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// The double-caster options, nested under Auto-Adjust Roles because they only mean
+        /// anything there - with manual slots you'd set the seat yourself in the job selector.
+        /// </summary>
+        private void DrawDoubleCasterOptions()
+        {
+            ImGui.Dummy(new Vector2(0, 2));
+            ImGui.Indent(16);
+
+            DrawStyledCheckbox("Allow double caster", ref editorAllowDoubleCaster);
+            if (ImGui.IsItemHovered())
+            {
+                PaddedTooltip(
+                    "Opens one melee slot to casters as well - the \"fake melee\" seat.\n\n"
+                    + "The last melee slot is the one widened: parties fill from the top,\n"
+                    + "so that's the seat most likely to still be free.");
+            }
+
+            if (editorAllowDoubleCaster)
+            {
+                ImGui.Indent(16);
+                DrawStyledCheckbox($"Add \"{PfPresetData.DoubleCasterNote}\" to the comment",
+                    ref editorNoteDoubleCaster);
+                if (ImGui.IsItemHovered())
+                {
+                    PaddedTooltip(
+                        "The slot already accepts casters; this is what tells someone\n"
+                        + "scrolling the list. Skipped if it wouldn't fit, or if your\n"
+                        + "comment already mentions casters.");
+                }
+                ImGui.Unindent(16);
+            }
+
+            ImGui.Unindent(16);
         }
     }
 }

@@ -28,6 +28,10 @@ namespace PfPresets
         private readonly PfAutomation pfAutomation;
         private readonly ITextureProvider textureProvider;
 
+        /// <summary>Set by Plugin after construction; used only by the settings window's
+        /// "reset install id" control.</summary>
+        internal AnalyticsClient? Analytics { get; set; }
+
         // ── Window Visibility ─────────────────────────────────────
         private bool isMainWindowVisible = false;
         private bool isSettingsWindowVisible = false;
@@ -67,6 +71,13 @@ namespace PfPresets
             this.textureProvider = textureProvider;
         }
 
+        public void Dispose()
+        {
+#if PFP_RATINGS
+            DisposeProfileFonts();
+#endif
+        }
+
         public void ToggleMainWindow() => isMainWindowVisible = !isMainWindowVisible;
         public void ToggleSettingsWindow() => isSettingsWindowVisible = !isSettingsWindowVisible;
 
@@ -89,6 +100,13 @@ namespace PfPresets
                 DrawJobSelectorWindow();
                 DrawShareExportWindow();
                 DrawShareImportWindow();
+                DrawSaveFromListingOverlay();
+                DrawConfirmDialog();
+                DrawChangelogWindow();
+#if PFP_RATINGS
+                DrawRatingPrompt();
+                DrawReportDialog();
+#endif
             }
             finally
             {
@@ -322,75 +340,58 @@ namespace PfPresets
             return list.ToArray();
         }
 
-        /// <summary>Draws the combined-role icon: the role colours fill the background as equal
-        /// triangles (half/half for two roles, thirds for three) with a neutral person silhouette on
-        /// top. The person is never tinted — only the background carries the colours.</summary>
+        /// <summary>
+        /// Draws the combined-role icon: the role colours stack as equal horizontal bands — one per
+        /// role, so two roles read as two stripes and three as three — with a neutral person
+        /// silhouette on top. The person is never tinted; only the bands carry the colours.
+        ///
+        /// Bands rather than pie wedges: at 16px a radial split is unreadable, and the diagonal
+        /// seam fought the person's outline. Horizontal stripes stay legible at icon size and let
+        /// you count the roles at a glance.
+        /// </summary>
         private void DrawSplitRolePerson(Vector2 topLeft, float size, Vector4[] colors)
         {
             var dl = ImGui.GetWindowDrawList();
-            Vector2 tl = topLeft;
-            Vector2 tr = new Vector2(topLeft.X + size, topLeft.Y);
-            Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
-            Vector2 bl = new Vector2(topLeft.X, topLeft.Y + size);
-            Vector2 c = new Vector2(topLeft.X + size * 0.5f, topLeft.Y + size * 0.5f);
-            float h = size * 0.5f;
-
             uint Col(Vector4 v) => ImGui.ColorConvertFloat4ToU32(v);
 
-            if (colors.Length >= 3)
+            Vector2 tl = topLeft;
+            Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
+            const float rounding = 4f;
+
+            int n = Math.Max(1, colors.Length);
+            float band = size / n;
+
+            for (int i = 0; i < n; i++)
             {
-                // Three equal wedges from the centre (one pointing up, two down).
-                Vector2 Boundary(float deg)
-                {
-                    float r = deg * (MathF.PI / 180f);
-                    float dx = MathF.Cos(r), dy = MathF.Sin(r);
-                    float t = h / MathF.Max(MathF.Abs(dx), MathF.Abs(dy));
-                    return new Vector2(c.X + dx * t, c.Y + dy * t);
-                }
-                float[] cornerAng = { -135f, -45f, 45f, 135f };
-                Vector2[] cornerPt = { tl, tr, br, bl };
-                int n = colors.Length;
-                float seg = 360f / n;
-                for (int i = 0; i < n; i++)
-                {
-                    float a0 = -150f + i * seg;
-                    float a1 = a0 + seg;
-                    var perim = new List<Vector2> { Boundary(a0) };
-                    var mids = new List<(float Ang, Vector2 P)>();
-                    for (int k = 0; k < 4; k++)
-                    {
-                        float ca = cornerAng[k];
-                        while (ca < a0) ca += 360f;
-                        if (ca > a0 && ca < a1) mids.Add((ca, cornerPt[k]));
-                    }
-                    mids.Sort((x, y) => x.Ang.CompareTo(y.Ang));
-                    foreach (var m in mids) perim.Add(m.P);
-                    perim.Add(Boundary(a1));
-                    for (int j = 0; j < perim.Count - 1; j++)
-                        dl.AddTriangleFilled(c, perim[j], perim[j + 1], Col(colors[i]));
-                }
-            }
-            else if (colors.Length == 2)
-            {
-                // Diagonal half/half (two triangles).
-                dl.AddTriangleFilled(tl, tr, br, Col(colors[0]));
-                dl.AddTriangleFilled(tl, br, bl, Col(colors[1]));
-            }
-            else
-            {
-                dl.AddRectFilled(tl, br, Col(colors[0]), 0f);
+                Vector2 bmin = new Vector2(tl.X, tl.Y + band * i);
+                // Overshoot each band slightly so rounding never leaves a hairline seam between them.
+                Vector2 bmax = new Vector2(br.X, tl.Y + band * (i + 1) + (i < n - 1 ? 0.5f : 0f));
+
+                ImDrawFlags corners = n == 1 ? ImDrawFlags.RoundCornersAll
+                    : i == 0 ? ImDrawFlags.RoundCornersTop
+                    : i == n - 1 ? ImDrawFlags.RoundCornersBottom
+                    : ImDrawFlags.RoundCornersNone;
+
+                dl.AddRectFilled(bmin, bmax, Col(colors[i]), rounding, corners);
             }
 
-            // Border.
-            dl.AddRect(tl, br, Col(ColorFromHex("#1b2230")), 4f, ImDrawFlags.None, 1.5f);
+            // Hairline separators between bands, so adjacent colours of similar value stay distinct.
+            for (int i = 1; i < n; i++)
+            {
+                float sy = tl.Y + band * i;
+                dl.AddLine(new Vector2(tl.X, sy), new Vector2(br.X, sy),
+                    Col(new Vector4(0f, 0f, 0f, 0.35f)), 1f);
+            }
 
-            // Neutral person silhouette on top (with a subtle shadow for contrast).
+            dl.AddRect(tl, br, Col(ColorFromHex("#1b2230")), rounding, ImDrawFlags.None, 1.5f);
+
+            // Neutral person silhouette on top, with a soft shadow so it reads over any band colour.
             string glyph = FreeGlyph.ToIconString();
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(glyph);
                 Vector2 tp = new Vector2(topLeft.X + (size - ts.X) * 0.5f, topLeft.Y + (size - ts.Y) * 0.5f);
-                dl.AddText(new Vector2(tp.X + 1f, tp.Y + 1f), Col(new Vector4(0, 0, 0, 0.45f)), glyph);
+                dl.AddText(new Vector2(tp.X + 1f, tp.Y + 1f), Col(new Vector4(0, 0, 0, 0.5f)), glyph);
                 dl.AddText(tp, Col(ColorFromHex("#eef2f8")), glyph);
             }
         }

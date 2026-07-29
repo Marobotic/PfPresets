@@ -54,6 +54,17 @@ namespace PfPresets
 
         /// <summary>True when a dropdown's item list has been built by the game
         /// (i.e. it has at least one entry).</summary>
+        /// <summary>The visible label of a component button, or empty when it has no text node.
+        /// Used to find a button by what it says rather than by a hard-coded node id, which shifts
+        /// between game patches.</summary>
+        public static string GetButtonLabel(AtkComponentButton* button)
+        {
+            if (button == null || button->ButtonTextNode == null)
+                return string.Empty;
+
+            return button->ButtonTextNode->NodeText.ToString() ?? string.Empty;
+        }
+
         public static bool IsListPopulated(AtkComponentDropDownList* dropdown)
         {
             return dropdown != null &&

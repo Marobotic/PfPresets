@@ -28,6 +28,12 @@ namespace PfPresets
         private static readonly Vector4 AccentYellow = ColorFromHex("#ffbd2e");
         private static readonly Vector4 AccentPurple = ColorFromHex("#9b6dff");
 
+        // ── Status card state borders ─────────────────────────────
+        // Deeper than AccentBlue so an active listing reads as its own state rather than being
+        // confused with the queue's brighter blue.
+        private static readonly Vector4 StatusBorderRecruiting = ColorFromHex("#2f6fb5");
+        private static readonly Vector4 StatusBorderParty = ColorFromHex("#5a6b85");
+
         // ── Role Colors ───────────────────────────────────────────
         private static readonly Vector4 RoleTank = ColorFromHex("#3752d8");
         private static readonly Vector4 RoleHealer = ColorFromHex("#2e8b57");

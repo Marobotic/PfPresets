@@ -18,11 +18,25 @@ namespace PfPresets
         private readonly IChatGui chatGui;
         private readonly IObjectTable objectTable;
         private readonly IFramework framework;
+#if PFP_RATINGS
+        private readonly IClientState clientState;
+#endif
 
         private readonly Configuration config;
         private readonly DutyDataHelper dutyDataHelper;
         private readonly PfAutomation pfAutomation;
         private readonly PluginUI ui;
+        private readonly AnalyticsClient analytics;
+
+#if PFP_RATINGS
+        private readonly WorldHelper worldHelper;
+        private readonly EncounterStore encounterStore;
+        private VoteQueue voteQueue = null!;
+        private readonly RatingHistory ratingHistory;
+        private readonly PfApiClient ratingApi;
+        private readonly RatingService ratingService;
+        private readonly DutyTracker dutyTracker;
+#endif
 
         public Plugin(
             IDalamudPluginInterface pluginInterface,
@@ -37,13 +51,17 @@ namespace PfPresets
             IFramework framework,
             IObjectTable objectTable,
             ICondition condition,
-            ISigScanner sigScanner)
+            ISigScanner sigScanner,
+            IDutyState dutyState)
         {
             this.pluginInterface = pluginInterface;
             this.commandManager = commandManager;
             this.chatGui = chatGui;
             this.objectTable = objectTable;
             this.framework = framework;
+#if PFP_RATINGS
+            this.clientState = clientState;
+#endif
 
             // Load configuration
             this.config = this.pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -69,8 +87,60 @@ namespace PfPresets
                 condition,
                 sigScanner);
 
+#if PFP_RATINGS
+            // Community ratings. Every piece is constructed regardless of whether the feature is
+            // switched on, because the services are inert until config.RatingsEnabled is true: the
+            // tracker records nothing, and the lookup pump has nothing queued to send.
+            this.worldHelper = new WorldHelper(dataManager, pluginLog);
+            this.encounterStore = new EncounterStore(this.pluginInterface, pluginLog);
+            this.ratingHistory = new RatingHistory(this.pluginInterface, pluginLog);
+
+            this.ratingApi = new PfApiClient(
+                this.config,
+                pluginLog,
+                pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown",
+                () => GetLocalIdentity(clientState, playerState));
+
+            this.voteQueue = new VoteQueue(this.pluginInterface, pluginLog);
+            this.ratingService = new RatingService(this.ratingApi, this.config, pluginLog, this.encounterStore, this.ratingHistory, this.voteQueue);
+
+            this.dutyTracker = new DutyTracker(
+                dutyState,
+                framework,
+                clientState,
+                pluginLog,
+                this.config,
+                this.pfAutomation,
+                this.worldHelper,
+                this.dutyDataHelper,
+                this.encounterStore,
+                new SocialLinkResolver(objectTable, pluginLog));
+
+            // A character switch must not carry the previous character's session over.
+            clientState.Login += this.ratingApi.OnCharacterChanged;
+            clientState.Logout += OnLogoutResetSession;
+#endif
+
             // Initialize UI
             this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, textureProvider);
+
+#if PFP_RATINGS
+            this.ui.Ratings = this.ratingService;
+            this.ui.Worlds = this.worldHelper;
+            this.ui.Encounters = this.encounterStore;
+            this.ui.History = this.ratingHistory;
+            this.ui.LocalIdentity = () => GetLocalIdentity(clientState, playerState);
+            this.ui.Party = new PartyCommands(pluginLog, this.chatGui);
+            this.dutyTracker.EncounterCompleted += this.ui.OnEncounterCompleted;
+#endif
+
+            // Anonymous usage counts. Constructed last and entirely fire-and-forget: it never
+            // blocks load, and the plugin behaves identically when it's off or the server is down.
+            this.analytics = new AnalyticsClient(
+                this.config,
+                pluginLog,
+                pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown");
+            this.ui.Analytics = this.analytics;
 
             // Register commands
             var mainCommandInfo = new CommandInfo(OnCommand)
@@ -218,6 +288,25 @@ namespace PfPresets
             this.pfAutomation.UpdateLockedSlotAdjuster();
         }
 
+#if PFP_RATINGS
+        /// <summary>The character the rating system is currently acting as, or null when nobody is
+        /// logged in. Read on demand rather than cached so a character switch is picked up without
+        /// any explicit invalidation.</summary>
+        private static CharacterIdentity? GetLocalIdentity(IClientState clientState, IPlayerState playerState)
+        {
+            if (!clientState.IsLoggedIn || !playerState.IsLoaded)
+                return null;
+
+            string name = playerState.CharacterName;
+            string world = playerState.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
+
+            var identity = new CharacterIdentity(name, world);
+            return identity.IsValid ? identity : null;
+        }
+
+        private void OnLogoutResetSession(int type, int code) => this.ratingApi.OnCharacterChanged();
+#endif
+
         public void Dispose()
         {
             this.framework.Update -= OnFrameworkUpdate;
@@ -230,9 +319,21 @@ namespace PfPresets
             this.commandManager.RemoveHandler("/pfpresets");
             this.commandManager.RemoveHandler("/pfpdebug");
 
+#if PFP_RATINGS
+            this.clientState.Login -= this.ratingApi.OnCharacterChanged;
+            this.clientState.Logout -= OnLogoutResetSession;
+            this.dutyTracker.EncounterCompleted -= this.ui.OnEncounterCompleted;
+            this.dutyTracker.Dispose();
+            this.ratingService.Dispose();
+            this.ratingApi.Dispose();
+            this.encounterStore.Flush();
+            this.ratingHistory.Flush();
+#endif
+
             // Unsubscribes any in-flight automation from Framework.Update and stops the
             // background refresh task from touching the game after unload.
             this.pfAutomation.Dispose();
+            this.analytics.Dispose();
         }
     }
 }

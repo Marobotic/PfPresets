@@ -51,6 +51,22 @@ namespace PfPresets
             return gameMask;
         }
 
+        /// <summary>Converts the game's slot mask back to a plugin bitfield (BitIndex space) - the
+        /// inverse of <see cref="ToGameMask"/>. Bits the game sets that map to no job we recognise
+        /// are dropped rather than carried through as garbage.</summary>
+        public static ulong FromGameMask(ulong gameMask)
+        {
+            if (gameMask == 0) return 0;
+            ulong bitIndexMask = 0;
+            foreach (var job in JobData.AllJobsAndClasses)
+            {
+                int gameBit = GetGameJobBitIndex((uint)job.Id);
+                if (gameBit != -1 && (gameMask & (1UL << gameBit)) != 0)
+                    bitIndexMask |= 1UL << job.BitIndex;
+            }
+            return bitIndexMask;
+        }
+
         /// <summary>Bitfield (BitIndex space) of every job and class belonging to the given role.
         /// <see cref="RoleType.Free"/> yields all jobs; <see cref="RoleType.Omit"/> yields 0.</summary>
         public static ulong GetRoleMask(RoleType role)

@@ -13,6 +13,45 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 namespace PfPresets
 {
     /// <summary>
+    /// A party member as the game's party proxies report them. The home world is a World sheet
+    /// row id, not a name - see <see cref="WorldHelper"/> for turning it into one.
+    ///
+    /// <paramref name="FcTag"/> is empty for cross-world party members: the cross-realm proxy
+    /// doesn't carry it. That costs nothing, because Free Companies are world-locked and a
+    /// cross-world member is on a different world by definition.
+    ///
+    /// <paramref name="AllianceIndex"/> is 0, 1 or 2 in an alliance raid and 0 otherwise. It comes
+    /// from the cross-realm proxy's group array; GroupManager only exposes MainGroup, so a
+    /// pre-formed same-world alliance reports everyone as group 0 and the UI falls back to one list.
+    ///
+    /// <paramref name="IsOffline"/> is only ever true for a same-world party. The cross-realm proxy
+    /// carries no status field at all - see GetOtherPartyMemberDetails - so cross-world members
+    /// always report as online whether they are or not.
+    /// </summary>
+    public readonly record struct PartyMemberInfo(
+        ulong ContentId,
+        uint JobId,
+        string Name,
+        uint HomeWorldId,
+        string FcTag,
+        int AllianceIndex,
+        bool IsOffline)
+    {
+        /// <summary>
+        /// Whether this "member" is a Duty Support / Trust NPC rather than a person.
+        ///
+        /// The party proxies list them alongside real members, but with no content id and no name -
+        /// which is why they rendered as blank rows carrying the local player's world and a Report
+        /// button pointed at nobody. Square Enix's own NPCs are not rateable, reportable, or worth
+        /// remembering, so everything downstream needs to be able to tell them apart.
+        ///
+        /// Both halves matter: the content id is the reliable discriminator, and the blank name
+        /// catches an entry that is unusable for our purposes either way.
+        /// </summary>
+        public bool IsSupportNpc => ContentId == 0 || string.IsNullOrWhiteSpace(Name);
+    }
+
+    /// <summary>
     /// Applies a saved preset to the Party Finder by populating the native
     /// AgentLookingForGroup memory and driving the Recruitment Criteria window.
     /// The auto-refresher half of this class lives in PfAutomation.Refresher.cs.
@@ -239,12 +278,104 @@ namespace PfPresets
             return true;
         }
 
+        /// <summary>
+        /// Every party member except the local player, with their job and name. Reads the
+        /// cross-world proxy when in a cross-world party, otherwise the social party list - which,
+        /// unlike IPartyList, still reports jobs for members standing in a different zone.
+        /// </summary>
+        public List<(uint JobId, string Name)> GetOtherPartyMembers()
+        {
+            var details = GetOtherPartyMemberDetails();
+            var members = new List<(uint JobId, string Name)>(details.Count);
+            foreach (var m in details)
+                members.Add((m.JobId, m.Name));
+            return members;
+        }
+
+        /// <summary>
+        /// The same party read as <see cref="GetOtherPartyMembers"/>, but carrying the home world
+        /// and content id as well. The rating system addresses characters as "name@world", and
+        /// names alone are ambiguous across worlds, so it needs the fuller picture.
+        /// </summary>
+        public unsafe List<PartyMemberInfo> GetOtherPartyMemberDetails()
+        {
+            var members = new List<PartyMemberInfo>();
+
+            var crossRealmProxy = InfoProxyCrossRealm.Instance();
+            if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
+            {
+                for (int i = 0; i < crossRealmProxy->GroupCount; i++)
+                {
+                    var group = crossRealmProxy->CrossRealmGroups[i];
+                    for (int c = 0; c < group.GroupMemberCount; c++)
+                    {
+                        var member = group.GroupMembers[c];
+                        if (member.ContentId != playerState.ContentId)
+                        {
+                            members.Add(new PartyMemberInfo(
+                                member.ContentId,
+                                member.ClassJobId,
+                                member.NameString,
+                                (uint)(ushort)member.HomeWorld,
+                                string.Empty,
+                                i,
+                                // CrossRealmMember has no online-status field. Reporting everyone
+                                // as online is the honest default: a wrong "disconnected" badge on
+                                // someone who is fine is worse than no badge.
+                                false));
+                        }
+                    }
+                }
+                return members;
+            }
+
+            var partyInfo = InfoProxyPartyMember.Instance();
+            if (partyInfo != null)
+            {
+                uint count = partyInfo->GetEntryCount();
+                for (uint i = 0; i < count; i++)
+                {
+                    var entry = partyInfo->GetEntry(i);
+                    if (entry == null) continue;
+                    if (entry->ContentId == playerState.ContentId) continue;
+                    members.Add(new PartyMemberInfo(
+                        entry->ContentId,
+                        (uint)entry->Job,
+                        entry->NameString,
+                        entry->HomeWorld,
+                        entry->FCTagString,
+                        0,
+                        IsOfflineStatus(entry->State)));
+                }
+            }
+            return members;
+        }
+
+        /// <summary>
+        /// Whether a party member's status means they aren't actually there.
+        ///
+        /// OnlineStatus is a flags enum, but Offline is 0 - so it can't be tested with a bitwise
+        /// AND and has to be compared directly. Disconnected and OfflineExd are real bits.
+        /// </summary>
+        private static bool IsOfflineStatus(InfoProxyCommonList.CharacterData.OnlineStatus state)
+        {
+            const InfoProxyCommonList.CharacterData.OnlineStatus gone =
+                InfoProxyCommonList.CharacterData.OnlineStatus.Disconnected
+                | InfoProxyCommonList.CharacterData.OnlineStatus.OfflineExd;
+
+            return state == InfoProxyCommonList.CharacterData.OnlineStatus.Offline
+                || (state & gone) != 0;
+        }
+
         /// <summary>True while the player is inside a duty. The game uses several "bound by duty"
         /// flags depending on the content type, so all of them are checked.</summary>
         public bool IsInDuty() =>
             condition[ConditionFlag.BoundByDuty] ||
             condition[ConditionFlag.BoundByDuty56] ||
             condition[ConditionFlag.BoundByDuty95];
+
+        /// <summary>True while the player is in combat.</summary>
+        public bool IsInCombat() => condition[ConditionFlag.InCombat];
 
         /// <summary>True while the player is registered in the Duty Finder queue, including the
         /// window where the duty has popped and is waiting to be accepted.</summary>
@@ -662,7 +793,7 @@ namespace PfPresets
 
             // 1. Comment
             if (addon->CommentTextInput != null)
-                addon->CommentTextInput->SetText(preset.Comment);
+                addon->CommentTextInput->SetText(preset.ResolveComment(MaxCommentLength));
 
             // 2. Private party passcode
             if (addon->FormPrivatePartyCheckbox != null)
@@ -731,6 +862,9 @@ namespace PfPresets
                 pluginLog.Information("Clicking PF Recruit button...");
                 AutomationStatus = "Submitting Party Finder listing...";
                 AtkHelpers.ClickButton(&addon->AtkUnitBase, addon->RecruitMembersButton);
+
+                // Marks the only moment OwnListingId may be believed on its own - see IsRecruiting.
+                MarkListingSubmitted();
 
                 // The game may raise a "cannot carry out the selected objective with this party
                 // composition" confirmation (e.g. a crafter/gatherer is in the party). Watch for it
@@ -992,7 +1126,8 @@ namespace PfPresets
             recruitment->NumberOfGroups = 1;
 
             // Comment (192-byte fixed buffer)
-            string safeComment = preset.Comment.Length > MaxCommentLength ? preset.Comment.Substring(0, MaxCommentLength) : preset.Comment;
+            string comment = preset.ResolveComment(MaxCommentLength);
+            string safeComment = comment.Length > MaxCommentLength ? comment.Substring(0, MaxCommentLength) : comment;
             AtkHelpers.SetFixedString((byte*)recruitment + OffsetComment, safeComment, MaxCommentLength + 1);
         }
 
@@ -1008,6 +1143,10 @@ namespace PfPresets
                 var autoSlots = GetAutoAdjustedSlots();
                 for (int i = 0; i < 8; i++)
                     pSlotFlags[i] = i < autoSlots.Count ? GetAutoSlotGameMask(autoSlots[i]) : 0;
+
+                if (preset.AllowDoubleCaster)
+                    ApplyDoubleCasterSlot(pSlotFlags, autoSlots);
+
                 return;
             }
 
@@ -1034,6 +1173,33 @@ namespace PfPresets
 
         /// <summary>Game mask for one auto-adjusted slot: the locked job when known, else the
         /// sought role's mask.</summary>
+        /// <summary>
+        /// Widens the last melee slot so it accepts casters too - the "fake melee" seat.
+        ///
+        /// The last one rather than the first: parties fill top-down, so the seat most likely to
+        /// still be open is the one furthest down, and widening a seat someone already occupies
+        /// achieves nothing. Does nothing when the composition has no melee slot to give up.
+        /// </summary>
+        private static unsafe void ApplyDoubleCasterSlot(
+            ulong* pSlotFlags, List<(RoleType Role, uint? JobId, string Tooltip)> autoSlots)
+        {
+            int target = -1;
+            for (int i = 0; i < autoSlots.Count && i < 8; i++)
+            {
+                // Only an unlocked melee slot can be traded away; one pinned to a specific job is
+                // there because someone is already standing in it.
+                if (autoSlots[i].Role == RoleType.MeleeDPS && !autoSlots[i].JobId.HasValue)
+                    target = i;
+            }
+
+            if (target < 0)
+                return;
+
+            ulong melee = JobMasks.GetRoleMask(RoleType.MeleeDPS);
+            ulong caster = JobMasks.GetRoleMask(RoleType.MagicRangedDPS);
+            pSlotFlags[target] = JobMasks.ToGameMask(melee | caster);
+        }
+
         private static ulong GetAutoSlotGameMask((RoleType Role, uint? JobId, string Tooltip) slot)
         {
             if (slot.JobId.HasValue)
@@ -1054,6 +1220,34 @@ namespace PfPresets
         private uint GetLocalPlayerJobId()
         {
             return playerState.IsLoaded && playerState.ClassJob.RowId > 0 ? playerState.ClassJob.RowId : 0;
+        }
+
+        /// <summary>
+        /// The local player as a party member, or null when they aren't loaded yet.
+        ///
+        /// The party reads deliberately exclude the local player - a list of people to rate should
+        /// not offer you yourself. A progression list is the opposite case: "how far is this party"
+        /// is a question about the whole party, and leaving yourself out of the answer makes the
+        /// list disagree with the 4-of-8 count sitting above it.
+        /// </summary>
+        public PartyMemberInfo? GetLocalPartyMember()
+        {
+            var self = objectTable.LocalPlayer;
+            if (self == null)
+                return null;
+
+            string name = self.Name.TextValue;
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+
+            return new PartyMemberInfo(
+                playerState.ContentId,
+                GetLocalPlayerJobId(),
+                name,
+                self.HomeWorld.RowId,
+                string.Empty,
+                0,
+                false);
         }
 
         // ══════════════════════════════════════════════════════════
@@ -1081,40 +1275,7 @@ namespace PfPresets
             result.Add((RoleType.Free, localJobId > 0 ? localJobId : null, $"Slot 1: You ({localJobName})\nThis slot is locked to your current class/job."));
 
             // Gather other party members (excluding the local player).
-            var otherPartyMembers = new List<(uint JobId, string Name)>();
-            var crossRealmProxy = InfoProxyCrossRealm.Instance();
-            if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
-            {
-                for (int i = 0; i < crossRealmProxy->GroupCount; i++)
-                {
-                    var group = crossRealmProxy->CrossRealmGroups[i];
-                    for (int c = 0; c < group.GroupMemberCount; c++)
-                    {
-                        var member = group.GroupMembers[c];
-                        if (member.ContentId != playerState.ContentId)
-                            otherPartyMembers.Add((member.ClassJobId, member.NameString));
-                    }
-                }
-            }
-            else
-            {
-                // Use the InfoProxyPartyMember (the data backing the social/party tab).
-                // Unlike IPartyList, this contains every party member's job regardless of
-                // which zone/map they are in, so detection no longer breaks when members
-                // are spread across different areas.
-                var partyInfo = InfoProxyPartyMember.Instance();
-                if (partyInfo != null)
-                {
-                    uint count = partyInfo->GetEntryCount();
-                    for (uint i = 0; i < count; i++)
-                    {
-                        var entry = partyInfo->GetEntry(i);
-                        if (entry == null) continue;
-                        if (entry->ContentId == playerState.ContentId) continue;
-                        otherPartyMembers.Add(((uint)entry->Job, entry->NameString));
-                    }
-                }
-            }
+            var otherPartyMembers = GetOtherPartyMembers();
 
             int partySize = Math.Min(1 + otherPartyMembers.Count, 8);
 

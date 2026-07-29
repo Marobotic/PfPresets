@@ -13,8 +13,10 @@ namespace PfPresets
         /// <summary>Schema version of the saved config. See <see cref="Migrate"/>.</summary>
         public int Version { get; set; } = 0;
 
-        /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.</summary>
-        public const int CurrentVersion = 1;
+        /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.
+        /// Deliberately the same number in the ratings and non-ratings builds: the v2 fields are
+        /// inert data, so a config written by one build must load cleanly in the other.</summary>
+        public const int CurrentVersion = 2;
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
@@ -36,9 +38,87 @@ namespace PfPresets
         /// expires the way an unattended one normally would.</summary>
         public int AutoRefresherMaxHours { get; set; } = 0;
 
+        // ── Anonymous usage stats ─────────────────────────────────
+
+        /// <summary>Whether to send anonymous usage counts. See <see cref="AnalyticsInstallId"/>
+        /// for exactly what that covers.</summary>
+        public bool AnalyticsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// A random id generated once on this machine, used only to avoid counting the same install
+        /// twice. It is not derived from anything - not your character, account, world or hardware -
+        /// so it identifies nothing beyond "one copy of the plugin". Clearing it makes this install
+        /// count as new.
+        /// </summary>
+        public string AnalyticsInstallId { get; set; } = string.Empty;
+
+        /// <summary>Presets created on this install, ever. Not reduced by deleting presets, so the
+        /// total reflects use rather than what happens to be saved right now.</summary>
+        public int LifetimePresetsCreated { get; set; } = 0;
+
+        /// <summary>Presets applied on this install, ever.</summary>
+        public int LifetimePresetsApplied { get; set; } = 0;
+
+        /// <summary>Whether the recruitment card shows its party as a list rather than the
+        /// compact icon strip. Remembered, because it's a preference about how much room the card
+        /// is allowed to take.</summary>
+        public bool PartyListExpanded { get; set; } = false;
+
         /// <summary>When enabled, a party member leaving while you recruit as leader broadens any
         /// slot locked to a single job to that job's role, so the freed seat is easier to fill.</summary>
         public bool AutoAdjustLockedJobsEnabled { get; set; } = false;
+
+#if PFP_RATINGS
+        // ── Community ratings ─────────────────────────────────────
+
+        /// <summary>
+        /// Master switch for every rating feature. Opt-in, not opt-out: the plugin does not look
+        /// up, record or send anything about other players until this is deliberately turned on,
+        /// because the feature involves data about people who never installed it.
+        /// </summary>
+        public bool RatingsEnabled { get; set; } = false;
+
+        /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
+        public bool PostDutyPromptEnabled { get; set; } = true;
+
+        /// <summary>Whether to show ratings beside the members of the party you are actually in.
+        /// Deliberately not offered while browsing the Party Finder: a score attached to a listing
+        /// you haven't joined turns the feature into a screening tool for strangers, which is not
+        /// what it is for.</summary>
+        public bool PartyRatingsEnabled { get; set; } = true;
+
+        /// <summary>Whether to keep the local log of players met in duties. Turning this off
+        /// empties the rateable list and with it the ability to rate anyone, since rating is gated
+        /// on having actually played with the person. Lookup still works.</summary>
+        public bool TrackEncounters { get; set; } = true;
+
+        /// <summary>
+        /// Override for the rating server, for development and for anyone self-hosting. Empty
+        /// means the built-in endpoint.
+        ///
+        /// Read once when the client is constructed, so a change needs a plugin reload to take
+        /// effect. Whatever is set here receives your character name and the names you look up, so
+        /// it should only ever point somewhere you control.
+        /// </summary>
+        public string RatingApiBaseUrl { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The last time this install rated each player, keyed by the canonical "name@world".
+        /// Drives the instant client-side half of the 24h cooldown; the server enforces the real
+        /// one. Entries are pruned once expired, so this stays small.
+        /// </summary>
+        public Dictionary<string, DateTime> LocalCooldowns { get; set; } = new();
+
+        /// <summary>
+        /// When this install last reported each player, keyed by the canonical "name@world".
+        ///
+        /// Serves two limits at once: an entry inside the repeat window blocks reporting the same
+        /// person again, and the number of entries inside the last hour is how many reports have
+        /// been filed in that hour. Both are client-side courtesy checks - the server enforces its
+        /// own, and is authoritative if the two disagree.
+        /// </summary>
+        public Dictionary<string, DateTime> ReportCooldowns { get; set; } = new();
+#endif
 
         [NonSerialized]
         private IDalamudPluginInterface? pluginInterface;
@@ -95,6 +175,28 @@ namespace PfPresets
                 Version = 1;
             }
 
+            // v1 -> v2: added the community rating settings. Every new field has a usable default
+            // and Newtonsoft fills them in on load, so there is nothing to convert - this only
+            // repairs a collection that an older hand-edited config could have left null.
+            if (Version < 2)
+            {
+#if PFP_RATINGS
+                LocalCooldowns ??= new Dictionary<string, DateTime>();
+#endif
+                Version = 2;
+            }
+
+            // v2 -> v3: added the report cooldown list. Same shape as the v1 -> v2 step - the field
+            // has a usable default, so this only repairs a config that predates it or that a hand
+            // edit left null.
+            if (Version < 3)
+            {
+#if PFP_RATINGS
+                ReportCooldowns ??= new Dictionary<string, DateTime>();
+#endif
+                Version = 3;
+            }
+
             log.Information($"[Migration] Configuration upgraded from v{startVersion} to v{Version}.");
             Save();
         }
@@ -112,6 +214,7 @@ namespace PfPresets
                 LangFrench = true,
             };
             Presets.Add(preset);
+            LifetimePresetsCreated++;
             Save();
             return preset;
         }
@@ -126,6 +229,7 @@ namespace PfPresets
                 preset.Name = $"{baseName} ({suffix++})";
 
             Presets.Add(preset);
+            LifetimePresetsCreated++;
             Save();
             return preset;
         }
@@ -183,6 +287,7 @@ namespace PfPresets
 
             var copy = original.Duplicate();
             Presets.Add(copy);
+            LifetimePresetsCreated++;
             Save();
             return copy;
         }
@@ -209,6 +314,7 @@ namespace PfPresets
             if (preset != null)
             {
                 preset.LastUsedAt = DateTime.UtcNow;
+                LifetimePresetsApplied++;
                 Save();
             }
         }

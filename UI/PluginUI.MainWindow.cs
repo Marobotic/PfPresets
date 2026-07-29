@@ -18,7 +18,10 @@ namespace PfPresets
         private string searchQuery = string.Empty;
         private string hoveredPresetId = string.Empty;
         private int hoveredHeaderBtn = 0;
-        private string presetToDeleteId = string.Empty;
+
+        /// <summary>Preset whose private-party PIN is currently revealed, or empty. Held only while
+        /// the mouse is down on it, and never persisted.</summary>
+        private string revealedPinId = string.Empty;
 
         private void DrawMainWindow()
         {
@@ -76,12 +79,68 @@ namespace PfPresets
 
                         if (!isMinimized)
                         {
-                            DrawSearchBar();
-                            DrawPresetList();
-                            DrawFooter();
+#if PFP_RATINGS
+                            DrawNavStrip();
+
+                            if (activeTab == MainTab.Ratings && config.RatingsEnabled)
+                            {
+                                DrawRatingsTab();
+                            }
+                            else if (activeTab == MainTab.Settings)
+                            {
+                                DrawSettingsTab();
+                            }
+                            else
+#endif
+                            {
+                                // Built once per frame and shared by the card and the list's height
+                                // reservation, so both agree on how much space it takes.
+                                var snapshot = pfAutomation.GetSnapshot(ImGui.GetFrameCount());
+
+                                // Inside a duty the card has nothing true to say: there is no
+                                // listing to end, no one to recruit, and none of its actions apply.
+                                // The party list stands alone in there instead.
+                                bool showCard = !pfAutomation.IsInDuty();
+
+                                // Advanced once, before measuring, so both passes agree on how far
+                                // through the expand animation this frame is.
+                                UpdatePartyExpand(snapshot);
+                                float statusHeight = showCard ? MeasureStatusCard(snapshot) : 0f;
+
+                                DrawSearchBar();
+
+                                // Recruitment card, party list and presets scroll together as one
+                                // region. They used to be siblings, with the preset list sizing
+                                // itself from whatever space was left - so once the card and the
+                                // party list were both on screen there was nothing left and the
+                                // presets were simply cut off with no way to reach them.
+                                ImGui.SetCursorPosX(8);
+                                float scrollH = ImGui.GetContentRegionAvail().Y - GetFooterHeight();
+                                if (ImGui.BeginChild("MainScroll", new Vector2(ImGui.GetWindowWidth() - 16, scrollH), false))
+                                {
+                                    try
+                                    {
+                                        if (showCard)
+                                            DrawStatusCard(snapshot, statusHeight);
+#if PFP_RATINGS
+                                        DrawPartyPanel(snapshot);
+#endif
+                                        DrawPresetList();
+                                    }
+                                    finally
+                                    {
+                                        ImGui.EndChild();
+                                    }
+                                }
+                                else
+                                {
+                                    ImGui.EndChild();
+                                }
+
+                                DrawFooter();
+                            }
                         }
 
-                        DrawDeleteConfirmModal();
                     }
                 }
                 finally
@@ -241,12 +300,14 @@ namespace PfPresets
             ImGui.SetCursorScreenPos(new Vector2(ImGui.GetWindowPos().X + 8, curPos.Y + 56));
         }
 
+        /// <summary>
+        /// The preset cards. Draws inline rather than into its own scroll child: it shares one
+        /// scroll region with the recruitment card and the party list above it, so the whole
+        /// column moves together instead of nesting a scrollbar inside a scrollbar.
+        /// </summary>
         private void DrawPresetList()
         {
             ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 6));
-            float heightRemaining = ImGui.GetContentRegionAvail().Y - GetFooterHeight();
-            ImGui.SetCursorPosX(8);
-            ImGui.BeginChild("PresetListScroll", new Vector2(ImGui.GetWindowWidth() - 16, heightRemaining), false, ImGuiWindowFlags.None);
 
             // Snapshot the list so a card action (Duplicate / Move / Delete) can safely mutate
             // config.Presets while we're rendering. Enumerating the live list and mutating it in
@@ -278,7 +339,7 @@ namespace PfPresets
                     DrawPresetCard(preset);
             }
 
-            ImGui.EndChild();
+            ImGui.Dummy(new Vector2(0, 4));
             ImGui.PopStyleVar();
         }
 
@@ -357,14 +418,38 @@ namespace PfPresets
                     dl.AddText(new Vector2(bp.X + 9f, bp.Y + (bubbleH - nts.Y) * 0.5f), ImGui.ColorConvertFloat4ToU32(TextPrimary), name);
                     dl.PopClipRect();
 
-                    // Private-party password shown next to the name.
+                    // Private-party password, masked. Shown in the clear only while you hold the
+                    // click on it - awkward to read over someone's shoulder, and impossible to
+                    // leave revealed by accident, which a toggle wouldn't be.
                     if (preset.FormPrivateParty)
                     {
                         float lx = bpe.X + 10f;
                         DrawGlyphAt(FontAwesomeIcon.Lock, new Vector2(lx, bp.Y + (bubbleH - 15f) * 0.5f), 15f, AccentYellow);
-                        Vector2 pwts = ImGui.CalcTextSize(preset.PasswordDisplay);
-                        dl.AddText(new Vector2(lx + 19f, bp.Y + (bubbleH - pwts.Y) * 0.5f),
-                            ImGui.ColorConvertFloat4ToU32(TextPrimary), preset.PasswordDisplay);
+
+                        bool revealed = revealedPinId == preset.Id;
+                        string shown = revealed ? preset.PasswordDisplay : "••••";
+
+                        Vector2 pwts = ImGui.CalcTextSize(shown);
+                        var pinMin = new Vector2(lx + 19f, bp.Y + (bubbleH - pwts.Y) * 0.5f);
+                        dl.AddText(pinMin, ImGui.ColorConvertFloat4ToU32(revealed ? TextPrimary : TextMuted), shown);
+
+                        // Hit area over the masked text. Drawn with the draw list, so the click has
+                        // to be tested by hand rather than with an ImGui button.
+                        var pinMax = new Vector2(pinMin.X + Math.Max(pwts.X, 30f), pinMin.Y + pwts.Y);
+                        if (IsMouseOver(new Vector2(lx, bp.Y), new Vector2(pinMax.X + 2f, bp.Y + bubbleH)))
+                        {
+                            if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                                revealedPinId = preset.Id;
+                            else if (revealedPinId == preset.Id)
+                                revealedPinId = string.Empty;
+
+                            if (!revealed)
+                                PaddedTooltip("Hold to show");
+                        }
+                        else if (revealed)
+                        {
+                            revealedPinId = string.Empty;
+                        }
                     }
                 }
 
@@ -513,7 +598,13 @@ namespace PfPresets
                     if (ImGui.Selectable("  Move Down")) config.MovePresetDown(preset.Id);
                     ImGui.Separator();
                     ImGui.PushStyleColor(ImGuiCol.Text, AccentRed);
-                    if (ImGui.Selectable("  Delete")) presetToDeleteId = preset.Id;
+                    if (ImGui.Selectable("  Delete"))
+                    {
+                        var doomed = preset;
+                        AskConfirm("Delete preset", $"Delete \"{doomed.Name}\"?", "Delete",
+                            () => config.DeletePreset(doomed.Id),
+                            detail: "This cannot be undone.");
+                    }
                     ImGui.PopStyleColor();
                     ImGui.EndPopup();
                 }
@@ -527,74 +618,6 @@ namespace PfPresets
                 hoveredPresetId = string.Empty;
         }
 
-        /// <summary>Confirmation dialog shown before a preset is deleted (deletion is
-        /// irreversible). Opened whenever <see cref="presetToDeleteId"/> is set.</summary>
-        private void DrawDeleteConfirmModal()
-        {
-            if (string.IsNullOrEmpty(presetToDeleteId))
-                return;
-
-            var preset = config.GetPreset(presetToDeleteId);
-            if (preset == null)
-            {
-                presetToDeleteId = string.Empty;
-                return;
-            }
-
-            const string popupId = "Delete Preset##DeleteConfirm";
-            if (!ImGui.IsPopupOpen(popupId))
-                ImGui.OpenPopup(popupId);
-
-            var vp = ImGui.GetMainViewport();
-            ImGui.SetNextWindowPos(
-                new Vector2(vp.WorkPos.X + vp.WorkSize.X * 0.5f, vp.WorkPos.Y + vp.WorkSize.Y * 0.5f),
-                ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
-
-            // The main window uses zero WindowPadding; give the modal real padding.
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(18, 14));
-            bool open = true;
-            if (ImGui.BeginPopupModal(popupId, ref open, ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse))
-            {
-                ImGui.TextColored(TextPrimary, $"Delete \"{preset.Name}\"?");
-                ImGui.TextColored(TextMuted, "This cannot be undone.");
-                ImGui.Dummy(new Vector2(0, 8));
-
-                ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
-                ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
-                bool confirmed = ImGui.Button("Delete##ConfirmDelete", new Vector2(110, 28));
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor(4);
-                if (confirmed)
-                {
-                    config.DeletePreset(presetToDeleteId);
-                    presetToDeleteId = string.Empty;
-                    ImGui.CloseCurrentPopup();
-                }
-
-                ImGui.SameLine(0, 10);
-                if (DrawSecondaryButton("Cancel##CancelDelete", new Vector2(110, 28)))
-                {
-                    presetToDeleteId = string.Empty;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.EndPopup();
-            }
-            ImGui.PopStyleVar();
-
-            if (!open)
-                presetToDeleteId = string.Empty;
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  FOOTER (Auto Refresher + Create button)
-        // ══════════════════════════════════════════════════════════
-
-        /// <summary>Vertical space the footer needs at the bottom of the main window. The preset
-        /// list reserves this much so the footer (Create button, plus the optional Auto Refresher
-        /// toggle above it) is never pushed off-screen.</summary>
         private float GetFooterHeight()
         {
             float h = 50f; // Create button + padding

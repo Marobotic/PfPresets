@@ -64,6 +64,45 @@ namespace PfPresets
         /// most listings want, and it fills around whoever is already in your party. Existing
         /// presets keep whatever they were saved with - this only affects newly created ones.</summary>
         public bool AutoAdjustRoles { get; set; } = true;
+
+        /// <summary>
+        /// Widens one melee slot to accept casters as well - the "fake melee" seat that a double
+        /// caster comp fills.
+        ///
+        /// Only meaningful alongside <see cref="AutoAdjustRoles"/>: without it you'd set the slot
+        /// by hand instead, which the job selector already does.
+        /// </summary>
+        public bool AllowDoubleCaster { get; set; } = false;
+
+        /// <summary>Whether to add a short note to the end of the comment saying double caster is
+        /// welcome. The slot alone allows it; this is what tells people scrolling the list.</summary>
+        public bool NoteDoubleCasterInComment { get; set; } = false;
+
+        /// <summary>The note appended when <see cref="NoteDoubleCasterInComment"/> is on.</summary>
+        public const string DoubleCasterNote = "2 caster ok";
+
+        /// <summary>
+        /// The comment as it will actually be posted, with the double-caster note appended when
+        /// that's switched on.
+        ///
+        /// Skips the note if it wouldn't fit rather than truncating it to nonsense, and skips it if
+        /// the comment already mentions it - people often type it themselves.
+        /// </summary>
+        public string ResolveComment(int maxLength)
+        {
+            string comment = Comment ?? string.Empty;
+
+            if (!AllowDoubleCaster || !NoteDoubleCasterInComment)
+                return comment;
+
+            if (comment.Contains("caster", StringComparison.OrdinalIgnoreCase))
+                return comment;
+
+            string separator = comment.Length > 0 ? " || " : string.Empty;
+            string withNote = comment + separator + DoubleCasterNote;
+
+            return withNote.Length <= maxLength ? withNote : comment;
+        }
         public bool RemoveRoleRestrictions { get; set; } = false;
         public bool OnePlayerPerJob { get; set; } = false;
 

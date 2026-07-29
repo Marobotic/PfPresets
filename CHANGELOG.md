@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.2.0 — Community Ratings (Phase 2)
+
+Only present in the third-party repo build. The official-repo build is compiled with
+`-p:EnableRatings=false` and contains none of this code.
+
+**New: community player ratings.** A Ratings tab shows everyone you can still vote on, and looks
+any character up by `Name@World` with links out to FFLogs, Tomestone and the Lodestone.
+
+**Voting is a thumbs up or a thumbs down, and one click casts it.** No star scale, no submit
+button — after a duty you either would play with someone again or you wouldn't. Scores show as the
+share of votes that are positive.
+
+**New: a Contacts tab.** A read-only record of the last 24 players you finished a duty with and
+which duty it was. Local, and forgotten after a week.
+
+**Voting happens in two places.** The Ratings tab lists everyone you can still vote on, and a small
+window appears when you leave a duty if anyone from it is still unrated. Skip it and that duty
+won't ask again — but you have 24 hours to change your mind from the Ratings tab.
+
+**New: ratings on your party.** Everyone in the party you're in shows their rating beside them.
+Ratings are deliberately *not* shown while browsing the Party Finder — a score on a listing you
+haven't joined is a screening tool for strangers, which isn't what this is for.
+
+**New: kick and report, for party leaders.** A Kick button beside each member, behind an
+"are you sure" confirmation, using the game's own native call rather than a synthesised chat
+command. Report sends a note to the plugin author — clearly labelled as *not* a Square Enix
+report, since only theirs can act on an account.
+
+**Ratings are anonymous and hard to game.** The server stores no character names at all, only
+one-way hashes, and ratings are stored with no link back to whoever submitted them. Ratings from
+friends and FC mates count for half, repeat ratings of the same person count for a tenth, and the
+two stack. You can rate any given player once per 24 hours, enforced on both the client and the
+server. No score is shown at all until a character has at least three ratings, so one person's
+opinion can never become someone's reputation.
+
+**Off by default.** Nothing is looked up, recorded or sent until you turn it on in settings, where
+the full list of what leaves your machine is spelled out. Who you met in duties is kept in a
+single local file you can clear from the same screen.
+
+---
+
 ## 3.0.0.2
 
 **Fixed: Apply stayed available while you were queued or in a duty.** The button showed green

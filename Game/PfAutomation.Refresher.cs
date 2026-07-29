@@ -64,11 +64,60 @@ namespace PfPresets
             }
         }
 
-        /// <summary>True while the player has a Party Finder listing up.</summary>
-        public bool IsRecruiting()
+        /// <summary>When this plugin last clicked Recruit Members itself.</summary>
+        private long listingSubmittedTick = long.MinValue / 2;
+
+        /// <summary>How long OwnListingId is believed after our own submit, while the online
+        /// status catches up. A second or two is normal; ten is generous and self-clearing.</summary>
+        private const long SubmitGraceMs = 10_000;
+
+        internal void MarkListingSubmitted() => listingSubmittedTick = Environment.TickCount64;
+
+        /// <summary>
+        /// Whether this character actually has a Party Finder listing up.
+        ///
+        /// Deliberately NOT ConditionFlag.UsingPartyFinder, which is what this used to be: that
+        /// flag is set whenever the Party Finder *window* is open, so idly browsing listings made
+        /// the plugin believe it was recruiting.
+        ///
+        /// OnlineStatus 26 is the authority, and is the only thing here that is: it is the game's
+        /// own "Recruiting Party Members" state, the one other players see next to your name, so
+        /// it is true exactly while a listing is up and false the instant it isn't.
+        ///
+        /// OwnListingId is NOT evidence on its own, which is what this used to get wrong. It
+        /// outlives the listing it names and is repopulated whenever the agent reloads its cache -
+        /// which happens just from opening the Party Finder or the Recruitment Criteria window. So
+        /// browsing someone else's listing, or opening the native recruit window without posting
+        /// anything, produced a full "Your Recruitment" card with a counting-down timer and an End
+        /// Recruitment button.
+        ///
+        /// It is still worth something in exactly one case: the beat between our own submit
+        /// landing and the online status updating. So it counts only just after we clicked the
+        /// button ourselves, and never otherwise.
+        /// </summary>
+        public unsafe bool IsRecruiting()
         {
-            return this.condition[ConditionFlag.UsingPartyFinder];
+            var localPlayer = objectTable.LocalPlayer;
+            if (localPlayer != null && localPlayer.OnlineStatus.RowId == RecruitingOnlineStatusId)
+                return true;
+
+            if (Environment.TickCount64 - listingSubmittedTick > SubmitGraceMs)
+                return false;
+
+            try
+            {
+                var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
+                return agent != null && agent->OwnListingId != 0;
+            }
+            catch (Exception)
+            {
+                // Agent unavailable during a zone change.
+                return false;
+            }
         }
+
+        /// <summary>OnlineStatus row for "Recruiting Party Members".</summary>
+        private const uint RecruitingOnlineStatusId = 26;
 
         /// <summary>How often the Auto Refresher re-posts the listing, in minutes. Free-form, clamped
         /// to <see cref="MinRefreshMinutes"/>..<see cref="MaxRefreshMinutes"/> so a bad stored value
@@ -155,6 +204,10 @@ namespace PfPresets
                     if (!await OpenOwnListing()) return;
 
                     // 2. Wait for the listing detail window, then press Edit (button 109).
+                    //    While that window is up it's the one moment the game exposes the listing's
+                    //    real time-left, so grab it for the status box on the way past.
+                    await framework.RunOnFrameworkThread(CaptureListingTimeLeft);
+
                     if (!await WaitForAddonAndClickButton("LookingForGroupDetail", 109, "Edit"))
                         return;
 

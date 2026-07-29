@@ -2,9 +2,9 @@
     <PropertyGroup>
         <AssemblyName>PfPresets</AssemblyName>
         <RootNamespace>PfPresets</RootNamespace>
-        <Version>3.0.0.2</Version>
-        <FileVersion>3.0.0.2</FileVersion>
-        <AssemblyVersion>3.0.0.2</AssemblyVersion>
+        <Version>3.2.0.0</Version>
+        <FileVersion>3.2.0.0</FileVersion>
+        <AssemblyVersion>3.2.0.0</AssemblyVersion>
         <TargetFramework>net10.0-windows</TargetFramework>
         <Platforms>x64</Platforms>
         <Nullable>enable</Nullable>
@@ -13,6 +13,23 @@
         <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    </PropertyGroup>
+
+    <!--
+      Phase 2 community ratings. Kept behind a compile flag because the official Dalamud
+      repo's rules bar plugins that collect and share data about other players: a build
+      with EnableRatings=false contains none of the rating code and stays submittable
+      there, while the third-party repo ships the full thing.
+
+      Off by default so an unqualified `dotnet build` produces the conservative build.
+      Turn it on explicitly with -p:EnableRatings=true; build.sh does that for you
+      unless you pass its no-ratings switch.
+    -->
+    <PropertyGroup>
+        <EnableRatings Condition="'$(EnableRatings)' == ''">false</EnableRatings>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(EnableRatings)' == 'true'">
+        <DefineConstants>$(DefineConstants);PFP_RATINGS</DefineConstants>
     </PropertyGroup>
 
   <ItemGroup>
@@ -52,4 +69,11 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <ItemGroup>
+    <!-- Roboto (Apache 2.0), embedded for the profile card's score. Dalamud ships Noto and the
+         game fonts, neither of which is this, and the number is the one place the plugin sets
+         type large enough for the face to matter. -->
+    <EmbeddedResource Include="Data\Fonts\Roboto.ttf" />
+  </ItemGroup>
+
 </Project>

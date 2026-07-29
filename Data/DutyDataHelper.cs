@@ -86,6 +86,7 @@ namespace PfPresets
                         Name = name,
                         ContentTypeId = row.ContentType.RowId,
                         ContentTypeName = row.ContentType.Value.Name.ToString(),
+                        ExVersionId = row.RequiredExVersion.RowId,
                         ClassJobLevelRequired = row.ClassJobLevelRequired,
                         ItemLevelRequired = row.ItemLevelRequired,
                     };
@@ -246,6 +247,11 @@ namespace PfPresets
         public string Name { get; set; } = string.Empty;
         public uint ContentTypeId { get; set; }
         public string ContentTypeName { get; set; } = string.Empty;
+
+        /// <summary>Expansion the duty belongs to, as an ExVersion row id: 0 is A Realm Reborn and
+        /// the highest present in the sheet is the current one. Used to tell current content from
+        /// everything that came before without hardcoding an expansion name.</summary>
+        public uint ExVersionId { get; set; }
         public int ClassJobLevelRequired { get; set; }
         public int ItemLevelRequired { get; set; }
     }
