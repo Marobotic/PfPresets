@@ -232,7 +232,8 @@ namespace PfPresets
 
         public async Task<ApiResult<SubmitRatingResponse>> SubmitAsync(SubmitRatingRequest submission)
         {
-            if (!submission.Target.IsValid || submission.Score is < 1 or > 5)
+            // Score is +1 (upvote) or -1 (downvote); anything else is a bug on our side.
+            if (!submission.Target.IsValid || submission.Score is not (1 or -1))
                 return ApiResult<SubmitRatingResponse>.Fail(ApiStatus.BadRequest);
 
             return await SendAsync<SubmitRatingResponse>(

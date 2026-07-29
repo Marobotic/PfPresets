@@ -5,6 +5,24 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "3.2.1",
+      "date": "2026-07-29",
+      "published": true,
+      "headline": "Downvoting fixed; ratings on by default",
+      "changes": [
+        {
+          "type": "fixed",
+          "title": "Downvoting always failed with 'That rating couldn't be sent'",
+          "body": "A score validation check that was meant to block invalid values was also rejecting -1, the value a downvote sends. Upvoting was unaffected. The check now correctly accepts +1 and -1 only."
+        },
+        {
+          "type": "changed",
+          "title": "Community ratings on by default for new installs",
+          "body": "The rating system master switch, the post-duty prompt, and ratings on the party panel all default to enabled. Existing installs keep whatever they had set."
+        }
+      ]
+    },
+    {
       "version": "3.0.0.2",
       "date": "2026-07-27",
       "published": true,

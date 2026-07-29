@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.1
+
+**Fixed: downvoting was broken.** Thumbs down always returned "That rating couldn't be sent" — a
+validation check that was meant to guard against invalid scores was also rejecting −1, the value a
+downvote sends. Upvoting was unaffected. The check now correctly accepts +1 and −1 only.
+
+**Community ratings are on by default for new installs.** The rating system, the post-duty prompt,
+and ratings on your party panel all default to enabled. Existing installs keep whatever they had.
+
+---
+
 ## 3.2.0 — Community Ratings (Phase 2)
 
 Only present in the third-party repo build. The official-repo build is compiled with

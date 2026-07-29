@@ -76,7 +76,7 @@ namespace PfPresets
         /// up, record or send anything about other players until this is deliberately turned on,
         /// because the feature involves data about people who never installed it.
         /// </summary>
-        public bool RatingsEnabled { get; set; } = false;
+        public bool RatingsEnabled { get; set; } = true;
 
         /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
         public bool PostDutyPromptEnabled { get; set; } = true;
