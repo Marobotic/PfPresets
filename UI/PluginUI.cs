@@ -52,6 +52,16 @@ namespace PfPresets
                 : $"v{v.Major}.{v.Minor}.{v.Build}";
         }
 
+        /// <summary>
+        /// A player name as it should be drawn, honouring the name-display setting.
+        ///
+        /// Wrap every name that reaches the screen in this. Never wrap one that is about to be
+        /// compared, stored, looked up, turned into a URL or passed to the game - see
+        /// <see cref="PlayerNameFormat"/>.
+        /// </summary>
+        private string DisplayName(string name)
+            => PlayerNameFormat.Apply(name, config.PlayerNameStyle);
+
         // ── Per-frame caches (reset at the top of Draw) ───────────
         private bool? rrActiveThisFrame;
         private (bool Ok, string Reason)? canRecruitThisFrame;

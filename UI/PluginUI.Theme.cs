@@ -191,6 +191,33 @@ namespace PfPresets
             ImGui.Dummy(new Vector2(0, 2));
         }
 
+        /// <summary>
+        /// Shortens text with an ellipsis so it fits, instead of letting it run past the border -
+        /// ImGui clips rather than wrapping, so an overlong name silently loses its tail and
+        /// whatever follows it.
+        ///
+        /// Lives here rather than with the ratings UI because the recruitment card's comment
+        /// wrapping calls it too, and that code compiles in the no-ratings build.
+        /// </summary>
+        private static string Fit(string text, float maxWidth)
+        {
+            if (maxWidth <= 0 || ImGui.CalcTextSize(text).X <= maxWidth)
+                return text;
+
+            const string ellipsis = "…";
+            float budget = maxWidth - ImGui.CalcTextSize(ellipsis).X;
+            if (budget <= 0)
+                return ellipsis;
+
+            for (int len = text.Length - 1; len > 0; len--)
+            {
+                string cut = text.Substring(0, len);
+                if (ImGui.CalcTextSize(cut).X <= budget)
+                    return cut + ellipsis;
+            }
+            return ellipsis;
+        }
+
         private static bool DrawStyledCheckbox(string label, ref bool value)
         {
             ImGui.PushStyleColor(ImGuiCol.FrameBg, BgCard);

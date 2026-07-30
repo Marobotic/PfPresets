@@ -68,6 +68,15 @@ namespace PfPresets
         /// slot locked to a single job to that job's role, so the freed seat is easier to fill.</summary>
         public bool AutoAdjustLockedJobsEnabled { get; set; } = false;
 
+        /// <summary>
+        /// How much of another player's name to draw, everywhere the plugin shows one - the
+        /// recruitment card, the party panel, ratings, recent players and profiles.
+        ///
+        /// Display only: the full name is still what gets looked up, stored and sent. Lives outside
+        /// the ratings block because the recruitment card shows names in either build.
+        /// </summary>
+        public PlayerNameStyle PlayerNameStyle { get; set; } = PlayerNameStyle.FullName;
+
 #if PFP_RATINGS
         // ── Community ratings ─────────────────────────────────────
 

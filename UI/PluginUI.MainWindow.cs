@@ -99,8 +99,11 @@ namespace PfPresets
 
                                 // Inside a duty the card has nothing true to say: there is no
                                 // listing to end, no one to recruit, and none of its actions apply.
-                                // The party list stands alone in there instead.
-                                bool showCard = !pfAutomation.IsInDuty();
+                                // The party list stands alone in there instead. Logged out it has
+                                // less than nothing to say - and used to render a stale "Not logged
+                                // in" card with the last party still listed under it.
+                                bool showCard = !pfAutomation.IsInDuty()
+                                    && snapshot.Activity != PfActivity.NotLoggedIn;
 
                                 // Advanced once, before measuring, so both passes agree on how far
                                 // through the expand animation this frame is.

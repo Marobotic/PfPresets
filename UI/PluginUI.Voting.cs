@@ -107,27 +107,8 @@ namespace PfPresets
             ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(), x));
         }
 
-        /// <summary>Shortens text with an ellipsis so it fits, instead of letting it run past the
-        /// border - ImGui clips rather than wrapping, so an overlong name silently loses its tail
-        /// and whatever follows it.</summary>
-        private static string Fit(string text, float maxWidth)
-        {
-            if (maxWidth <= 0 || ImGui.CalcTextSize(text).X <= maxWidth)
-                return text;
-
-            const string ellipsis = "…";
-            float budget = maxWidth - ImGui.CalcTextSize(ellipsis).X;
-            if (budget <= 0)
-                return ellipsis;
-
-            for (int len = text.Length - 1; len > 0; len--)
-            {
-                string cut = text.Substring(0, len);
-                if (ImGui.CalcTextSize(cut).X <= budget)
-                    return cut + ellipsis;
-            }
-            return ellipsis;
-        }
+        // Fit now lives in PluginUI.Theme.cs, which compiles in both builds - the recruitment
+        // card's comment wrapping calls it and that code is not behind PFP_RATINGS.
 
         /// <summary>Height of one row, derived from the current font and frame sizes so its
         /// contents always fit at any UI scale.</summary>
@@ -379,7 +360,8 @@ namespace PfPresets
             DrawJobIconInline(jobId, iconSize);
             ImGui.SameLine(0, 7);
 
-            string label = string.IsNullOrEmpty(world) ? name : $"{name}  @{world}";
+            string shownName = DisplayName(name);
+            string label = string.IsNullOrEmpty(world) ? shownName : $"{shownName}  @{world}";
             float room = rightEdge - (leftEdge + iconSize + 7f) - 8f;
 
             ImGui.AlignTextToFramePadding();
@@ -574,7 +556,7 @@ namespace PfPresets
             float reserved = (ImGui.GetFrameHeight() + 4f) * 1.45f * 2f + 5f + 12f;
             float nameRoom = ImGui.GetContentRegionMax().X - iconSize - 7f - reserved;
 
-            string label = $"{member.Name}  @{member.World}";
+            string label = $"{DisplayName(member.Name)}  @{member.World}";
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(TextPrimary, Fit(label, nameRoom));
             if (ImGui.IsItemHovered() && label != Fit(label, nameRoom))

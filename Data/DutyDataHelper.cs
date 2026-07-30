@@ -18,6 +18,10 @@ namespace PfPresets
         private List<DutyEntry>? cachedDuties;
         private Dictionary<uint, DutyEntry>? dutyById;
 
+        /// <summary>Instance territory row id -> duty, so the duty the player is currently inside can
+        /// be identified from the client's TerritoryType when there's no listing to read it from.</summary>
+        private Dictionary<uint, DutyEntry>? dutyByTerritory;
+
         /// <summary>
         /// Row ids at or above this are synthetic: entries we add for high-end duties missing from
         /// the ContentFinderCondition sheet. They are assigned in list order, so they can shift
@@ -64,6 +68,7 @@ namespace PfPresets
 
             cachedDuties = new List<DutyEntry>();
             dutyById = new Dictionary<uint, DutyEntry>();
+            dutyByTerritory = new Dictionary<uint, DutyEntry>();
 
             try
             {
@@ -93,6 +98,13 @@ namespace PfPresets
 
                     cachedDuties.Add(entry);
                     dutyById[row.RowId] = entry;
+
+                    // Map the duty's instance territory back to it. First non-zero territory wins:
+                    // a handful of rows share one (e.g. a fight and its unreal re-run), and the
+                    // first is as good a guess as any for "what am I standing in".
+                    uint territoryId = row.TerritoryType.RowId;
+                    if (territoryId != 0 && !dutyByTerritory.ContainsKey(territoryId))
+                        dutyByTerritory[territoryId] = entry;
                 }
 
                 // Add missing High-end duties to cachedDuties for lookup & search consistency
@@ -151,6 +163,68 @@ namespace PfPresets
             if (dutyById != null && dutyById.TryGetValue(rowId, out var entry))
                 return entry;
             return null;
+        }
+
+        /// <summary>The duty whose instance territory matches, or null. Identifies the duty the
+        /// player is currently inside from the client's TerritoryType, which the idle status
+        /// snapshot has no listing to read the duty from.</summary>
+        public DutyEntry? GetDutyByTerritoryType(uint territoryTypeRowId)
+        {
+            if (territoryTypeRowId == 0)
+                return null;
+
+            EnsureLoaded();
+            if (dutyByTerritory != null && dutyByTerritory.TryGetValue(territoryTypeRowId, out var entry))
+                return entry;
+            return null;
+        }
+
+        /// <summary>
+        /// The duty with exactly this name, or null. Used to recover a duty from a name the game
+        /// gave us as text rather than as a row id - the Duty Finder does not expose the condition
+        /// id of a queue that hasn't popped yet, but it does put the name on screen.
+        /// </summary>
+        public DutyEntry? GetDutyByExactName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+
+            EnsureLoaded();
+            if (cachedDuties == null)
+                return null;
+
+            string trimmed = name.Trim();
+            foreach (var entry in cachedDuties)
+            {
+                if (entry.Name.Equals(trimmed, StringComparison.OrdinalIgnoreCase))
+                    return entry;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The display name of a Duty Roulette ("Duty Roulette: Expert", "Frontline"), or empty.
+        ///
+        /// Deliberately separate from the duty lookups: a roulette is not a duty. Which fight it
+        /// rolls isn't decided until it pops, so it never has a row id and never carries a prog
+        /// point - it only needs a name to show.
+        /// </summary>
+        public string GetRouletteName(uint rouletteId)
+        {
+            if (rouletteId == 0)
+                return string.Empty;
+
+            try
+            {
+                var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentRoulette>();
+                var row = sheet?.GetRowOrDefault(rouletteId);
+                return row?.Name.ToString() ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Debug($"Roulette name lookup failed for {rouletteId}: {ex.Message}");
+                return string.Empty;
+            }
         }
 
         /// <summary>

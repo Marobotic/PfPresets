@@ -231,7 +231,7 @@ namespace PfPresets
             float textX = CardPad + Math.Max(Math.Max(numberW, labelW), 44f) + 20f;
 
             ImGui.SetCursorPos(new Vector2(textX, 17f));
-            ImGui.TextColored(TextPrimary, who.Name);
+            ImGui.TextColored(TextPrimary, DisplayName(who.Name));
             ImGui.SameLine(0, 5);
             ImGui.TextColored(TextMuted, $"@{who.World}");
 

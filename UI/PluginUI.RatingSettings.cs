@@ -35,6 +35,15 @@ namespace PfPresets
                     "Keeps one-job slots in step with who has already joined.");
 
                 ImGui.Dummy(new Vector2(0, 10));
+                DrawSectionLabel("PLAYER NAMES");
+                DrawChoiceSetting("Show names as", PlayerNameFormat.StyleLabels,
+                    () => (int)config.PlayerNameStyle,
+                    v => config.PlayerNameStyle = (PlayerNameStyle)v,
+                    "Applies everywhere a name appears - the recruitment card, your party, "
+                    + "ratings, recent players and profiles. Lookups and links still use the "
+                    + "full name.");
+
+                ImGui.Dummy(new Vector2(0, 10));
                 DrawSectionLabel("RATINGS");
 
                 DrawSetting("Enable ratings system", () => config.RatingsEnabled,
@@ -103,6 +112,38 @@ namespace PfPresets
             ImGui.TextColored(TextMuted, explanation);
             ImGui.PopTextWrapPos();
             ImGui.Unindent(22);
+
+            ImGui.Dummy(new Vector2(0, 8));
+        }
+
+        /// <summary>
+        /// A dropdown with its explanation printed underneath, matching <see cref="DrawSetting"/>.
+        ///
+        /// The label sits above the control rather than beside it: ImGui puts a combo's label on the
+        /// right, which would leave it dangling off the end of a full-width dropdown.
+        /// </summary>
+        private void DrawChoiceSetting(string label, string[] options, Func<int> get, Action<int> set,
+            string explanation)
+        {
+            ImGui.TextColored(TextSecondary, label);
+
+            int value = Math.Clamp(get(), 0, options.Length - 1);
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, BgCard);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, ColorFromHex("#1c2230"));
+            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 5.0f);
+            ImGui.SetNextItemWidth(ImGui.GetContentRegionMax().X - 16);
+            if (ImGui.Combo($"##set{label}", ref value, options, options.Length))
+            {
+                set(value);
+                config.Save();
+            }
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor(3);
+
+            ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - 8);
+            ImGui.TextColored(TextMuted, explanation);
+            ImGui.PopTextWrapPos();
 
             ImGui.Dummy(new Vector2(0, 8));
         }

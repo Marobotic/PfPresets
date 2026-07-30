@@ -70,6 +70,26 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// The panel's heading. Inside a duty it names the duty, because that is the one thing in
+        /// there the player cannot read off the party list itself - a bare "IN DUTY WITH" withheld
+        /// it even though the snapshot had already resolved the name from the territory.
+        ///
+        /// The name is only present when that resolution succeeded, and the listing path uses the
+        /// literal "None" for a listing with no specific duty, so both fall back to the unnamed
+        /// wording rather than heading the panel with a gap or the word "None".
+        /// </summary>
+        private static string PartyPanelHeading(bool inDuty, string dutyName)
+        {
+            if (!inDuty)
+                return "PARTY";
+
+            bool named = !string.IsNullOrWhiteSpace(dutyName)
+                && !dutyName.Equals("None", StringComparison.OrdinalIgnoreCase);
+
+            return named ? $"In {dutyName} with" : "In duty with";
+        }
+
+        /// <summary>
         /// The standalone party panel, shown when the recruitment card isn't carrying the list
         /// itself - which in practice means inside a duty, or in a party with no listing up.
         /// </summary>
@@ -89,7 +109,10 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 2));
             ImGui.Indent(10);
-            DrawSectionLabel(inDuty ? "IN DUTY WITH" : "PARTY");
+            // Fit against the width left after the indent, so a long duty name ellipsises instead
+            // of being clipped by the border.
+            DrawSectionLabel(Fit(PartyPanelHeading(inDuty, snap.DutyName),
+                ImGui.GetContentRegionAvail().X - 12f));
             ImGui.Unindent(10);
 
             // Kicking is impossible inside instanced content - the game refuses it - so the button
@@ -171,7 +194,7 @@ namespace PfPresets
                 // much width the action column reserves, and that has to be the same on every row
                 // or the columns left of it stop lining up. Whether the buttons are actually
                 // drawn is decided per row.
-                DrawPartyMemberRow(member, allowKick, width, originX, isSelf);
+                DrawPartyMemberRow(member, allowKick, width, originX, isSelf, dutyRowId);
             }
 
             if (supportNpcs > 0)
@@ -228,9 +251,18 @@ namespace PfPresets
         /// Only ever states what the data supports. A logged clear is a fact and gets a tick;
         /// everything else is an absence, and an absence is shown as an absence rather than as
         /// an accusation - "no clear logged", never "hasn't cleared".
+        ///
+        /// <paramref name="dutyRowId"/> gates the badge: if the current context is not a fight
+        /// that has progression (roulette, frontline, casual content), the badge is suppressed
+        /// entirely so stale data from a previous session never bleeds through.
         /// </summary>
-        private void DrawProgressBadge(CharacterIdentity who, float chipLeft, float rowY)
+        private void DrawProgressBadge(CharacterIdentity who, float chipLeft, float rowY,
+            uint dutyRowId = 0)
         {
+            // No fight context → never show stale prog from a previous duty.
+            if (!DutyHasProgress(dutyRowId))
+                return;
+
             var p = Ratings?.ProgressFor(who);
             if (p == null)
                 return;
@@ -616,13 +648,14 @@ namespace PfPresets
         /// <summary>One party member. Shares the list-row primitive with Recent players, so the
         /// two lists match in height, padding and hover behaviour by construction.</summary>
         private void DrawPartyMemberRow(PartyMemberInfo member, bool allowKick, float width,
-            float? originX, bool isSelf = false)
+            float? originX, bool isSelf = false, uint dutyRowId = 0)
         {
             var identity = ToIdentity(member);
             bool canKick = allowKick && pfAutomation.IsPartyLeader();
 
             DrawHoverRow($"party{member.ContentId}{member.Name}",
-                rightEdge => DrawPartyMemberBody(member, identity, canKick, rightEdge, isSelf),
+                rightEdge => DrawPartyMemberBody(member, identity, canKick, rightEdge, isSelf,
+                    dutyRowId),
                 width: width, originX: originX,
 
                 // Same menu as the recent players list. Null identity means the world hasn't
@@ -634,7 +667,7 @@ namespace PfPresets
         private const float PartyReportWidth = 56f;
 
         private void DrawPartyMemberBody(PartyMemberInfo member, CharacterIdentity? identity,
-            bool isLeader, float rightEdge, bool isSelf = false)
+            bool isLeader, float rightEdge, bool isSelf = false, uint dutyRowId = 0)
         {
             float iconSize = ImGui.GetTextLineHeight() + 4f;
             const float btnH = 22f;
@@ -657,7 +690,8 @@ namespace PfPresets
             ImGui.SameLine(0, 7);
 
             string world = Worlds?.GetWorldName(member.HomeWorldId) ?? string.Empty;
-            string label = string.IsNullOrEmpty(world) ? member.Name : $"{member.Name}  @{world}";
+            string shownName = DisplayName(member.Name);
+            string label = string.IsNullOrEmpty(world) ? shownName : $"{shownName}  @{world}";
             if (isSelf)
                 label += "  (you)";
 
@@ -673,7 +707,7 @@ namespace PfPresets
                 ImGui.SetCursorScreenPos(new Vector2(chipLeft, start.Y));
                 DrawRatingChip(identity);
 
-                DrawProgressBadge(identity, chipLeft, start.Y);
+                DrawProgressBadge(identity, chipLeft, start.Y, dutyRowId);
             }
 
             // Nothing to report or kick on yourself. The space is still reserved above, so the
@@ -698,14 +732,17 @@ namespace PfPresets
             if (ImGui.Button("Kick", new Vector2(PartyKickWidth, btnH)))
             {
                 var target = member;
-                AskConfirm("Kick player", $"Kick {target.Name} from the party?", "Yes, kick them",
+                // Kick takes the real name - it's how the game finds the member. Only the question
+                // put to the player is abbreviated.
+                AskConfirm("Kick player", $"Kick {DisplayName(target.Name)} from the party?",
+                    "Yes, kick them",
                     () => Party?.Kick(target.Name, target.ContentId),
                     detail: "They won't be told it was you.");
             }
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
             if (ImGui.IsItemHovered())
-                PaddedTooltip($"Remove {member.Name} from the party.");
+                PaddedTooltip($"Remove {DisplayName(member.Name)} from the party.");
         }
 
         private void DrawReportButton(PartyMemberInfo member)

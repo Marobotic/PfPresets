@@ -95,7 +95,7 @@ namespace PfPresets
                 return;
             }
 
-            ImGui.TextColored(TextPrimary, identity.Name);
+            ImGui.TextColored(TextPrimary, DisplayName(identity.Name));
             ImGui.SameLine(0, 5);
             ImGui.TextColored(TextMuted, $"@{identity.World}");
 
@@ -193,7 +193,7 @@ namespace PfPresets
 
             var repeat = Ratings.ReportCooldownUntil(identity);
             if (repeat != null)
-                return $"You just reported {identity.Name}. You can again in {Until(repeat.Value)}.";
+                return $"You just reported {DisplayName(identity.Name)}. You can again in {Until(repeat.Value)}.";
 
             var quota = Ratings.ReportQuotaFreeAt();
             if (quota != null)

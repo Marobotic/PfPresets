@@ -208,7 +208,20 @@ namespace PfPresets
             }
             else
             {
-                h += line;                              // status line / blocked reason
+                bool queueOrDuty = snap.Activity == PfActivity.InQueue
+                    || snap.Activity == PfActivity.InDuty;
+
+                // Queue/duty: only add the "Your party" line when there's a party to show.
+                // Otherwise: always one status/blocked-reason line.
+                if (queueOrDuty)
+                {
+                    if (ShowsEmbeddedParty(snap))
+                        h += line;                          // "Your party" label
+                }
+                else
+                {
+                    h += line;                              // status line / blocked reason
+                }
 
 #if PFP_RATINGS
                 // Same party section the listing card reserves, so an ordinary party gets one
@@ -331,12 +344,31 @@ namespace PfPresets
         private void DrawIdleBody(ImDrawListPtr dl, RecruitmentSnapshot snap,
             float left, float right, ref float y, float line, float cardBottom)
         {
-            string text = snap.BlockedReason.Length > 0
-                ? snap.BlockedReason
-                : "You can post a Party Finder listing.";
+            // In queue or in a duty: the header already names the duty/queue, so we don't
+            // repeat it. Show "Your party" as a label before the member list instead of the
+            // generic "you can post" line or the blocked reason (which was the source of the
+            // duplicate "You are in the duty finder queue" text).
+            bool queueOrDuty = snap.Activity == PfActivity.InQueue
+                || snap.Activity == PfActivity.InDuty;
 
-            ClippedText(dl, text, left, right, y, line, TextSecondary);
-            y += line;
+            if (queueOrDuty)
+            {
+                // "Your party" label — only if there's actually a party to show beneath it.
+                if (ShowsEmbeddedParty(snap))
+                {
+                    ClippedText(dl, "Your party", left, right, y, line, TextSecondary);
+                    y += line;
+                }
+            }
+            else
+            {
+                string text = snap.BlockedReason.Length > 0
+                    ? snap.BlockedReason
+                    : "You can post a Party Finder listing.";
+
+                ClippedText(dl, text, left, right, y, line, TextSecondary);
+                y += line;
+            }
 
             DrawPartySection(dl, snap, left, right, ref y);
 
@@ -719,7 +751,7 @@ namespace PfPresets
             if (IsMouseOver(pos, max))
             {
                 string job = JobData.FindById(seat.JobId)?.Name ?? "Unknown";
-                PaddedTooltip($"{seat.Name} ({job})");
+                PaddedTooltip($"{DisplayName(seat.Name)} ({job})");
             }
         }
 
@@ -770,10 +802,26 @@ namespace PfPresets
                     : ("Party Recruitment", AccentBlue, FontAwesomeIcon.Bullhorn);
             }
 
+            if (snap.Activity == PfActivity.InQueue)
+            {
+                // When we know the specific fight or roulette, say what we're queued for.
+                string title = !string.IsNullOrWhiteSpace(snap.DutyName)
+                    ? $"In queue for {snap.DutyName}"
+                    : "In the Duty Finder queue";
+                return (title, AccentBlue, FontAwesomeIcon.Hourglass);
+            }
+
+            if (snap.Activity == PfActivity.InDuty)
+            {
+                string title = !string.IsNullOrWhiteSpace(snap.DutyName)
+                    && !snap.DutyName.Equals("None", StringComparison.OrdinalIgnoreCase)
+                    ? $"In {snap.DutyName}"
+                    : "In a duty";
+                return (title, AccentYellow, FontAwesomeIcon.DoorClosed);
+            }
+
             return snap.Activity switch
             {
-                PfActivity.InDuty => ("In a duty", AccentYellow, FontAwesomeIcon.DoorClosed),
-                PfActivity.InQueue => ("In the Duty Finder queue", AccentBlue, FontAwesomeIcon.Hourglass),
                 PfActivity.InPartyNotLeader => ("In a party", TextSecondary, FontAwesomeIcon.Users),
                 PfActivity.NotLoggedIn => ("Not logged in", TextMuted, FontAwesomeIcon.TimesCircle),
                 _ => ("Ready to recruit", TextSecondary, FontAwesomeIcon.CheckCircle),

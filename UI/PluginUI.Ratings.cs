@@ -288,7 +288,7 @@ namespace PfPresets
                     DrawJobIconInline(jobId, iconSize);
                     ImGui.SameLine(0, 7);
 
-                    string label = $"{me.Name}  @{me.World}";
+                    string label = $"{DisplayName(me.Name)}  @{me.World}";
                     ImGui.AlignTextToFramePadding();
                     ImGui.TextColored(TextPrimary,
                         Fit(label, Math.Max(40f, rightEdge - start.X - iconSize - 130f)));
@@ -726,7 +726,7 @@ namespace PfPresets
 
             if (at == 0 || at == input.Length - 1)
             {
-                ratingSearchError = "Enter the character as Name@World, e.g. Maro Botic@Zodiark.";
+                ratingSearchError = "Enter the character as Name@World, e.g. John Smith@Zodiark.";
                 return;
             }
 
