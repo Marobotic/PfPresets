@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.2
+
+**Progress percentages are now tied to the current fight.** They persist when your party fills or goes idle, and only clear or switch when a new duty is detected through Party Finder recruitment, Duty Finder queue, or duty commencement.
+
+**PvP instances now trigger the rating prompt.** Frontline, Crystalline Conflict, and other PvP duties are now detected and will show the post-duty rating prompt after completion.
+
+---
+
 ## 3.2.1
 
 **Fixed: downvoting was broken.** Thumbs down always returned "That rating couldn't be sent" — a

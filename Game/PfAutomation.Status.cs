@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Arrays;
 
 namespace PfPresets
 {
@@ -70,6 +73,15 @@ namespace PfPresets
         /// <summary>True when the local player leads the party (and so owns the listing).</summary>
         public bool IsLeader { get; init; }
 
+        /// <summary>
+        /// True when there is anyone else in the party right now, recruiting or not.
+        ///
+        /// An ordinary party - one with no listing up - otherwise classified as Idle with nothing
+        /// to say, so <see cref="HasAnythingToShow"/> was false and the card was suppressed, which
+        /// took the embedded party list down with it. This keeps the card alive for any party.
+        /// </summary>
+        public bool InParty { get; init; }
+
         public string DutyName { get; init; } = string.Empty;
 
         /// <summary>
@@ -110,7 +122,7 @@ namespace PfPresets
 
         /// <summary>True when there is anything worth showing the user.</summary>
         public bool HasAnythingToShow =>
-            IsRecruiting || Activity != PfActivity.Idle || BlockedReason.Length > 0;
+            IsRecruiting || Activity != PfActivity.Idle || BlockedReason.Length > 0 || InParty;
     }
 
     public partial class PfAutomation
@@ -125,6 +137,17 @@ namespace PfPresets
         private DateTime? recruitingSince;
         private TimeSpan? capturedTimeLeft;
         private DateTime capturedAt;
+
+        /// <summary>
+        /// The duty of the most recent listing we saw up, kept after recruitment ends.
+        ///
+        /// A party that fills stops recruiting, and the game then has no listing left to read the
+        /// duty from - so the progress readout for the fight they just filled for would vanish the
+        /// instant it mattered most. Holding it here lets a full party still show its prog point.
+        /// Always a real game duty id (never a synthetic one), so <see cref="DutyHasProgress"/>
+        /// downstream can reason about it. Cleared once the party is gone.
+        /// </summary>
+        private (uint RowId, string Name)? lastRecruitedDuty;
 
         private RecruitmentSnapshot? snapshotThisFrame;
         private int snapshotFrame = -1;
@@ -171,10 +194,22 @@ namespace PfPresets
 
             if (!recruiting)
             {
+                bool inParty = GetOtherPartyMemberDetails().Count > 0;
+
+                // The party is gone: forget the fight it was recruiting for, so a fresh party
+                // later doesn't inherit a stale prog point.
+                if (!inParty)
+                    lastRecruitedDuty = null;
+
+                var (ctxName, ctxRow) = ResolveIdleContextDuty(inParty);
+
                 return new RecruitmentSnapshot
                 {
                     Activity = ClassifyIdleActivity(),
                     IsLeader = IsPartyLeader(),
+                    InParty = inParty,
+                    DutyName = ctxName,
+                    DutyRowId = ctxRow,
                     BlockedReason = canRecruit ? string.Empty : reason,
                 };
             }
@@ -215,12 +250,15 @@ namespace PfPresets
                 if (total <= 0 || total > 8)
                     total = 8;
 
+                string ownDutyName = ResolveListedDutyName(info->SelectedDutyId);
+                RememberRecruitedDuty(info->SelectedDutyId, ownDutyName);
+
                 return new RecruitmentSnapshot
                 {
                     Activity = common.Activity,
                     IsRecruiting = common.IsRecruiting,
                     IsLeader = true,
-                    DutyName = ResolveListedDutyName(info->SelectedDutyId),
+                    DutyName = ownDutyName,
                     DutyRowId = info->SelectedDutyId,
                     Comment = info->CommentString ?? string.Empty,
                     Filled = filled,
@@ -261,13 +299,16 @@ namespace PfPresets
             for (int i = 0; i < 8; i++)
                 viewedMasks[i] = viewed.SlotFlags[i];
 
+            string viewedDutyName = ResolveListedDutyName(viewed.DutyId);
+            RememberRecruitedDuty(viewed.DutyId, viewedDutyName);
+
             return new RecruitmentSnapshot
             {
                 Activity = common.Activity,
                 IsRecruiting = common.IsRecruiting,
                 IsLeader = false,
                 LeaderName = viewed.LeaderString.ToString() ?? string.Empty,
-                DutyName = ResolveListedDutyName(viewed.DutyId),
+                DutyName = viewedDutyName,
                 DutyRowId = viewed.DutyId,
                 Comment = viewed.CommentString.ToString() ?? string.Empty,
                 Filled = filled,
@@ -455,6 +496,117 @@ namespace PfPresets
 
             var entry = dutyDataHelper.GetDutyEntry(dutyId);
             return entry?.Name ?? $"Unknown duty ({dutyId})";
+        }
+
+        /// <summary>Records the listing's duty so a party that later fills still knows which fight
+        /// it filled for. A listing with no specific duty carries nothing worth remembering, so it
+        /// clears the memory rather than pinning "None".</summary>
+        private void RememberRecruitedDuty(ushort dutyId, string name)
+            => lastRecruitedDuty = dutyId != 0 ? (dutyId, name) : null;
+
+        /// <summary>
+        /// The duty to attribute an idle party's progress readout to.
+        ///
+        /// Inside a duty the current instance is authoritative and is resolved from the territory,
+        /// which is the only source there is - there's no listing to read. In the Duty Finder queue
+        /// it's whatever we queued for. Outside both, a party that just finished recruiting still
+        /// points at the fight it filled for. Otherwise there is nothing to show, and an empty name
+        /// is the panel's cue to say so.
+        ///
+        /// The queue is checked before the recruitment memory on purpose: queueing for a roulette
+        /// straight after a Party Finder night was showing the *listing's* prog point - the old
+        /// fight's percentage against a party queued for something else entirely.
+        /// </summary>
+        private (string Name, uint RowId) ResolveIdleContextDuty(bool inParty)
+        {
+            if (IsInDuty())
+            {
+                var duty = dutyDataHelper.GetDutyByTerritoryType(clientState.TerritoryType);
+                return duty != null ? (duty.Name, duty.RowId) : (string.Empty, 0u);
+            }
+
+            if (IsInDutyQueue())
+                return ResolveQueueContext();
+
+            if (inParty && lastRecruitedDuty.HasValue)
+                return (lastRecruitedDuty.Value.Name, lastRecruitedDuty.Value.RowId);
+
+            return (string.Empty, 0u);
+        }
+
+        /// <summary>
+        /// What we are queued for: a name to show, and a row id only when it is one identifiable
+        /// fight. A roulette returns a name with no row id, which is what keeps the prog readout
+        /// off a Frontline or Expert queue - there is no single fight to have a percentage in.
+        ///
+        /// Three sources, most authoritative first. Once the queue pops, the content is settled and
+        /// the client says exactly what it is. Before that the queue info holds only the roulette
+        /// id, so a specific duty has to be recovered from the name the game already shows in the
+        /// ToDo list.
+        /// </summary>
+        private unsafe (string Name, uint RowId) ResolveQueueContext()
+        {
+            try
+            {
+                var ui = UIState.Instance();
+                if (ui == null)
+                    return (string.Empty, 0u);
+
+                ref var queue = ref ui->ContentsFinder.QueueInfo;
+
+                // Popped: the duty is decided, including which duty a roulette rolled.
+                var popped = queue.PoppedQueueEntry;
+                if (popped.Id != 0 && popped.ContentType == ContentsType.Regular)
+                {
+                    var entry = dutyDataHelper.GetDutyEntry(popped.Id);
+                    if (entry != null)
+                        return (entry.Name, entry.RowId);
+                }
+
+                // Still waiting on a roulette: name it, but never give it a row id.
+                uint rouletteId = queue.QueuedContentRouletteId;
+                if (rouletteId != 0)
+                {
+                    string roulette = dutyDataHelper.GetRouletteName(rouletteId);
+                    return (roulette, 0u);
+                }
+
+                // Still waiting on a specific duty. Recovered by name, so it keeps its prog point.
+                string queued = ReadQueuedDutyText();
+                if (queued.Length > 0)
+                {
+                    var byName = dutyDataHelper.GetDutyByExactName(queued);
+                    return byName != null ? (byName.Name, byName.RowId) : (queued, 0u);
+                }
+
+                return (string.Empty, 0u);
+            }
+            catch (Exception ex)
+            {
+                // Reading game memory for a label is never worth a crash.
+                pluginLog.Debug($"[Queue] Context lookup failed: {ex.Message}");
+                return (string.Empty, 0u);
+            }
+        }
+
+        /// <summary>
+        /// The first queued duty as the game itself renders it in the ToDo list. Empty when nothing
+        /// is queued or the array isn't populated yet.
+        /// </summary>
+        private static unsafe string ReadQueuedDutyText()
+        {
+            var todo = ToDoListStringArray.Instance();
+            if (todo == null)
+                return string.Empty;
+
+            var queued = todo->QueuedDuties;
+            for (int i = 0; i < queued.Length; i++)
+            {
+                string text = queued[i].ToString();
+                if (!string.IsNullOrWhiteSpace(text))
+                    return text.Trim();
+            }
+            return string.Empty;
         }
 
         // ══════════════════════════════════════════════════════════

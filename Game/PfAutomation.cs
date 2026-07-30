@@ -245,6 +245,16 @@ namespace PfPresets
                 return false;
             }
 
+            // A full party (8/8) has no seat to recruit for - the Party Finder can't post a
+            // listing with nothing to fill. Only alliance raids could, and those aren't supported.
+            // Duty Support NPCs would pad this count, but they only exist inside a duty, which is
+            // already excluded above, so seven others plus you is a real, full party.
+            if (GetOtherPartyMemberDetails().Count >= 7)
+            {
+                reason = "Your party is already full.";
+                return false;
+            }
+
             var crossRealmProxy = InfoProxyCrossRealm.Instance();
             if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
             {
@@ -300,6 +310,13 @@ namespace PfPresets
         public unsafe List<PartyMemberInfo> GetOtherPartyMemberDetails()
         {
             var members = new List<PartyMemberInfo>();
+
+            // The party proxies keep the last party's members for a beat after logout, and with no
+            // local ContentId to filter against ("you" reads as 0) they'd even list yourself. This
+            // is the one source feeding every party read - the rows, the Leave Party button, the
+            // duty sampler - so a stale party anywhere traces back to here.
+            if (!clientState.IsLoggedIn)
+                return members;
 
             var crossRealmProxy = InfoProxyCrossRealm.Instance();
             if (crossRealmProxy != null && crossRealmProxy->IsInCrossRealmParty)
@@ -368,11 +385,13 @@ namespace PfPresets
         }
 
         /// <summary>True while the player is inside a duty. The game uses several "bound by duty"
-        /// flags depending on the content type, so all of them are checked.</summary>
+        /// flags depending on the content type, so all of them are checked. PvP instances
+        /// (Frontline, Crystalline Conflict) use a separate flag that is also checked here.</summary>
         public bool IsInDuty() =>
             condition[ConditionFlag.BoundByDuty] ||
             condition[ConditionFlag.BoundByDuty56] ||
-            condition[ConditionFlag.BoundByDuty95];
+            condition[ConditionFlag.BoundByDuty95] ||
+            clientState.IsPvP;
 
         /// <summary>True while the player is in combat.</summary>
         public bool IsInCombat() => condition[ConditionFlag.InCombat];
@@ -1232,6 +1251,9 @@ namespace PfPresets
         /// </summary>
         public PartyMemberInfo? GetLocalPartyMember()
         {
+            if (!clientState.IsLoggedIn)
+                return null;
+
             var self = objectTable.LocalPlayer;
             if (self == null)
                 return null;
