@@ -272,14 +272,13 @@ namespace PfPresets
 
             // Someone else leads. StoredRecruitmentInfo holds OUR last-configured settings, not
             // their listing, so reading it here would show a confidently wrong duty and comment.
-            // The only trustworthy source is a detail window we've actually viewed for this
-            // party's listing - use it when it matches, and stay quiet about what we can't know.
+            // The only trustworthy source is a detail window that has actually been opened on this
+            // party's listing - the watcher does that by itself, and until it succeeds the card
+            // stays quiet about what it can't know rather than guessing.
             var viewed = agent->LastViewedListing;
-            bool viewedIsOurParty = viewed.ListingId != 0
-                                    && viewed.LeaderContentId != 0
-                                    && viewed.LeaderContentId == GetPartyLeaderContentId();
+            ulong partyLeaderId = GetPartyLeaderContentId();
 
-            if (!viewedIsOurParty)
+            if (!CapturedListingIsUsable(partyLeaderId))
             {
                 return new RecruitmentSnapshot
                 {
@@ -302,6 +301,8 @@ namespace PfPresets
             string viewedDutyName = ResolveListedDutyName(viewed.DutyId);
             RememberRecruitedDuty(viewed.DutyId, viewedDutyName);
 
+            var capturedLeft = CapturedListingTimeLeft();
+
             return new RecruitmentSnapshot
             {
                 Activity = common.Activity,
@@ -314,58 +315,49 @@ namespace PfPresets
                 Filled = filled,
                 Open = BuildOpenSeatsFromMasks(viewedMasks, viewedTotal, viewed.SlotsFilled),
                 SlotsTotal = viewedTotal,
-                // The viewed listing carries a real countdown, so no estimating needed.
-                TimeLeft = viewed.TimeLeft > 0 ? TimeSpan.FromSeconds(viewed.TimeLeft) : null,
-                TimeLeftIsExact = viewed.TimeLeft > 0,
+
+                // The listing carried a real countdown when it was read, but the stored value is
+                // frozen at that moment and never moves again - so it is aged against the clock
+                // here. Still exact when it's there: a known reading plus known elapsed time,
+                // rather than the hour-long guess our own listing falls back to.
+                TimeLeft = capturedLeft,
+                TimeLeftIsExact = capturedLeft.HasValue,
                 BlockedReason = common.Blocked,
             };
         }
 
         /// <summary>
-        /// True when the party leader is advertising on the Party Finder. Detected from their
-        /// online status ("Recruiting Party Members", row 26) - the same signal the party list uses
-        /// for its icon - because the UsingPartyFinder condition flag only belongs to the player who
-        /// owns the listing, not to everyone who joined it.
+        /// True when the party leader is advertising on the Party Finder.
+        ///
+        /// Read from their online status ("Recruiting Party Members", row 26) - the same signal the
+        /// party list draws its icon from - because the UsingPartyFinder condition flag belongs
+        /// only to the player who owns the listing, not to everyone who joined it.
+        ///
+        /// When the leader isn't loaded on this client there is no status to read, and that is the
+        /// ordinary case in a cross-world party: the answer then comes from a listing the watcher
+        /// has actually fetched for this party, aged against its own clock so an ended listing
+        /// can't keep reporting itself as live.
         /// </summary>
-        public unsafe bool IsPartyLeaderRecruiting()
+        public bool IsPartyLeaderRecruiting()
         {
             ulong leaderId = GetPartyLeaderContentId();
             if (leaderId == 0)
                 return false;
 
             // When we're the leader, our own state is authoritative and always readable - there's
-            // nothing to infer. Falling through would reach the LastViewedListing fallback below,
+            // nothing to infer. Falling through would reach the captured-listing fallback below,
             // which is stale by nature: it holds whatever listing was last opened in a detail
             // window, with a TimeLeft frozen from when it was read. Opening your own listing once
-            // and then ending it left that check reporting you as recruiting indefinitely, which
-            // is why "End Recruitment" kept appearing with no listing up.
+            // and then ending it left that check reporting us as recruiting indefinitely, which is
+            // why "End Recruitment" kept appearing with no listing up.
             if (leaderId == playerState.ContentId)
                 return IsRecruiting();
 
-            // The leader has to be loaded for us to read their status; when they aren't, fall back
-            // to a listing we've already fetched for this party.
-            foreach (var obj in objectTable)
-            {
-                if (obj is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
-                    continue;
+            var state = ReadLeaderRecruitState(leaderId);
+            if (state != LeaderRecruitState.Unknown)
+                return state == LeaderRecruitState.Recruiting;
 
-                if (player.OnlineStatus.RowId != OnlineStatusRecruiting)
-                    continue;
-
-                var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
-                if (character != null && character->ContentId == leaderId)
-                    return true;
-            }
-
-            var agent = AgentLookingForGroup.Instance();
-            if (agent != null)
-            {
-                var viewed = agent->LastViewedListing;
-                if (viewed.ListingId != 0 && viewed.LeaderContentId == leaderId && viewed.TimeLeft > 0)
-                    return true;
-            }
-
-            return false;
+            return CapturedListingIsUsable(leaderId);
         }
 
         /// <summary>ClassJob-independent online status row for "Recruiting Party Members".</summary>

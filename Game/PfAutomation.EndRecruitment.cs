@@ -202,10 +202,12 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Opens the party leader's listing so the game populates LastViewedListing, letting the
-        /// status card read a listing that isn't ours, then closes it again. Without this there is
-        /// no way to see another player's listing details - the agent only ever holds our own
-        /// stored recruitment settings.
+        /// Reads the party leader's listing on demand: the card's "Load Details" button.
+        ///
+        /// The watcher in PfAutomation.ListingWatch.cs does this by itself when it has reason to,
+        /// so this is the manual override for when it has given up or the player is impatient. It
+        /// shares the same capture, and unlike the watcher it reports what went wrong - somebody
+        /// pressed a button and is owed an answer.
         /// </summary>
         public void LoadPartyListingDetails()
         {
@@ -219,54 +221,7 @@ namespace PfPresets
                 return;
             }
 
-            Task.Run(async () =>
-            {
-                try
-                {
-                    bool opened = await framework.RunOnFrameworkThread(() =>
-                    {
-                        unsafe
-                        {
-                            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
-                            if (agent == null || openPartyFinder == null)
-                                return false;
-
-                            openPartyFinder(agent, leader);
-                            return true;
-                        }
-                    });
-
-                    if (!opened)
-                    {
-                        chatGui.Print("[PF Presets] Could not open the party's listing.");
-                        return;
-                    }
-
-                    // Give the window a moment to populate, then close it - the data we want stays
-                    // behind in LastViewedListing.
-                    await Task.Delay(600);
-
-                    await framework.RunOnFrameworkThread(() =>
-                    {
-                        unsafe
-                        {
-                            var addon = (AtkUnitBase*)(nint)gameGui.GetAddonByName("LookingForGroupDetail");
-                            if (addon != null && addon->IsVisible)
-                            {
-                                var back = addon->GetComponentButtonById(111); // "Back"
-                                if (back != null && back->IsEnabled)
-                                    AtkHelpers.ClickAddonButton(addon, back);
-                            }
-                        }
-                    });
-
-                    pluginLog.Information("[LoadDetails] Captured the party's listing.");
-                }
-                catch (Exception ex)
-                {
-                    pluginLog.Error(ex, "[LoadDetails] Failed to load the party's listing.");
-                }
-            });
+            _ = CaptureLeaderListingAsync(leader, announce: true);
         }
 
         /// <summary>

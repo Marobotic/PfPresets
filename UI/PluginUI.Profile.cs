@@ -82,9 +82,39 @@ namespace PfPresets
         private static float CompactProfileHeight()
             => BannerHeight + CardPad + 7f + 8f + ImGui.GetFrameHeight() + CardPad;
 
+        /// <summary>Who the card was drawn for last, and on which frame - the two facts needed to
+        /// tell "still open" from "opened again".</summary>
+        private string profileCardKey = string.Empty;
+        private int profileCardFrame = -1;
+
+        /// <summary>
+        /// Whether this draw is the card being opened rather than staying open.
+        ///
+        /// A gap in the frame numbers means the card wasn't on screen last frame - the tab was
+        /// switched, the window was closed, Back was pressed - so coming back to it is a fresh
+        /// look and worth re-reading the score for. Held open, it isn't: nothing about the card
+        /// changes between two consecutive frames.
+        /// </summary>
+        private bool ProfileCardOpened(CharacterIdentity who)
+        {
+            int frame = ImGui.GetFrameCount();
+            bool opened = profileCardKey != who.Key || frame - profileCardFrame > 1;
+
+            profileCardKey = who.Key;
+            profileCardFrame = frame;
+            return opened;
+        }
+
         private void DrawProfileCard(CharacterIdentity who, bool showBack = true,
             float fixedHeight = 0f)
         {
+            // Opening a profile re-reads the score. Votes cast by other people in your own party
+            // were otherwise invisible for the ten minutes the cache holds an entry - you saw your
+            // own vote land and then nothing, however many other people voted after you. The
+            // service caps this at one refetch per player per five seconds.
+            if (ProfileCardOpened(who))
+                Ratings?.Refresh(who);
+
             var rating = Ratings?.Get(who);
 
             ImGui.Dummy(new Vector2(0, 8));

@@ -105,10 +105,12 @@ namespace PfPresets
                                 bool showCard = !pfAutomation.IsInDuty()
                                     && snapshot.Activity != PfActivity.NotLoggedIn;
 
-                                // Advanced once, before measuring, so both passes agree on how far
-                                // through the expand animation this frame is.
-                                UpdatePartyExpand(snapshot);
                                 float statusHeight = showCard ? MeasureStatusCard(snapshot) : 0f;
+
+                                // The card is the only thing that needs the party leader's listing,
+                                // so the watcher that fetches it only runs while the card is up.
+                                if (showCard)
+                                    pfAutomation.MarkListingCardVisible();
 
                                 DrawSearchBar();
 

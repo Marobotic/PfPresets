@@ -59,11 +59,6 @@ namespace PfPresets
         /// <summary>Presets applied on this install, ever.</summary>
         public int LifetimePresetsApplied { get; set; } = 0;
 
-        /// <summary>Whether the recruitment card shows its party as a list rather than the
-        /// compact icon strip. Remembered, because it's a preference about how much room the card
-        /// is allowed to take.</summary>
-        public bool PartyListExpanded { get; set; } = false;
-
         /// <summary>When enabled, a party member leaving while you recruit as leader broadens any
         /// slot locked to a single job to that job's role, so the freed seat is easier to fill.</summary>
         public bool AutoAdjustLockedJobsEnabled { get; set; } = false;

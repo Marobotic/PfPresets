@@ -206,6 +206,54 @@ namespace PfPresets
                 cache.TryRemove(who.Key, out _);
         }
 
+        /// <summary>Shortest gap between two forced refreshes of the same player. Opening a profile
+        /// asks for one, and a profile is a thing people leave and come straight back to - so the
+        /// gesture has to be free to repeat without it becoming a way to poll the server.</summary>
+        private static readonly TimeSpan RefreshCooldown = TimeSpan.FromSeconds(5);
+
+        private readonly ConcurrentDictionary<string, DateTime> lastRefresh = new();
+
+        /// <summary>
+        /// Re-reads one player's rating now, ignoring how fresh the cached copy looks.
+        ///
+        /// The cache holds a rating for ten minutes, which is right for a list of forty strangers
+        /// and wrong for the one person whose card is open: two people in the same party rating
+        /// somebody would each see their own vote land and then sit on a stale total until the
+        /// entry expired. Opening their profile is the ask, and this answers it - at most once
+        /// every five seconds per player, so holding the gesture down changes nothing.
+        ///
+        /// The cached value is deliberately left in place rather than invalidated: the numbers stay
+        /// on screen while the refetch runs instead of blinking back to "loading".
+        /// </summary>
+        public bool Refresh(CharacterIdentity who)
+        {
+            if (!who.IsValid || !config.RatingsEnabled)
+                return false;
+
+            var now = DateTime.UtcNow;
+            if (lastRefresh.TryGetValue(who.Key, out var last) && now - last < RefreshCooldown)
+                return false;
+
+            lastRefresh[who.Key] = now;
+            PruneRefreshStamps(now);
+            Enqueue(who);
+            return true;
+        }
+
+        /// <summary>Drops refresh stamps that no longer gate anything, so a long session's worth of
+        /// looked-up players doesn't accumulate.</summary>
+        private void PruneRefreshStamps(DateTime now)
+        {
+            if (lastRefresh.Count < 64)
+                return;
+
+            foreach (var pair in lastRefresh)
+            {
+                if (now - pair.Value >= RefreshCooldown)
+                    lastRefresh.TryRemove(pair.Key, out _);
+            }
+        }
+
         private void Enqueue(CharacterIdentity who) => pending.TryAdd(who.Key, who);
 
         // ══════════════════════════════════════════════════════════
@@ -668,11 +716,17 @@ namespace PfPresets
 
         private readonly ConcurrentDictionary<string, PlayerProgress> progress = new();
         private string progressDuty = string.Empty;
+        /// <summary>
+        /// A request is in flight. Guards re-entrancy only - it is deliberately not surfaced.
+        ///
+        /// It used to drive a "fetching..." line in the panel, from when the request did the
+        /// fetching itself and took seconds. It now hands the party to the server's queue and
+        /// returns almost at once, and the same call is what the panel makes automatically when
+        /// it opens - so showing it announced work the user hadn't asked for, for one frame.
+        /// </summary>
         private volatile bool progressFetching;
-        private volatile string? progressNote;
 
-        /// <summary>True while a fetch is in flight, so the control can say so.</summary>
-        public bool ProgressFetching => progressFetching;
+        private volatile string? progressNote;
 
         private DateTime progressNoteUntil = DateTime.MaxValue;
 
@@ -788,26 +842,13 @@ namespace PfPresets
                         return;
                     }
 
-                    progress.Clear();
-                    progressDuty = dutyName;
-
-                    if (result.Value.Encounter == null)
-                    {
-                        // Names no provider on purpose. Progression comes from Tomestone with
-                        // FFLogs behind it, and which one answered is not the user's problem -
-                        // naming one made a mapping gap read as that site being down.
-                        progressNote = "No progress data for this duty.";
+                    if (!Apply(result.Value, dutyName))
                         return;
-                    }
 
-                    foreach (var p in result.Value.Players)
-                    {
-                        if (!string.IsNullOrEmpty(p.Status))
-                            progress[p.Key] = p;
-                    }
-
-                    progressNote = null;
-                    progressNoteUntil = DateTime.MaxValue;
+                    // The server fetches nothing inside the request any more - a refresh puts the
+                    // stale members of the party on its global queue and answers with what it
+                    // already had. Anyone still pending is waited on below.
+                    WaitForQueue(dutyName, request, result.Value.Queue);
                 }
                 catch (Exception ex)
                 {
@@ -817,6 +858,132 @@ namespace PfPresets
                 finally
                 {
                     progressFetching = false;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Takes one server answer and makes it what the panel shows.
+        ///
+        /// Replaces rather than merges: the server holds the whole truth for this duty, and a
+        /// merge would keep showing a character who has since dropped out of the party.
+        /// </summary>
+        /// <returns>False when the response was an answer with nothing in it to display.</returns>
+        private bool Apply(ProgressResponse response, string dutyName)
+        {
+            progress.Clear();
+            progressDuty = dutyName;
+
+            if (response.Encounter == null)
+            {
+                // Names no provider on purpose. Progression comes from Tomestone with FFLogs
+                // behind it, and which one answered is not the user's problem - naming one made a
+                // mapping gap read as that site being down.
+                progressNote = "No progress data for this duty.";
+                return false;
+            }
+
+            foreach (var p in response.Players)
+            {
+                if (!string.IsNullOrEmpty(p.Status))
+                    progress[p.Key] = p;
+            }
+
+            progressNote = null;
+            progressNoteUntil = DateTime.MaxValue;
+            return true;
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  WAITING ON THE QUEUE
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// How long the button stays on "Queued" with nothing coming back.
+        ///
+        /// A minute is longer than the queue should ever take for one party, and short enough that
+        /// a server that has quietly stopped moving doesn't leave the button stuck for the evening.
+        /// Giving up here costs nothing on the server - the work stays queued and lands in the
+        /// cache regardless, so the next time the panel opens it is simply there.
+        /// </summary>
+        private static readonly TimeSpan QueueWait = TimeSpan.FromMinutes(1);
+
+        private volatile bool watchingQueue;
+        private volatile int queuedCount;
+        private DateTime queueWaitUntil = DateTime.MinValue;
+
+        /// <summary>True while we are waiting on the server's queue for this party.</summary>
+        public bool ProgressQueued => queuedCount > 0 && DateTime.UtcNow < queueWaitUntil;
+
+        /// <summary>How many party members are still on the queue.</summary>
+        public int ProgressQueuedCount => queuedCount;
+
+        /// <summary>
+        /// Polls the server until the queue has caught up with this party, or a minute passes.
+        ///
+        /// Reads only - `refresh` stays false, so this never adds work. It is asking the same
+        /// question the panel asks when it opens, just repeatedly, and the server answers it from
+        /// its own table without touching a provider.
+        /// </summary>
+        private void WaitForQueue(string dutyName, ProgressRequest request, ProgressQueueInfo? queue)
+        {
+            int pending = queue?.Pending ?? 0;
+            if (pending <= 0)
+                return;
+
+            queuedCount = pending;
+            queueWaitUntil = DateTime.UtcNow.Add(QueueWait);
+
+            // A second press while one wait is running extends it rather than starting a rival
+            // loop: two of these polling the same party would double the reads and race over
+            // which one gets to say the wait is over.
+            if (watchingQueue)
+                return;
+
+            watchingQueue = true;
+
+            int pollSec = Math.Clamp(queue?.PollAfterSec ?? 3, 2, 10);
+
+            var read = new ProgressRequest { DutyName = dutyName, Refresh = false };
+            read.Players.AddRange(request.Players);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (DateTime.UtcNow < queueWaitUntil && !cancel.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(pollSec), cancel.Token)
+                            .ConfigureAwait(false);
+
+                        var result = await api.GetProgressAsync(read).ConfigureAwait(false);
+
+                        // A failed poll is not a failed refresh. The queue is still working and
+                        // the next poll may well succeed, so this says nothing to the user.
+                        if (!result.IsOk || result.Value == null)
+                            continue;
+
+                        if (!Apply(result.Value, dutyName))
+                            break;
+
+                        int left = result.Value.Queue?.Pending ?? 0;
+                        queuedCount = left;
+                        if (left <= 0)
+                            break;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Unloading.
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Queue wait ended: {ex.Message}");
+                }
+                finally
+                {
+                    queuedCount = 0;
+                    watchingQueue = false;
                 }
             });
         }

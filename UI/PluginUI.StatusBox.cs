@@ -24,20 +24,6 @@ namespace PfPresets
         /// below it is a different kind of thing - a list, not another line of text.</summary>
         private const float CardSectionGap = 12f;
 
-        /// <summary>Space around the collapse chevron. It's a seam between two blocks, so it needs
-        /// air on both sides or it reads as belonging to whichever one it's touching.</summary>
-        private const float CardChevronGap = 8f;
-
-        /// <summary>
-        /// Expand progress, 0 collapsed to 1 expanded, eased each frame.
-        ///
-        /// The card's height is derived from this rather than from the boolean, so the whole card
-        /// grows and shrinks with the list instead of snapping between two sizes. ImGui has no
-        /// transitions, so it's a hand-rolled ease against DeltaTime - cheap, one float.
-        /// </summary>
-        private float partyExpandT;
-        private const float CardSeat = 24f;
-        private const float CardSeatGap = 4f;
         private const float CardButtonH = 28f;
 
         /// <summary>
@@ -60,8 +46,7 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Height the party section occupies: the icon strip when collapsed, the member rows when
-        /// expanded.
+        /// Height the member rows occupy, or 0 when the card isn't carrying them.
         ///
         /// One function, called by both the measure pass and the draw pass. They were computing
         /// this separately, and the moment they disagreed the card drew past its own bottom edge
@@ -71,41 +56,10 @@ namespace PfPresets
         {
 #if PFP_RATINGS
             if (ShowsEmbeddedParty(snap))
-            {
-                float listH = PartyMemberCount(snap.DutyName, snap.DutyRowId) * (HoverRowHeight() + 1f);
-                return CardSeat + (listH - CardSeat) * partyExpandT;
-            }
+                return PartyMemberCount(snap.DutyName, snap.DutyRowId) * (HoverRowHeight() + 1f);
 #endif
-            return CardSeat;
+            return 0f;
         }
-
-        /// <summary>Advances the expand animation. Called once per frame, before anything measures
-        /// the card, so the measure and draw passes see the same value.</summary>
-        private void UpdatePartyExpand(RecruitmentSnapshot snap)
-        {
-#if PFP_RATINGS
-            float target = ShowsEmbeddedParty(snap) && PartyListIsExpanded(snap) ? 1f : 0f;
-
-            // ~180ms end to end. Fast enough not to be waited on, slow enough to read as motion.
-            float step = ImGui.GetIO().DeltaTime * 6f;
-            partyExpandT += Math.Clamp(target - partyExpandT, -step, step);
-
-            if (Math.Abs(partyExpandT - target) < 0.002f)
-                partyExpandT = target;
-#endif
-        }
-
-
-        /// <summary>
-        /// Whether the member list is showing rather than the seat strip.
-        ///
-        /// Collapsing exists to keep the card small while a listing is up, where the strip still
-        /// says something useful - how many seats are filled, and of what. An ordinary party has
-        /// no listing to summarise, so the strip would be the same information with the names
-        /// taken out, and the chevron a control with one useful position. Always expanded there.
-        /// </summary>
-        private bool PartyListIsExpanded(RecruitmentSnapshot snap)
-            => !snap.IsRecruiting || config.PartyListExpanded;
 
         /// <summary>Comments get two lines at most. Three starts to push the party list off the
         /// bottom of a small window, and a listing comment that long is usually a Discord link.</summary>
@@ -194,13 +148,13 @@ namespace PfPresets
                     int commentLines = WrapComment(snap.Comment, CommentWidth()).Count;
                     if (commentLines > 0)
                         h += CardRowGap + (line * commentLines);
-                    h += CardSectionGap + PartySectionHeight(snap);   // strip or member list
 
 #if PFP_RATINGS
-                    // The chevron, and the air either side of it - faded in with the list so the
-                    // card doesn't jump the moment the animation starts.
+                    // Only when the rows are actually drawn. It used to reserve a seat-strip's
+                    // worth of height unconditionally, which left a band of empty card under any
+                    // listing the member list didn't apply to.
                     if (ShowsEmbeddedParty(snap))
-                        h += (CardChevronGap + 22f + CardChevronGap) * partyExpandT;
+                        h += CardSectionGap + PartySectionHeight(snap);
 #endif
 
                     h += CardSectionGap + CardButtonH;                // action button
@@ -226,7 +180,6 @@ namespace PfPresets
 #if PFP_RATINGS
                 // Same party section the listing card reserves, so an ordinary party gets one
                 // card instead of a card plus a loose list.
-                // No chevron in an ordinary party, so no room reserved for one.
                 if (ShowsEmbeddedParty(snap))
                     h += CardSectionGap + PartySectionHeight(snap);
 #endif
@@ -370,7 +323,7 @@ namespace PfPresets
                 y += line;
             }
 
-            DrawPartySection(dl, snap, left, right, ref y);
+            DrawPartySection(snap, left, right, ref y);
 
             // Offered whenever there's a party, leader or not. "End Recruitment" belongs to a
             // listing that's up; with no listing the only thing left to do here is leave.
@@ -383,67 +336,46 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The party: an icon strip when collapsed, the member rows when expanded.
+        /// The party, as member rows.
         ///
         /// Shared by both card bodies. It used to live inside the listing body only, so an
         /// ordinary party fell through to the standalone panel and the user saw two boxes for one
-        /// party. The strip and the rows are alternatives, never both - showing the same eight
-        /// people twice was the duplication that collapsing exists to avoid.
+        /// party.
+        ///
+        /// There used to be a collapsed form as well - a strip of seat icons behind a chevron -
+        /// and the card could be in either. Two layouts for one block meant two heights to keep in
+        /// step with the measure pass, and the strip said less than the rows it replaced: no
+        /// names, no ratings, no prog. The rows are the party now, always.
         /// </summary>
-        private void DrawPartySection(ImDrawListPtr dl, RecruitmentSnapshot snap,
-            float left, float right, ref float y)
+        private void DrawPartySection(RecruitmentSnapshot snap, float left, float right, ref float y)
         {
             if (!ShowsEmbeddedParty(snap))
                 return;
 
             y += CardSectionGap;
 
-            bool expanded = ShowsEmbeddedParty(snap) && PartyListIsExpanded(snap);
             float sectionH = PartySectionHeight(snap);
 
-            if (partyExpandT > 0.02f)
-            {
 #if PFP_RATINGS
-                // Clipped to the animated height, so rows are revealed rather than popping in.
-                ImGui.PushClipRect(new Vector2(left, y), new Vector2(right, y + sectionH), true);
-                try
-                {
-                    ImGui.SetCursorScreenPos(new Vector2(left, y));
-                    DrawPartyMembers(allowKick: true, width: right - left, originX: left,
-                        dutyName: snap.DutyName, dutyRowId: snap.DutyRowId);
-                }
-                finally
-                {
-                    ImGui.PopClipRect();
-                }
-#endif
-            }
-            else
+            // Clipped to the measured height, so a row that measures short can never draw over
+            // the action button below it.
+            ImGui.PushClipRect(new Vector2(left, y), new Vector2(right, y + sectionH), true);
+            try
             {
-                // Collapsed shows every seat, filled and open - it's the whole party at a glance,
-                // which is the point of collapsing.
-                float sx = left;
-                float seatRoom = right - CardSeat - 8f;   // leave the chevron its corner
-                foreach (var seat in snap.Filled)
-                {
-                    if (sx + CardSeat > seatRoom) break;
-                    DrawFilledSeat(seat, new Vector2(sx, y));
-                    sx += CardSeat + CardSeatGap;
-                }
-                foreach (var seat in snap.Open)
-                {
-                    if (sx + CardSeat > seatRoom) break;
-                    DrawOpenSeat(seat, new Vector2(sx, y));
-                    sx += CardSeat + CardSeatGap;
-                }
+                ImGui.SetCursorScreenPos(new Vector2(left, y));
+                DrawPartyMembers(allowKick: true, width: right - left, originX: left,
+                    dutyName: snap.DutyName, dutyRowId: snap.DutyRowId);
             }
+            finally
+            {
+                ImGui.PopClipRect();
+            }
+#endif
 
             // The card never reads back where ImGui's cursor ended up - it jumps by the measured
             // height instead. That's what stops the rows and the blocks below them fighting over
             // the same space.
             y += sectionH;
-
-            DrawPartyToggle(snap, left, right, ref y, expanded);
         }
 
         /// <summary>Whether there's anyone else in the party right now.</summary>
@@ -495,7 +427,7 @@ namespace PfPresets
                     PaddedTooltip(snap.Comment);
             }
 
-            DrawPartySection(dl, snap, left, right, ref y);
+            DrawPartySection(snap, left, right, ref y);
 
             // ── Action ──
             //
@@ -526,64 +458,6 @@ namespace PfPresets
                 DrawCardAction(snap, "Leave Party", left, right, ref y,
                     "Leave this party.", isDestructive: true);
             }
-        }
-
-        /// <summary>
-        /// The chevron that swaps the icon strip for the member list.
-        ///
-        /// Collapsed it sits at the right end of the seat row - it reads as "there's more behind
-        /// this". Expanded it moves to the centre, below the list, where it's the seam between the
-        /// list and the footer rather than a control floating beside a name.
-        /// </summary>
-        private void DrawPartyToggle(RecruitmentSnapshot snap, float left, float right,
-            ref float y, bool expanded)
-        {
-#if PFP_RATINGS
-            // Hidden without a listing: there is nothing to collapse back to that would be worth
-            // reading, so the control has one useful position and isn't a control.
-            if (!ShowsEmbeddedParty(snap) || !snap.IsRecruiting)
-                return;
-
-            const float w = 26f, h = 22f;
-            float x, ty;
-
-            if (expanded)
-            {
-                y += CardChevronGap * partyExpandT;
-                x = left + (right - left - w) * 0.5f;
-                ty = y;
-                y += (h + CardChevronGap) * partyExpandT;
-            }
-            else
-            {
-                // Same row as the seats, hard right. y has already moved past the strip.
-                x = right - w;
-                ty = y - CardSeat + (CardSeat - h) * 0.5f;
-            }
-
-            ImGui.SetCursorScreenPos(new Vector2(x, ty));
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.06f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.10f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 5f);
-
-            if (ImGui.Button("##PartyToggle", new Vector2(w, h)))
-            {
-                config.PartyListExpanded = !expanded;
-                config.Save();
-            }
-
-            bool hovered = ImGui.IsItemHovered();
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(3);
-
-            DrawGlyphCentered(expanded ? FontAwesomeIcon.ChevronUp : FontAwesomeIcon.ChevronDown,
-                new Vector2(x, ty), new Vector2(x + w, ty + h),
-                hovered ? TextPrimary : TextMuted);
-
-            if (hovered)
-                PaddedTooltip(expanded ? "Show as icons" : "Show the party");
-#endif
         }
 
         /// <summary>
@@ -734,63 +608,6 @@ namespace PfPresets
             dl.AddLine(new Vector2(min.X + radius, min.Y + 0.5f), new Vector2(max.X - radius, min.Y + 0.5f),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.05f)), 1f);
         }
-
-        private void DrawFilledSeat(FilledSeat seat, Vector2 pos)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 max = new Vector2(pos.X + CardSeat, pos.Y + CardSeat);
-
-            if (seat.JobId > 0 && TryGetIconHandle(IconJobBase + seat.JobId, out var handle))
-                dl.AddImage(handle, pos, max);
-            else
-                DrawGlyphAt(FreeGlyph, pos, CardSeat, TextSecondary);
-
-            if (seat.IsYou)
-                dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(AccentBlue), 4f, ImDrawFlags.None, 1.5f);
-
-            if (IsMouseOver(pos, max))
-            {
-                string job = JobData.FindById(seat.JobId)?.Name ?? "Unknown";
-                PaddedTooltip($"{DisplayName(seat.Name)} ({job})");
-            }
-        }
-
-        /// <summary>An open seat: dimmed role icon on a recessed backing, so filled and empty read
-        /// differently by form and not only by colour.</summary>
-        private void DrawOpenSeat(OpenSeat seat, Vector2 pos)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 max = new Vector2(pos.X + CardSeat, pos.Y + CardSeat);
-
-            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.28f)), 4f);
-            dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(BorderDefault), 4f, ImDrawFlags.None, 1f);
-
-            uint icon = seat.JobId.HasValue ? IconJobBase + seat.JobId.Value : RoleIconFor(seat.Role);
-            if (icon != 0 && TryGetIconHandle(icon, out var handle))
-            {
-                const float inset = 3f;
-                dl.AddImage(handle,
-                    new Vector2(pos.X + inset, pos.Y + inset),
-                    new Vector2(max.X - inset, max.Y - inset),
-                    Vector2.Zero, Vector2.One,
-                    ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.4f)));
-            }
-            else
-            {
-                DrawGlyphAt(FreeGlyph, pos, CardSeat, TextMuted);
-            }
-
-            if (IsMouseOver(pos, max))
-                PaddedTooltip($"Open: {seat.Label}");
-        }
-
-        private static uint RoleIconFor(RoleType role) => role switch
-        {
-            RoleType.Tank => IconRoleTank,
-            RoleType.Healer => IconRoleHealer,
-            RoleType.MeleeDPS or RoleType.PhysRangedDPS or RoleType.MagicRangedDPS => IconRoleDps,
-            _ => 0u,
-        };
 
         private static (string Title, Vector4 Color, FontAwesomeIcon Glyph) DescribeActivity(
             RecruitmentSnapshot snap)

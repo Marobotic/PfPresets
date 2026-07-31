@@ -249,6 +249,38 @@ namespace PfPresets
         public EncounterRef? Encounter { get; set; }
 
         public List<PlayerProgress> Players { get; set; } = new();
+
+        /// <summary>How the server's shared lookup queue is getting on with this party. Null from
+        /// a server that predates the queue, which reads the same as nothing being queued.</summary>
+        public ProgressQueueInfo? Queue { get; set; }
+
+        /// <summary>The server's per-character cooldown, in seconds - how long before asking again
+        /// could return anything different.</summary>
+        public int RefreshAfterSec { get; set; }
+    }
+
+    /// <summary>
+    /// The state of the server's global progression queue, as it concerns this party.
+    ///
+    /// The server fetches one character at a time on behalf of every user of the plugin at once,
+    /// so a press is an admission to a queue rather than a lookup. These fields are what let the
+    /// button say "Queued" and know when to stop waiting.
+    /// </summary>
+    internal sealed class ProgressQueueInfo
+    {
+        /// <summary>Party members still waiting on the queue - including any put there by somebody
+        /// else's press, which is the point of the queue being global.</summary>
+        public int Pending { get; set; }
+
+        /// <summary>How many this particular press added. Zero when everyone was either already
+        /// queued or still inside their own cooldown.</summary>
+        public int Accepted { get; set; }
+
+        /// <summary>Characters queued across the whole service, ours included.</summary>
+        public int Size { get; set; }
+
+        /// <summary>How long the server suggests waiting before reading again.</summary>
+        public int PollAfterSec { get; set; }
     }
 
     internal sealed class EncounterRef
@@ -283,6 +315,15 @@ namespace PfPresets
 
         /// <summary>Unix ms of the most recent logged pull, or 0.</summary>
         public long LastSeenMs { get; set; }
+
+        /// <summary>
+        /// True while this character is sitting on the server's lookup queue.
+        ///
+        /// Orthogonal to <see cref="Status"/>: somebody being re-read still carries whatever was
+        /// last known about them, and the badge keeps showing it rather than blanking. Only a
+        /// character nobody has ever looked up is both queued and statusless.
+        /// </summary>
+        public bool Queued { get; set; }
 
         /// <summary>
         /// Best FFLogs parse percentile, for players who have cleared. -1 when unknown.

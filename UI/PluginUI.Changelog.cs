@@ -21,6 +21,27 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.2.3", "July 2026", new[]
+            {
+                "The party card always shows the full member list. The collapsed strip of job icons and the chevron that switched between them are gone - one layout, always the names.",
+                "Joining somebody else's Party Finder now shows what the party is recruiting for. Before, only the leader saw the listing and everyone else got \"in a party\" - across worlds, where the leader isn't loaded on your client, there was no way to read it at all. The plugin now fetches the listing itself, briefly opening its window, and only when something suggests there is one to find.",
+                "Opening a player's profile re-reads their rating. Votes cast by other people showed up for them and not for you until the plugin was reloaded; leaving the profile and coming back now refreshes it, at most once every five seconds.",
+                "Update player progress goes through a shared queue. The button says Queued until the answer arrives, and everyone using the plugin feeds the same queue - so if somebody else has just asked about a player, you wait on their lookup instead of paying for a second one.",
+                "A player who has been looked up once is looked at again later. Their progress used to be fetched once and then never re-read, so anyone progging through an evening stayed frozen at their first pull.",
+            }),
+
+            new("3.2.2", "July 2026", new[]
+            {
+                "Progress percentages are tied to the fight they were read for, and stay put when the party fills or goes idle.",
+                "PvP instances - Frontline and Crystalline Conflict - now bring up the rating prompt when they finish.",
+            }),
+
+            new("3.2.1", "July 2026", new[]
+            {
+                "Downvotes were being rejected on the way out. Fixed.",
+                "Community ratings are on by default.",
+            }),
+
             new("3.2.0", "July 2026", new[]
             {
                 "Community ratings. Rate the people you finish duties with, and look up any character by name and world. A rating is a score, not a percentage: an upvote is +1 and a downvote -1, and votes from friends, Free Company members and repeat voters count for less, so it reflects agreement among strangers.",

@@ -526,10 +526,21 @@ namespace PfPresets
             bool loaded = Ratings.HasProgressFor(duty);
             string? note = Ratings.ProgressNote;
 
-            if (Ratings.ProgressFetching)
+            if (Ratings.ProgressQueued)
             {
-                DrawProgressStatusText("Updating from FFLogs...", maxWidth, null);
+                // Queued, not loading. The server fetches one character at a time for everybody
+                // using the plugin, so a press joins a line rather than starting a lookup - and
+                // the button has to say which of those two things happened.
+                DrawQueuedButton(Ratings.ProgressQueuedCount, maxWidth);
             }
+            // No state for the request itself.
+            //
+            // There used to be one, saying the plugin was busy fetching, and it stopped being
+            // true: the request hands the party to the server's queue and returns in a couple of
+            // hundred milliseconds without fetching anything. It was also reached by the panel
+            // simply opening - the automatic read runs through the same call - so opening the
+            // party list announced work nobody had asked for. The button is already disabled
+            // across that gap, which says everything a sentence did.
             else if (note != null)
             {
                 // The note is the only text here that isn't ours - a server message can be any
@@ -577,6 +588,33 @@ namespace PfPresets
             }
 
             ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + 1f));
+        }
+
+        /// <summary>
+        /// The button while the party is sitting on the server's queue.
+        ///
+        /// Still a button, still the same size, just disabled - swapping it for a line of text
+        /// made the row change height and shove the party list around at the exact moment the
+        /// user was reading it.
+        /// </summary>
+        private void DrawQueuedButton(int waiting, float maxWidth)
+        {
+            string label = waiting > 1 ? $"Queued · {waiting}" : "Queued";
+            float width = Math.Max(60f, Math.Min(ImGui.CalcTextSize(label).X + 24f, maxWidth));
+
+            ImGui.BeginDisabled(true);
+            DrawSecondaryButton($"{label}##FetchProgress", new Vector2(width, 22));
+            ImGui.EndDisabled();
+
+            if (ImGui.IsItemHovered())
+            {
+                PaddedTooltip(
+                    "Waiting on the server's lookup queue.\n\n"
+                    + "One character is fetched at a time for everyone using the plugin,\n"
+                    + "so the answer arrives shortly rather than instantly. Anyone else\n"
+                    + "asking about the same player in the meantime joins this same wait\n"
+                    + "instead of costing a second lookup.");
+            }
         }
 
         /// <summary>Status line for the progress row, clipped to the row and hovering the full

@@ -286,6 +286,7 @@ namespace PfPresets
         {
             this.pfAutomation.UpdateAutoRefresher(this.framework.UpdateDelta.TotalMinutes);
             this.pfAutomation.UpdateLockedSlotAdjuster();
+            this.pfAutomation.UpdateListingWatch();
         }
 
 #if PFP_RATINGS
