@@ -43,7 +43,7 @@ namespace PfPresets
                 var agent = AgentPartyMember.Instance();
                 if (agent == null)
                 {
-                    chatGui.Print("[PF Presets] The party list isn't available right now.");
+                    chatGui.Print("[PF Analysis] The party list isn't available right now.");
                     return false;
                 }
 
@@ -55,7 +55,7 @@ namespace PfPresets
             catch (Exception ex)
             {
                 log.Error(ex, "[Party] Kick failed.");
-                chatGui.Print("[PF Presets] Couldn't remove that player. See /xllog for details.");
+                chatGui.Print("[PF Analysis] Couldn't remove that player. See /xllog for details.");
                 return false;
             }
         }

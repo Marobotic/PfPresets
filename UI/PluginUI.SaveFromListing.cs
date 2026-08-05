@@ -24,6 +24,9 @@ namespace PfPresets
 
         private void DrawSaveFromListingOverlay()
         {
+            if (!config.ShowSaveListingButton)
+                return;
+
             if (!pfAutomation.TryGetListingWindowRect(out var addonPos, out var addonSize))
             {
                 // Window closed - drop state so it doesn't carry over to the next listing.

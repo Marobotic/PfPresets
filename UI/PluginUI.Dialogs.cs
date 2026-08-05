@@ -81,7 +81,7 @@ namespace PfPresets
 
                     ImGui.Dummy(new Vector2(0, 12));
 
-                    if (DrawDangerButton(request.ConfirmLabel, new Vector2(150, 28)))
+                    if (DrawDangerButton(request.ConfirmLabel, new Vector2(150, ButtonHeight)))
                     {
                         // Cleared before invoking, so an action that opens another dialog isn't
                         // immediately closed again by this one.
@@ -90,7 +90,7 @@ namespace PfPresets
                     }
 
                     ImGui.SameLine(0, 8);
-                    if (DrawSecondaryButton($"{request.CancelLabel}##ConfirmCancel", new Vector2(-1, 28)))
+                    if (DrawSecondaryButton($"{request.CancelLabel}##ConfirmCancel", new Vector2(-1, ButtonHeight)))
                         pendingConfirm = null;
                 }
                 finally
@@ -129,7 +129,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 14));
 
             return ImGui.Begin($"{title}##{id}", ref open,
@@ -145,21 +145,10 @@ namespace PfPresets
             ImGui.PopStyleColor(2);
         }
 
-        /// <summary>The red button used for anything that destroys something. Was copied into four
-        /// places with three slightly different sets of colours.</summary>
+        /// <summary>The red button used for anything that destroys something. One implementation,
+        /// shared with the card's Leave and Disband, so the same act never looks like two different
+        /// buttons in two places.</summary>
         private static bool DrawDangerButton(string label, Vector2 size)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
-            ImGui.PushStyleColor(ImGuiCol.Text, ColorFromHex("#fff1ee"));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
-
-            bool clicked = ImGui.Button(label, size);
-
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(4);
-            return clicked;
-        }
+            => DrawDangerFilledButton(label, size);
     }
 }

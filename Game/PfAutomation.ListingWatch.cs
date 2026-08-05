@@ -404,7 +404,7 @@ namespace PfPresets
                 if (!opened)
                 {
                     if (announce)
-                        chatGui.Print("[PF Presets] Could not open the party's listing right now.");
+                        chatGui.Print("[PF Analysis] Could not open the party's listing right now.");
                     return false;
                 }
 
@@ -431,7 +431,7 @@ namespace PfPresets
                     }
 
                     if (announce)
-                        chatGui.Print("[PF Presets] The party doesn't have a listing up right now.");
+                        chatGui.Print("[PF Analysis] The party doesn't have a listing up right now.");
                     pluginLog.Debug("[ListingWatch] No listing detail window appeared.");
                     return false;
                 }
@@ -457,7 +457,7 @@ namespace PfPresets
                 }
                 else if (announce)
                 {
-                    chatGui.Print("[PF Presets] Couldn't read the party's listing.");
+                    chatGui.Print("[PF Analysis] Couldn't read the party's listing.");
                 }
 
                 return captured;

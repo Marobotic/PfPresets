@@ -32,31 +32,12 @@ namespace PfPresets
         /// </summary>
         private IFontHandle? scoreFont;
         private IFontHandle? labelFont;
-        private static byte[]? robotoBytes;
 
-        private static byte[] Roboto()
-        {
-            if (robotoBytes != null)
-                return robotoBytes;
+        /// <summary>The figure's size, named so the card's measured height and the face it is
+        /// drawn in cannot drift apart.</summary>
+        private const float ScorePx = 54f;
 
-            using var stream = typeof(PluginUI).Assembly
-                .GetManifestResourceStream("PfPresets.Data.Fonts.Roboto.ttf")
-                ?? throw new InvalidOperationException("Roboto.ttf missing from the assembly.");
-
-            using var buffer = new System.IO.MemoryStream();
-            stream.CopyTo(buffer);
-            return robotoBytes = buffer.ToArray();
-        }
-
-        private IFontHandle Font(ref IFontHandle? slot, float px)
-        {
-            slot ??= pluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(tk =>
-                tk.OnPreBuild(pre => pre.AddFontFromMemory(
-                    Roboto(), new SafeFontConfig { SizePx = px }, "Roboto")));
-            return slot;
-        }
-
-        private IFontHandle ScoreFont => Font(ref scoreFont, 40f);
+        private IFontHandle ScoreFont => Font(ref scoreFont, ScorePx);
         private IFontHandle LabelFont => Font(ref labelFont, 11f);
 
         private void DisposeProfileFonts()
@@ -68,19 +49,7 @@ namespace PfPresets
         }
 
         // Card geometry, in one place so the band, the columns and the content can't disagree.
-        private const float BannerHeight = 72f;
         private const float CardPad = 14f;
-        private const float DotsSize = 24f;
-
-        /// <summary>
-        /// Height of the card with only a banner and the vote line under it - no duty history.
-        ///
-        /// The compact form has to be measured rather than left at zero: BeginChild with a height
-        /// of 0 fills every remaining pixel, which is how your own card ended up swallowing the
-        /// whole tab and burying the recent players beneath it.
-        /// </summary>
-        private static float CompactProfileHeight()
-            => BannerHeight + CardPad + 7f + 8f + ImGui.GetFrameHeight() + CardPad;
 
         /// <summary>Who the card was drawn for last, and on which frame - the two facts needed to
         /// tell "still open" from "opened again".</summary>
@@ -105,8 +74,7 @@ namespace PfPresets
             return opened;
         }
 
-        private void DrawProfileCard(CharacterIdentity who, bool showBack = true,
-            float fixedHeight = 0f)
+        private void DrawProfileCard(CharacterIdentity who, bool showBack = true)
         {
             // Opening a profile re-reads the score. Votes cast by other people in your own party
             // were otherwise invisible for the ten minutes the cache holds an entry - you saw your
@@ -123,128 +91,175 @@ namespace PfPresets
             // the tab shows when there is nothing else to do.
             if (showBack)
             {
-                ImGui.Indent(8);
-                if (DrawSecondaryButton("< Back##ClearSearch", new Vector2(70, 22)))
+                // No indent: the button sat eight pixels inside the card it belongs to, which is
+                // the kind of near-alignment that looks like a mistake rather than a margin.
+                var backSize = new Vector2(110, ButtonHeight);
+                Vector2 backPos = ImGui.GetCursorScreenPos();
+                if (DrawPrimaryButton("##ClearSearch", backSize))
                 {
                     ratingSearchTarget = null;
                     ratingSearchInput = string.Empty;
                 }
-                ImGui.Unindent(8);
-                ImGui.Dummy(new Vector2(0, 6));
+                // Drawn by hand so the arrow comes from the icon font, which a plain button label
+                // cannot reach.
+                DrawIconLabelLeft(FontAwesomeIcon.ArrowLeft, "Back", backPos, backSize, OnAccent);
+                ImGui.Dummy(new Vector2(0, 8));
             }
 
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, BgCard);
-            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(0, 0));
+            // No child window, and so no height to get wrong.
+            //
+            // A child fills whatever it is given unless it is told a size, and every size this card
+            // was told came from arithmetic that went stale the moment a font changed - too short
+            // and it scrolled, too tall and it left the column half empty. The content is drawn as
+            // an ordinary group instead, measured after the fact, and the background is painted
+            // behind it on a separate draw channel. The card is then exactly its contents, always,
+            // with nothing to maintain.
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 cardMin = ImGui.GetCursorScreenPos();
+            float cardWidth = ImGui.GetContentRegionAvail().X;
 
-            if (ImGui.BeginChild("ProfileCard", new Vector2(0, fixedHeight), true,
-                    ImGuiWindowFlags.None))
+            dl.ChannelsSplit(2);
+            dl.ChannelsSetCurrent(1);
+
+            ImGui.BeginGroup();
+            try
             {
-                try
-                {
-                    DrawScoreBanner(who, rating);
+                ImGui.Dummy(new Vector2(cardWidth, CardPad));
+                ImGui.Indent(CardPad);
 
-                    ImGui.SetCursorPos(new Vector2(CardPad, BannerHeight + CardPad));
-                    ImGui.BeginGroup();
-                    try
-                    {
-                        DrawProfileNumbers(who, rating);
+                DrawProfileIdentity(who);
+                DrawProfileScore(who, rating);
+                DrawProfileNumbers(who, rating);
 
-                        // Not on your own card. You know where you've been, and the list exists
-                        // to tell you who a stranger is.
-                        if (!IsSelf(who))
-                        {
-                            ImGui.Dummy(new Vector2(0, 12));
-                            DrawSeenRecentlyIn(who);
-                        }
-                    }
-                    finally
-                    {
-                        ImGui.EndGroup();
-                    }
-                }
-                finally
+                // Not on your own card. You know where you've been, and the list exists to tell
+                // you who a stranger is.
+                if (!IsSelf(who))
                 {
-                    ImGui.EndChild();
+                    ImGui.Dummy(new Vector2(0, 12));
+                    DrawSeenRecentlyIn(who);
                 }
+
+                ImGui.Unindent(CardPad);
+                ImGui.Dummy(new Vector2(cardWidth, CardPad));
             }
-            else
+            finally
             {
-                ImGui.EndChild();
+                ImGui.EndGroup();
             }
 
-            ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor();
+            float cardHeight = ImGui.GetItemRectSize().Y;
+
+            dl.ChannelsSetCurrent(0);
+            var cardMax = new Vector2(cardMin.X + cardWidth, cardMin.Y + cardHeight);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+
+            dl.ChannelsMerge();
         }
 
         /// <summary>
-        /// The banner: score, identity, and the links menu.
+        /// Who this is: what kind of card it is, the name, and one line of world and job.
         ///
-        /// Drawn against the child window's own rectangle rather than the cursor, so the band
-        /// reaches the card's real edges. Deriving it from the cursor and a padding constant meant
-        /// two places had to agree about the padding, and when they didn't the band floated inset
-        /// on every side and read as a box rather than a header.
+        /// Stacked in a single column rather than set beside the score in a band. The band put the
+        /// name and the number on the same line at different weights, which made a long name push
+        /// the figure around; here nothing moves when a name gets longer.
         /// </summary>
-        private void DrawScoreBanner(CharacterIdentity who, PlayerRating? rating)
+        private void DrawProfileIdentity(CharacterIdentity who)
+        {
+            // The same tracked caps as every other heading in the plugin.
+            var dl = ImGui.GetWindowDrawList();
+            using (UiCaptionFont.Push())
+            {
+                float lineH = ImGui.GetTextLineHeight();
+                DrawTrackedCaps(dl, ImGui.GetCursorScreenPos(),
+                    IsSelf(who) ? "Your profile" : "Looked up", Dim);
+                ImGui.Dummy(new Vector2(ImGui.GetContentRegionAvail().X, lineH));
+            }
+
+            ImGui.Dummy(new Vector2(0, 6));
+
+            float room = ImGui.GetContentRegionAvail().X - CardPad;
+            using (UiPersonFont.Push())
+                ImGui.TextColored(Ink, Fit(DisplayName(who.Name), room));
+
+            ImGui.Dummy(new Vector2(0, 4));
+
+            // World and job on one line, led by the job's own icon. The line said "Warrior" in
+            // words with the icon nowhere on the card, which is the one piece of identity the game
+            // itself always draws as a picture.
+            var info = Ratings?.CharacterFor(who);
+            bool hasJob = info != null && !string.IsNullOrWhiteSpace(info.JobName);
+
+
+            float iconSize;
+            using (UiBodyFont.Push())
+                iconSize = ImGui.GetTextLineHeight() + 4f;
+
+            if (hasJob)
+            {
+                DrawJobIconInline(info!.JobId, iconSize);
+                ImGui.SameLine(0, 7);
+                room -= iconSize + 7f;
+            }
+
+            string job = !hasJob
+                ? string.Empty
+                : info!.JobLevel > 0 ? $" · Lv{info.JobLevel} {info.JobName}" : $" · {info.JobName}";
+
+            using (UiBodyFont.Push())
+            {
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextColored(Dim, Fit($"@{who.World}{job}", room));
+            }
+
+            ImGui.Dummy(new Vector2(0, 16));
+        }
+
+        /// <summary>
+        /// The rating: the weighted number, big, with its caption beside it.
+        ///
+        /// A number and never a share. Three unanimous friends and thirty unanimous strangers both
+        /// read 100%, and the weighting exists precisely because those two are not the same
+        /// standing - a percentage throws away the thing being measured.
+        /// </summary>
+        private void DrawProfileScore(CharacterIdentity who, PlayerRating? rating)
         {
             bool rated = rating != null && !rating.OptedOut && rating.Count > 0;
             int score = rating?.Score ?? 0;
 
-            // A score of zero is an absence, not a verdict: ScoreColor would paint every unrated
-            // stranger in the red it reserves for someone genuinely disliked.
-            var accent = rated ? NetScoreColor(score) : TextMuted;
+            // A score of zero is an absence, not a verdict: the score colour would paint every
+            // unrated stranger in the red it reserves for someone genuinely disliked.
+            var colour = rated ? NetScoreColor(score) : Faint;
 
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 win = ImGui.GetWindowPos();
-            float width = ImGui.GetWindowSize().X;
-
-            var min = new Vector2(win.X, win.Y);
-            var max = new Vector2(win.X + width, win.Y + BannerHeight);
-
-            // A gradient, not a flat fill. The band is a surface the score sits on; a solid block
-            // of tint reads as a second element competing with the number.
-            uint top = ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.20f));
-            uint bottom = ImGui.ColorConvertFloat4ToU32(new Vector4(accent.X, accent.Y, accent.Z, 0.03f));
-
-            dl.PushClipRect(min, max, true);
-            dl.AddRectFilledMultiColor(min, max, top, top, bottom, bottom);
-            dl.PopClipRect();
-
-            dl.AddLine(new Vector2(min.X, max.Y), new Vector2(max.X, max.Y),
-                ImGui.ColorConvertFloat4ToU32(BorderDefault), 1f);
-
-            // ── score ──
-            //
-            // The figure sits high in the band with its caption directly beneath, both aligned on
-            // the same left edge. It was previously pushed down and crowded against the label, so
-            // the two read as one lump rather than a number and its caption.
-            // The number plain, with no sign. A leading "+" made it look like a delta - how much
-            // it had moved - when it is the rating itself.
-            string text = rated ? score.ToString() : "0";
-
-            float numberW, labelW;
-            using (LabelFont.Push())
-                labelW = ImGui.CalcTextSize("RATING").X;
+            Vector2 numberPos = ImGui.GetCursorScreenPos();
+            float numberW, numberH;
 
             using (ScoreFont.Push())
             {
-                numberW = ImGui.CalcTextSize(text).X;
-
-                // Centred on the caption rather than sharing its left edge: a single digit over a
-                // six-letter word looked indented, which is what makes the pair read as crooked.
-                float column = Math.Max(numberW, labelW);
-                ImGui.SetCursorPos(new Vector2(CardPad + ((column - numberW) * 0.5f), 8f));
-                ImGui.PushStyleColor(ImGuiCol.Text, accent);
+                string text = rated ? score.ToString() : "-";
+                Vector2 size = ImGui.CalcTextSize(text);
+                numberW = size.X;
+                numberH = size.Y;
+                ImGui.PushStyleColor(ImGuiCol.Text, colour);
                 ImGui.TextUnformatted(text);
                 ImGui.PopStyleColor();
             }
 
-            using (LabelFont.Push())
+            // The caption sits on two short lines beside the figure, aligned to its optical middle
+            // rather than to its baseline.
+            var dl = ImGui.GetWindowDrawList();
+            float capX = numberPos.X + numberW + 12f;
+
+            using (UiCaptionFont.Push())
             {
-                float column = Math.Max(numberW, labelW);
-                ImGui.SetCursorPos(new Vector2(CardPad + ((column - labelW) * 0.5f), 53f));
-                ImGui.TextColored(TextMuted, "RATING");
+                float capH = ImGui.GetTextLineHeight();
+                float top = numberPos.Y + (numberH - capH * 2f) * 0.5f;
+                uint col = ImGui.ColorConvertFloat4ToU32(Faint);
+                dl.AddText(new Vector2(capX, top), col, "WEIGHTED");
+                dl.AddText(new Vector2(capX, top + capH), col, "SCORE");
             }
+
+            ImGui.Dummy(new Vector2(0, 10));
 
             if (ImGui.IsItemHovered())
             {
@@ -256,18 +271,6 @@ namespace PfPresets
                       + "group voting often."
                     : "Nobody has rated them yet.");
             }
-
-            // ── identity ──
-            float textX = CardPad + Math.Max(Math.Max(numberW, labelW), 44f) + 20f;
-
-            ImGui.SetCursorPos(new Vector2(textX, 17f));
-            ImGui.TextColored(TextPrimary, DisplayName(who.Name));
-            ImGui.SameLine(0, 5);
-            ImGui.TextColored(TextMuted, $"@{who.World}");
-
-            DrawJobLine(who, textX);
-
-            DrawProfileLinksMenu(who, width);
         }
 
         /// <summary>
@@ -302,58 +305,11 @@ namespace PfPresets
                 : info.JobName);
         }
 
-        /// <summary>
-        /// The links, behind a kebab in the banner's corner.
-        ///
-        /// Three full-width buttons for FFLogs, Tomestone and Lodestone took a whole row of the
-        /// card and gave equal weight to three things nobody presses often. The same menu shape as
-        /// the preset list uses, so it reads as the card's overflow rather than a new control.
-        /// </summary>
-        private void DrawProfileLinksMenu(CharacterIdentity who, float cardWidth)
-        {
-            ImGui.SetCursorPos(new Vector2(cardWidth - DotsSize - 10f, 10f));
-
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.07f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.11f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 5f);
-
-            Vector2 at = ImGui.GetCursorScreenPos();
-            bool clicked = ImGui.Button("##ProfileLinks", new Vector2(DotsSize, DotsSize));
-
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(3);
-
-            DrawGlyphCentered(FontAwesomeIcon.EllipsisH, at,
-                new Vector2(at.X + DotsSize, at.Y + DotsSize), TextSecondary);
-
-            if (clicked)
-                ImGui.OpenPopup("profilelinks");
-
-            if (ImGui.IsItemHovered())
-                PaddedTooltip("Open this character elsewhere.");
-
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6, 6));
-            if (ImGui.BeginPopup("profilelinks"))
-            {
-                string? region = Worlds?.GetFfLogsRegion(who.World);
-                if (region != null && ImGui.Selectable("  FFLogs"))
-                    Dalamud.Utility.Util.OpenLink(CharacterLinks.FfLogs(who.Name, who.World, region));
-                if (ImGui.Selectable("  Tomestone"))
-                    Dalamud.Utility.Util.OpenLink(CharacterLinks.Tomestone(who.Name, who.World));
-                if (ImGui.Selectable("  Lodestone"))
-                    Dalamud.Utility.Util.OpenLink(CharacterLinks.LodestoneSearch(who.Name, who.World));
-                ImGui.EndPopup();
-            }
-            ImGui.PopStyleVar();
-        }
-
-        /// <summary>The bar and the one muted line under it. Checkable, not read at a glance.</summary>
         private void DrawProfileNumbers(CharacterIdentity who, PlayerRating? rating)
         {
             if (rating != null && rating.OptedOut)
             {
-                ImGui.TextColored(TextSecondary, "They've opted out of ratings.");
+                ImGui.TextColored(Dim, "They've opted out of ratings.");
                 return;
             }
 
@@ -361,33 +317,134 @@ namespace PfPresets
             int down = rating?.Downvotes ?? 0;
             int voters = rating?.Count ?? 0;
 
-            DrawSplitBar(up, down);
+            DrawPositiveBar(rating);
             ImGui.Dummy(new Vector2(0, 8));
 
-            // Carets rather than the words "up" and "down", and "total votes" rather than
-            // "unweighted" - which was the schema's word for it, not one anybody says out loud.
-            DrawArrowCount(FontAwesomeIcon.CaretUp, up, AccentGreen);
+            // Carets rather than the words "up" and "down" - the same pair the party rows and the
+            // recent list use, so a vote direction looks the same everywhere in the plugin - and
+            // "total" rather than "raw", which was the schema's word for it and not one anybody
+            // says out loud.
+            DrawArrowCount(FontAwesomeIcon.CaretUp, up, Positive);
             ImGui.SameLine(0, 16);
-            DrawArrowCount(FontAwesomeIcon.CaretDown, down, AccentRed);
-            // A separator, not just a gap. "3" followed by "3 total votes" ran together into
-            // "33total votes" at a glance, because two numbers sat side by side with nothing
-            // between them.
-            ImGui.SameLine(0, 14);
-            ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(BorderHover, "|");
-            ImGui.SameLine(0, 14);
-            ImGui.AlignTextToFramePadding();
+            DrawArrowCount(FontAwesomeIcon.CaretDown, down, Negative);
 
-            // The count and the words are drawn as two items with a real gap between them.
-            //
-            // A single space inside the string kept disappearing - "0 total votes" rendered as
-            // "0total votes" - so the separation no longer depends on a space character surviving
-            // the text path at all. SameLine with an explicit width always produces a gap.
-            ImGui.PushStyleColor(ImGuiCol.Text, TextMuted);
+            ImGui.SameLine(0, 14);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextColored(RuleStrong, "|");
+
+            ImGui.SameLine(0, 14);
+            ImGui.AlignTextToFramePadding();
+            ImGui.PushStyleColor(ImGuiCol.Text, Dim);
             ImGui.TextUnformatted(voters.ToString());
             ImGui.SameLine(0, 6);
-            ImGui.TextUnformatted(voters == 1 ? "total vote" : "total votes");
+            ImGui.TextUnformatted("total");
             ImGui.PopStyleColor();
+
+            // The explanation is on the dot beside the counts, like every other explanation in the
+            // plugin. Printed, it was three lines of small grey type between the figure and the
+            // links - the longest thing on a card whose point is one number.
+            SameLineHelpDot("weighting",
+                "Weighting flattens votes from friends and Free Company members, and repeat votes "
+                + "on the same person, so the figure reflects agreement among strangers rather "
+                + "than a small group voting often.");
+
+            ImGui.Dummy(new Vector2(0, 12));
+            DrawProfileActions(who);
+        }
+
+        /// <summary>
+        /// Where to go next: the two places this character can be looked up, and the one thing you
+        /// can do about them.
+        ///
+        /// On the card rather than behind a kebab in its corner. The card is now a column of its
+        /// own with room for a row of buttons, and a menu that has to be found is the wrong shape
+        /// for three destinations that are the point of looking someone up.
+        /// </summary>
+        private void DrawProfileActions(CharacterIdentity who)
+        {
+            float width = ImGui.GetContentRegionAvail().X - CardPad;
+            if (width <= 0f)
+                return;
+
+            // Side by side, one row. Stacked full-width buttons made a column of white slabs with
+            // a red one at the bottom, which gave reporting somebody the same weight as opening a
+            // web page. The two lookups take the accent; the report is the only red on the card.
+            const float gap = 6f;
+            float buttonW = (width - gap * 2f) / 3f;
+            var size = new Vector2(buttonW, ButtonHeight);
+
+            string? region = Worlds?.GetFfLogsRegion(who.World);
+
+            if (region == null) ImGui.BeginDisabled();
+            if (DrawPrimaryButton($"FFLogs##links{who.Key}", size) && region != null)
+                Dalamud.Utility.Util.OpenLink(CharacterLinks.FfLogs(who.Name, who.World, region));
+            if (region == null) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                PaddedTooltip(region == null
+                    ? "No FFLogs region known for this world."
+                    : "Open this character on FFLogs.");
+
+            ImGui.SameLine(0, gap);
+            if (DrawPrimaryButton($"Tomestone##links{who.Key}", size))
+                Dalamud.Utility.Util.OpenLink(CharacterLinks.Tomestone(who.Name, who.World));
+            if (ImGui.IsItemHovered())
+                PaddedTooltip("Open this character on Tomestone.");
+
+            ImGui.SameLine(0, gap);
+
+            // Reporting yourself is not a thing, so on your own card the third button is the other
+            // place a character can be read rather than a control that cannot be used.
+            if (IsSelf(who))
+            {
+                if (DrawPrimaryButton($"Lodestone##links{who.Key}", size))
+                    Dalamud.Utility.Util.OpenLink(CharacterLinks.LodestoneSearch(who.Name, who.World));
+                if (ImGui.IsItemHovered())
+                    PaddedTooltip("Open this character on the Lodestone.");
+            }
+            else
+            {
+                if (DrawDestructiveButton($"Report##links{who.Key}", size))
+                    OpenReportDialog(who);
+                if (ImGui.IsItemHovered())
+                    PaddedTooltip("Report this player to the plugin author.");
+            }
+        }
+
+        /// <summary>
+        /// How the votes split, as a flat 10px bar.
+        ///
+        /// The bar is the one place a proportion belongs - it is a shape, not a figure, and it
+        /// shows agreement at a glance without putting a percentage anywhere near the word
+        /// "weighted". Filled from the left in the score's colour, on an unfilled track.
+        /// </summary>
+        private void DrawPositiveBar(PlayerRating? rating)
+        {
+            const float barHeight = 10f;
+
+            float width = ImGui.GetContentRegionAvail().X - CardPad;
+            if (width <= 0f)
+                return;
+
+            Vector2 p = ImGui.GetCursorScreenPos();
+            var dl = ImGui.GetWindowDrawList();
+
+            dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + barHeight),
+                ImGui.ColorConvertFloat4ToU32(Field));
+
+            bool rated = rating != null && !rating.OptedOut && rating.Count > 0
+                && rating.Upvotes + rating.Downvotes > 0;
+
+            if (rated)
+            {
+                float share = rating!.Upvotes / (float)(rating.Upvotes + rating.Downvotes);
+                // A hair of fill even at zero, so "nobody agrees" still reads as a measured value
+                // rather than as an empty widget that failed to draw.
+                float filled = MathF.Max(share * width, share > 0f ? 2f : 0f);
+                dl.AddRectFilled(p, new Vector2(p.X + filled, p.Y + barHeight),
+                    ImGui.ColorConvertFloat4ToU32(NetScoreColor(rating.Score)));
+            }
+
+            ImGui.Dummy(new Vector2(width, barHeight));
         }
 
         /// <summary>
@@ -409,61 +466,32 @@ namespace PfPresets
             ImGui.TextColored(count > 0 ? TextSecondary : TextMuted, count.ToString());
         }
 
-        /// <summary>The proportion of up to down, at a weight that reads as a rule rather than a
-        /// panel. Full width, muted track when there is nothing to show.</summary>
-        private void DrawSplitBar(int up, int down)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 pos = ImGui.GetCursorScreenPos();
-            float width = ImGui.GetContentRegionAvail().X - CardPad;
-            const float h = 7f;
-
-            int total = up + down;
-            if (total == 0)
-            {
-                dl.AddRectFilled(pos, new Vector2(pos.X + width, pos.Y + h),
-                    ImGui.ColorConvertFloat4ToU32(BgCardExpanded), 3.5f);
-                ImGui.Dummy(new Vector2(width, h));
-                return;
-            }
-
-            float upW = width * ((float)up / total);
-
-            dl.AddRectFilled(pos, new Vector2(pos.X + width, pos.Y + h),
-                ImGui.ColorConvertFloat4ToU32(AccentRed), 3.5f);
-            if (upW > 0.5f)
-            {
-                dl.AddRectFilled(pos, new Vector2(pos.X + upW, pos.Y + h),
-                    ImGui.ColorConvertFloat4ToU32(AccentGreen), 3.5f,
-                    down == 0 ? ImDrawFlags.RoundCornersAll : ImDrawFlags.RoundCornersLeft);
-            }
-
-            ImGui.Dummy(new Vector2(width, h));
-        }
-
-        /// <summary>
-        /// Duties this install has seen them in.
-        ///
-        /// Local only. A central record of which duties a named player has been in is a tracking
-        /// database, and the guarantee is structural rather than a policy: the server has no route
-        /// that accepts this, so it cannot be asked for it.
-        /// </summary>
         private void DrawSeenRecentlyIn(CharacterIdentity who)
         {
-            // The label drawn directly rather than via DrawSectionLabel, which ends with a
-            // Dummy - so a SameLine after it attached to the spacer and dropped the note onto its
-            // own line, which is exactly what it was moved up here to avoid.
-            ImGui.TextColored(AccentBlue, "SEEN RECENTLY IN");
-            ImGui.SameLine(0, 10);
-            ImGui.TextColored(TextMuted, "kept on this machine only");
-            ImGui.Dummy(new Vector2(0, 4));
-
             var seen = Encounters?.SeenIn(who);
+
+            // No heading over an empty list, and no line explaining that the list is empty. The
+            // section simply isn't there until there is something in it.
             if (seen == null || seen.Count == 0)
-            {
-                ImGui.TextColored(TextMuted, "You haven't run anything with them yet.");
                 return;
+
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 headingPos = ImGui.GetCursorScreenPos();
+
+            using (UiCaptionFont.Push())
+            {
+                float lineH = ImGui.GetTextLineHeight();
+                float used = DrawTrackedCaps(dl, headingPos, "Seen recently in", Dim);
+                ImGui.Dummy(new Vector2(used, lineH));
             }
+
+            // Where the record lives is the sort of thing one reader in twenty wants to know, so
+            // it goes on the dot with every other explanation.
+            SameLineHelpDot("seenrecently",
+                "Duties you have run with this character, recorded on this machine only. Nothing "
+                + "about where you have played is ever sent anywhere.");
+
+            ImGui.Dummy(new Vector2(0, 6));
 
             float right = ImGui.GetContentRegionAvail().X - CardPad;
 
@@ -505,14 +533,19 @@ namespace PfPresets
         /// Zero is the pivot rather than fifty, because this is a tally and not a share: a single
         /// downvote should not look the same as a run of them.
         /// </summary>
+        /// <summary>
+        /// The score's colour: one green, one amber, one red, and grey for no opinion.
+        ///
+        /// The green is the palette's <see cref="Positive"/> and nothing else - the old scale ran
+        /// through three different greens by score, none of which was the one the rest of the
+        /// plugin uses for a positive vote, so the same sentiment had four appearances.
+        /// </summary>
         private static Vector4 NetScoreColor(int score) => score switch
         {
-            >= 20 => ColorFromHex("#3fb56a"),
-            >= 5 => ColorFromHex("#7ec96f"),
-            >= 1 => ColorFromHex("#a8d67f"),
-            0 => ColorFromHex("#9aa7bb"),
-            >= -4 => ColorFromHex("#ffbd2e"),
-            _ => ColorFromHex("#e06a5a"),
+            >= 1 => Positive,
+            0 => Dim,
+            >= -4 => AccentYellow,
+            _ => Negative,
         };
     }
 }

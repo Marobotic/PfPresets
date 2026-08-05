@@ -167,7 +167,7 @@ namespace PfPresets
                 // would have if the refresher had never been running.
                 maxDurationReached = true;
                 pluginLog.Information($"[AutoRefresher] Reached the {maxHours}h limit after {refreshCount} refresh(es); no longer re-posting.");
-                chatGui.Print($"[PF Presets] Auto-refresh stopped after {maxHours} hour(s). Your listing will expire normally.");
+                chatGui.Print($"[PF Analysis] Auto-refresh stopped after {maxHours} hour(s). Your listing will expire normally.");
                 return;
             }
 

@@ -1,5 +1,12 @@
 # docs/
 
+## building.md
+
+How to build, which output the in-game dev plugin actually loads, and the build trap that made the
+whole ratings UI look broken. **Read it before debugging missing tabs, a missing party panel or a
+missing Settings tab** - those three vanish together in the no-ratings build, and that is a build
+symptom, not a layout one.
+
 ## version-history.json
 
 The complete release history of PF Presets in structured form, kept for the planned in-plugin

@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace PfPresets
 {
     /// <summary>
@@ -41,6 +43,25 @@ namespace PfPresets
             RoleType.Omit => "Omit",
             _ => "Unknown",
         };
+
+        /// <summary>
+        /// "Pure Healer (WHM, AST)" - the category with the jobs it actually accepts.
+        ///
+        /// Named jobs because the category alone is jargon that people map differently: "barrier"
+        /// and "shield" are the same thing to one person and an open question to another, and the
+        /// only unambiguous answer is the two job codes. Base classes are left out - nobody is
+        /// recruiting a Conjurer for a savage seat, and the abbreviation would just be noise.
+        /// </summary>
+        public static string GetCategoryNameWithJobs(JobCategory category)
+        {
+            var jobs = JobData.AllJobs
+                .Where(j => j.Category == category)
+                .Select(j => j.Abbreviation)
+                .ToArray();
+
+            string name = GetCategoryName(category);
+            return jobs.Length == 0 ? name : $"{name} ({string.Join(", ", jobs)})";
+        }
 
         public static string GetCategoryName(JobCategory category) => category switch
         {

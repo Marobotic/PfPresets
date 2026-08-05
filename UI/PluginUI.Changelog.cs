@@ -8,10 +8,16 @@ namespace PfPresets
     /// <summary>
     /// What changed, version by version.
     ///
-    /// Written for the person using the plugin, not the person who wrote it. Nothing here mentions
-    /// a class, a schema or a refactor: a release note is only worth reading if it says what is
-    /// different when you next open the window, and "reworked the encounter store" tells a player
-    /// nothing they can act on.
+    /// One short line per change, in the plainest words that are still true. Nobody opens a
+    /// changelog to read: they skim it once after an update to find out what moved. Paragraphs
+    /// explaining why a change was made get skipped along with everything around them, so the
+    /// reasoning stays in the code where it belongs and this file gets the outcome only.
+    ///
+    /// Two rules for what goes in:
+    /// - only what a user can see. No refactors, no internals.
+    /// - only what a user could have run into. A bug introduced and fixed between releases never
+    ///   existed as far as anyone outside this repository is concerned, and listing it invents a
+    ///   problem people then go looking for.
     ///
     /// Newest first, and the newest one starts open - it is the only entry most people will read.
     /// </summary>
@@ -21,36 +27,57 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.3.3", "August 2026", new[]
+            {
+                "Right-click anyone in your party for a menu: profile, report, kick, blacklist.",
+                "Blacklist now works outside duties too. It uses the game's own blacklist.",
+                "The button by Recruit Members now says \"Apply a recruitment preset\", and hides while the plugin is open.",
+                "Settings: switches for that button and for the Save as Preset button.",
+                "Leading a cross-world party, Leave Party now says Disband Party - because that is what it does.",
+                "Auto-adjust now asks for one pure healer and one barrier healer, not two of the same.",
+                "Recent players keeps everyone you meet, not just the people you rated.",
+                "Search covers all of them, with job icons.",
+                "Ratings and jobs show the moment you open someone.",
+                "Parse percentages come from the current expansion's page, so old clears read correctly.",
+                "A clear with no parse shows as a clear, not as a zero.",
+            }),
+
+            new("3.3.2", "August 2026", new[]
+            {
+                "Anonymous usage stats is now Full, Basic or Off. Off sends nothing.",
+                "Still counts only - no names, no duties, nothing you type.",
+            }),
+
             new("3.2.3", "July 2026", new[]
             {
-                "The party card always shows the full member list. The collapsed strip of job icons and the chevron that switched between them are gone - one layout, always the names.",
-                "Joining somebody else's Party Finder now shows what the party is recruiting for. Before, only the leader saw the listing and everyone else got \"in a party\" - across worlds, where the leader isn't loaded on your client, there was no way to read it at all. The plugin now fetches the listing itself, briefly opening its window, and only when something suggests there is one to find.",
-                "Opening a player's profile re-reads their rating. Votes cast by other people showed up for them and not for you until the plugin was reloaded; leaving the profile and coming back now refreshes it, at most once every five seconds.",
-                "Update player progress goes through a shared queue. The button says Queued until the answer arrives, and everyone using the plugin feeds the same queue - so if somebody else has just asked about a player, you wait on their lookup instead of paying for a second one.",
-                "A player who has been looked up once is looked at again later. Their progress used to be fetched once and then never re-read, so anyone progging through an evening stayed frozen at their first pull.",
+                "The party card always shows everyone's name.",
+                "Joining someone else's Party Finder shows what they are recruiting for, across worlds too.",
+                "Opening a profile re-reads their rating, so other people's votes show up.",
+                "Update player progress queues up instead of failing when it is busy.",
+                "Someone you looked up is checked again later, instead of never.",
             }),
 
             new("3.2.2", "July 2026", new[]
             {
-                "Progress percentages are tied to the fight they were read for, and stay put when the party fills or goes idle.",
-                "PvP instances - Frontline and Crystalline Conflict - now bring up the rating prompt when they finish.",
+                "Progress stays put when the party fills or goes quiet.",
+                "PvP duties bring up the rating prompt when they finish.",
             }),
 
             new("3.2.1", "July 2026", new[]
             {
-                "Downvotes were being rejected on the way out. Fixed.",
+                "Downvotes were being rejected. Fixed.",
                 "Community ratings are on by default.",
             }),
 
             new("3.2.0", "July 2026", new[]
             {
-                "Community ratings. Rate the people you finish duties with, and look up any character by name and world. A rating is a score, not a percentage: an upvote is +1 and a downvote -1, and votes from friends, Free Company members and repeat voters count for less, so it reflects agreement among strangers.",
-                "A prompt appears after a duty offering to rate the group. It asks once per duty, closes itself if you ignore it, and Skip all declines the lot.",
-                "Player profiles. Click anyone in Recent players, or choose View profile from the right-click menu, for their rating, their job, and which duties you have run together - that last part is read from your own client and never leaves it.",
-                "Party progression. On savage, ultimate, extreme, criterion and current raids, Update player progress shows how far each member has got: their best pull, or a clear shown in their parse colour.",
-                "Recent players remembers who you rated and when, with links out to FFLogs, Tomestone and the Lodestone.",
-                "Report a player to the plugin author, with the option to send it anonymously.",
-                "Ratings can be switched off entirely in Settings, which removes the tab and every score and stops the plugin contacting the rating server. Presets are unaffected.",
+                "Community ratings. Rate the people you finish duties with, and look up anyone by name and world.",
+                "A prompt after a duty offers to rate the group. It asks once.",
+                "Player profiles: rating, job, and the duties you have run together.",
+                "Party progression on savage, ultimate, extreme, criterion and current raids.",
+                "Recent players, with links to FFLogs, Tomestone and the Lodestone.",
+                "Report a player, anonymously if you want.",
+                "Ratings can be switched off entirely in Settings. Presets are unaffected.",
                 "This changelog.",
             }),
 
@@ -82,12 +109,12 @@ namespace PfPresets
             ImGui.SetNextWindowSizeConstraints(new Vector2(380, 240), new Vector2(760, 900));
 
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(14, 12));
 
             try
             {
-                if (ImGui.Begin("PF Presets - What's new###PfPresetsChangelog", ref isChangelogVisible,
+                if (ImGui.Begin("PF Analysis - What's new###PfPresetsChangelog", ref isChangelogVisible,
                         ImGuiWindowFlags.NoCollapse))
                 {
                     for (int i = 0; i < Changelog.Length; i++)
@@ -115,7 +142,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.Button, open ? BgCardExpanded : BgCard);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, BorderHover);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
 
             if (ImGui.Button($"##ver{entry.Version}", new Vector2(width, headerH)))
                 changelogOpen = open ? -1 : index;

@@ -86,6 +86,28 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// The rating this install gave a character, or null if it never has.
+        ///
+        /// Wanted by the Recent players list, which is a list of everyone met rather than everyone
+        /// rated, so it has to ask per row instead of iterating this.
+        /// </summary>
+        public RatingGiven? LastRatingFor(CharacterIdentity who)
+        {
+            if (!who.IsValid)
+                return null;
+
+            lock (gate)
+            {
+                foreach (var e in entries)
+                {
+                    if (e.IsValid && e.Identity.Equals(who))
+                        return e;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// When this install last rated a character, or null. Read by the cooldown check as a
         /// second, independent record of the same fact.
         /// </summary>

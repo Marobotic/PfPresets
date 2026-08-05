@@ -120,7 +120,7 @@ namespace PfPresets
             }
             if (ImGui.IsItemHovered())
             {
-                drawList.AddRect(pos, br, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.5f)), 4f, ImDrawFlags.None, 1.5f);
+                drawList.AddRect(pos, br, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.5f)), 0f, ImDrawFlags.None, 1.5f);
                 ImGui.SetTooltip(job.Name);
             }
         }
@@ -130,10 +130,10 @@ namespace PfPresets
         {
             var dl = ImGui.GetWindowDrawList();
             Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
-            dl.AddRectFilled(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.14f)), 5f);
+            dl.AddRectFilled(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.14f)), 0f);
             if (TryGetIconHandle(iconId, out var h))
                 dl.AddImage(h, new Vector2(topLeft.X + 2f, topLeft.Y + 2f), new Vector2(br.X - 2f, br.Y - 2f));
-            dl.AddRect(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.65f)), 5f, ImDrawFlags.None, 1.5f);
+            dl.AddRect(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.65f)), 0f, ImDrawFlags.None, 1.5f);
         }
 
         /// <summary>Draws the tree connector lines linking a role header to its sub-rows.</summary>
@@ -325,7 +325,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.Text, JsText);
             ImGui.PushStyleColor(ImGuiCol.Separator, JsBorder);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(20, 16));
 
             var noClasses = Array.Empty<JobInfo>();
@@ -394,7 +394,7 @@ namespace PfPresets
                 DrawOmitButton(isLastActiveSlot);
 
                 // ── Footer (anchored to the bottom) ──
-                float footerH = 32f;
+                float footerH = ButtonHeight;
                 float bottomY = ImGui.GetWindowContentRegionMax().Y - footerH;
                 if (ImGui.GetCursorPosY() < bottomY) ImGui.SetCursorPosY(bottomY);
 

@@ -88,7 +88,7 @@ namespace PfPresets
 
             if (!cleaned.StartsWith(Magic, StringComparison.Ordinal))
             {
-                error = "That isn't a PF Presets code - it should start with \"PFP1\".";
+                error = "That isn't a PF Analysis code - it should start with \"PFP1\".";
                 return false;
             }
 
@@ -134,7 +134,7 @@ namespace PfPresets
             }
             catch (Exception)
             {
-                error = "This code is from a newer version of PF Presets, or it's damaged.";
+                error = "This code is from a newer version of PF Analysis, or it's damaged.";
                 return false;
             }
 

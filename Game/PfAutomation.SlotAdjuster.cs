@@ -174,7 +174,7 @@ namespace PfPresets
 
             ulong* pSlotFlags = (ulong*)((byte*)&agent->StoredRecruitmentInfo + OffsetSlotFlags);
             int changed = 0;
-            List<(RoleType Role, uint? JobId, string Tooltip)>? autoSlots = null;
+            List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)>? autoSlots = null;
 
             for (int i = 0; i < 8; i++)
             {

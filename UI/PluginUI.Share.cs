@@ -43,6 +43,11 @@ namespace PfPresets
                 shareExportPresetName = preset.Name;
                 shareExportCopiedAt = 0;
                 isShareExportVisible = true;
+
+                // Counted here rather than on Copy: producing the code is the export, and the
+                // window shows it plainly enough that plenty of people never press the button.
+                config.CountPresetExported();
+                config.Save();
             }
             catch (Exception)
             {
@@ -73,8 +78,8 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
 
             bool open = isShareExportVisible;
@@ -85,7 +90,7 @@ namespace PfPresets
                     isShareExportVisible = open;
 
                     DrawSectionLabel("SHARE CODE");
-                    ImGui.TextColored(TextSecondary, $"Anyone can paste this into PF Presets to get \"{shareExportPresetName}\".");
+                    ImGui.TextColored(TextSecondary, $"Anyone can paste this into PF Analysis to get \"{shareExportPresetName}\".");
                     ImGui.Dummy(new Vector2(0, 6));
 
                     // Read-only so the code can be selected and copied by hand but never edited into
@@ -101,14 +106,14 @@ namespace PfPresets
 
                     ImGui.Dummy(new Vector2(0, 8));
 
-                    if (DrawPrimaryButton("Copy to Clipboard##ShareExportCopy", new Vector2(180, 30)))
+                    if (DrawPrimaryButton("Copy to clipboard##ShareExportCopy", new Vector2(190, ButtonHeight)))
                     {
                         ImGui.SetClipboardText(shareExportCode);
                         shareExportCopiedAt = ImGui.GetTime();
                     }
 
                     ImGui.SameLine(0, 8);
-                    if (DrawSecondaryButton("Close##ShareExportClose", new Vector2(100, 30)))
+                    if (DrawSecondaryButton("Close##ShareExportClose", new Vector2(110, ButtonHeight)))
                         isShareExportVisible = false;
 
                     // Transient confirmation next to the button.
@@ -140,8 +145,8 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
 
             bool open = isShareImportVisible;
@@ -152,7 +157,7 @@ namespace PfPresets
                     isShareImportVisible = open;
 
                     DrawSectionLabel("PASTE A SHARE CODE");
-                    ImGui.TextColored(TextSecondary, "Paste a PF Presets code below, or pull one straight\nfrom your clipboard.");
+                    ImGui.TextColored(TextSecondary, "Paste a PF Analysis code below, or pull one straight\nfrom your clipboard.");
                     ImGui.Dummy(new Vector2(0, 6));
 
                     PushFramedInput();
@@ -171,11 +176,11 @@ namespace PfPresets
 
                     ImGui.Dummy(new Vector2(0, 8));
 
-                    if (DrawPrimaryButton("Import##ShareImportGo", new Vector2(120, 30)))
+                    if (DrawPrimaryButton("Import##ShareImportGo", new Vector2(120, ButtonHeight)))
                         TryImportShareCode(shareImportInput);
 
                     ImGui.SameLine(0, 8);
-                    if (DrawSecondaryButton("Import from Clipboard##ShareImportClipboard", new Vector2(190, 30)))
+                    if (DrawNeutralButton("From clipboard##ShareImportClipboard", new Vector2(190, ButtonHeight)))
                     {
                         string clip = ReadClipboard();
                         shareImportInput = clip;

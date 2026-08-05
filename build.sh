@@ -29,7 +29,23 @@ for arg in "$@"; do
   esac
 done
 
-BUILD_CMD="cd '$SCRIPT_DIR' && APPDATA=\$HOME/.xlcore/msbuild-appdata dotnet build PfPresets.csproj -c Release -p:EnableWindowsTargeting=true -p:EnableRatings=$ENABLE_RATINGS --no-incremental"
+# The no-ratings build goes somewhere else, and this is not a tidiness preference.
+#
+# Both builds used to write bin/Release/PfPresets.dll, which is the exact path the in-game dev
+# plugin loads. So verifying the official-repo build - a thing you do right after changing
+# something, without thinking about it - silently replaced the running plugin with one compiled
+# without PFP_RATINGS: no tabs, no My Profile, no party panel, no settings tab. It looked exactly
+# like the UI had broken, and it cost several rounds of hunting a rendering bug that did not exist.
+# The two builds can no longer overwrite each other.
+if [ "$ENABLE_RATINGS" = "true" ]; then
+  OUT_DIR="$SCRIPT_DIR/bin/Release"
+  OUT_ARG=""
+else
+  OUT_DIR="$SCRIPT_DIR/bin/ReleaseNoRatings"
+  OUT_ARG=" -o '$OUT_DIR'"
+fi
+
+BUILD_CMD="cd '$SCRIPT_DIR' && APPDATA=\$HOME/.xlcore/msbuild-appdata dotnet build PfPresets.csproj -c Release -p:EnableWindowsTargeting=true -p:EnableRatings=$ENABLE_RATINGS --no-incremental$OUT_ARG"
 
 # --no-incremental for the same reason as build.bat: Dalamud only reloads a dev
 # plugin when the DLL's timestamp changes, so always force a fresh write.
@@ -39,10 +55,12 @@ else
   distrobox enter mywine -- sh -c "$BUILD_CMD"
 fi
 
-echo "[OK] Build complete: $SCRIPT_DIR/bin/Release/PfPresets.dll"
+echo "[OK] Build complete: $OUT_DIR/PfPresets.dll"
 if [ "$ENABLE_RATINGS" = "true" ]; then
   echo "     Community ratings: COMPILED IN (third-party repo build)."
+  echo "     This is the DLL the in-game dev plugin loads."
 else
   echo "     Community ratings: omitted (official repo build)."
+  echo "     NOT the dev plugin: that stays at bin/Release, built by 'build.sh' with no flags."
 fi
 echo "     Scan Dev Plugins in-game to reload."

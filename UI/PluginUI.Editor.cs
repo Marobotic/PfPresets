@@ -151,8 +151,8 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
 
             string title = isNewPreset ? "Create New Preset##PfPresetEditor" : $"Edit: {editingPreset.Name}##PfPresetEditor";
@@ -312,10 +312,10 @@ namespace PfPresets
             ImGui.Dummy(new Vector2(0, 6));
 
             float btnWidth = (contentWidth - 12) / 2f;
-            if (DrawPrimaryButton("  Save Preset##SavePreset", new Vector2(btnWidth, 30)))
+            if (DrawPrimaryButton("  Save Preset##SavePreset", new Vector2(btnWidth, ButtonHeight)))
                 SaveEditor();
             ImGui.SameLine(0, 12);
-            if (DrawSecondaryButton("  Cancel##CancelPreset", new Vector2(btnWidth, 30)))
+            if (DrawSecondaryButton("  Cancel##CancelPreset", new Vector2(btnWidth, ButtonHeight)))
                 CancelEditor();
         }
 
@@ -443,7 +443,7 @@ namespace PfPresets
             if (editorAutoAdjustRoles)
                 ImGui.BeginDisabled();
 
-            List<(RoleType Role, uint? JobId, string Tooltip)>? autoSlots =
+            List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)>? autoSlots =
                 editorAutoAdjustRoles ? pfAutomation.GetAutoAdjustedSlots() : null;
 
             for (int i = 0; i < editorSlots.Count; i++)
@@ -522,7 +522,7 @@ namespace PfPresets
                     {
                         ImGui.Button("US", new Vector2(slotSize, slotSize));
                     }
-                    ImGui.GetWindowDrawList().AddRect(pos, new Vector2(pos.X + slotSize, pos.Y + slotSize), ImGui.ColorConvertFloat4ToU32(AccentBlue), 4.0f, ImDrawFlags.None, 1.5f);
+                    ImGui.GetWindowDrawList().AddRect(pos, new Vector2(pos.X + slotSize, pos.Y + slotSize), ImGui.ColorConvertFloat4ToU32(AccentBlue), 0f, ImDrawFlags.None, 1.5f);
 
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(tooltip);
@@ -534,7 +534,7 @@ namespace PfPresets
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, slotColor);
                     ImGui.PushStyleColor(ImGuiCol.ButtonActive, slotColor);
                     ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
-                    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
+                    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
 
                     bool clicked = false;
                     if (splitColors != null)
@@ -625,8 +625,8 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.Text, textColor);
             ImGui.PushStyleColor(ImGuiCol.Border, borderColor);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
-            if (ImGui.Button($"{letter}##Lang_{letter}", new Vector2(30, 26)))
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            if (ImGui.Button($"{letter}##Lang_{letter}", new Vector2(34, 30)))
                 enabled = !enabled;
             ImGui.PopStyleVar(2);
             ImGui.PopStyleColor(5);

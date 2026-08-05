@@ -106,7 +106,7 @@ namespace PfPresets
                 if (agent == null)
                 {
                     error = "The Party Finder isn't available right now.";
-                    chatGui.Print($"[PF Presets] {error}");
+                    chatGui.Print($"[PF Analysis] {error}");
                     return null;
                 }
 
@@ -114,13 +114,13 @@ namespace PfPresets
                 if (listing.ListingId == 0)
                 {
                     error = "No listing is open. Open one in the Party Finder first.";
-                    chatGui.Print($"[PF Presets] {error}");
+                    chatGui.Print($"[PF Analysis] {error}");
                     return null;
                 }
 
                 var preset = BuildPresetFromListing(listing);
                 config.Presets.Add(preset);
-                config.LifetimePresetsCreated++;
+                config.CountPresetCreated();
                 config.Save();
 
                 pluginLog.Information(
@@ -135,7 +135,7 @@ namespace PfPresets
                 error = "Could not read that listing. See /xllog for details.";
                 // Reported in chat rather than on the overlay: the overlay is a bare button with
                 // nowhere to put a message.
-                chatGui.Print($"[PF Presets] {error}");
+                chatGui.Print($"[PF Analysis] {error}");
                 return null;
             }
         }

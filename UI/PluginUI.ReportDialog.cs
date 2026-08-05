@@ -158,12 +158,12 @@ namespace PfPresets
             }
 
             ImGui.BeginDisabled(reportSubmitting || blocked != null);
-            if (DrawPrimaryButton(reportSubmitting ? "Sending..." : "Send", new Vector2(120, 28)))
+            if (DrawPrimaryButton(reportSubmitting ? "Sending..." : "Send", new Vector2(120, ButtonHeight)))
                 SendReport(identity);
             ImGui.EndDisabled();
 
             ImGui.SameLine(0, 8);
-            if (DrawSecondaryButton("Cancel##ReportCancel", new Vector2(-1, 28)))
+            if (DrawSecondaryButton("Cancel##ReportCancel", new Vector2(-1, ButtonHeight)))
                 reportTarget = null;
         }
 
@@ -180,7 +180,7 @@ namespace PfPresets
             ImGui.TextColored(TextPrimary, "Thanks for your report.");
             ImGui.Dummy(new Vector2(0, 10));
 
-            if (DrawSecondaryButton("Close##ReportDone", new Vector2(-1, 28)))
+            if (DrawSecondaryButton("Close##ReportDone", new Vector2(-1, ButtonHeight)))
                 reportTarget = null;
         }
 

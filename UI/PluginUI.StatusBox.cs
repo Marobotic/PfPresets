@@ -24,7 +24,10 @@ namespace PfPresets
         /// below it is a different kind of thing - a list, not another line of text.</summary>
         private const float CardSectionGap = 12f;
 
-        private const float CardButtonH = 28f;
+        // The card's actions are the same height as every other action button in the plugin, and
+        // as each other - two buttons side by side at different heights is the thing this number
+        // exists to prevent.
+        private const float CardButtonH = ButtonHeight;
 
         /// <summary>
         /// Whether the card carries the party member list itself.
@@ -330,9 +333,76 @@ namespace PfPresets
             if (InAParty())
             {
                 y = cardBottom - CardPadY - CardButtonH;
+                DrawCardActionRow(snap, left, right, ref y);
+            }
+        }
+
+        /// <summary>
+        /// Leave, or disband, depending on what the press would actually do.
+        ///
+        /// Three cases, and the button says which one it is:
+        ///
+        ///   In a duty - untouched. The duty's own Leave lives on the party panel and is the right
+        ///   action there; the game refuses a party leave from inside instanced content anyway.
+        ///
+        ///   Leading a cross-world party - "Disband Party". A cross-world party *is* the Party
+        ///   Finder listing, so the leader walking out ends it for everyone. The old button called
+        ///   /leave and described that as leaving, which is true about the keystroke and false
+        ///   about the outcome: seven other people were sent home by a button that said it only
+        ///   concerned you. It now calls the game's own disband, which is what was happening.
+        ///
+        ///   Anything else - "Leave Party", unchanged. In a same-world party the lead passes to
+        ///   somebody else and the party carries on, so leaving is exactly what it says.
+        /// </summary>
+        /// <summary>
+        /// The card's actions, on one row: Update progress on the left, leaving on the right.
+        ///
+        /// Both the same size and both filled, because they are two choices of equal standing at
+        /// the bottom of the same card. The progress button used to sit at the end of the member
+        /// list instead, a different size and a different weight from the button directly beneath
+        /// it, which read as two unrelated controls that happened to be near each other.
+        /// </summary>
+        private void DrawCardActionRow(RecruitmentSnapshot snap, float left, float right, ref float y)
+        {
+            float leaveLeft = DrawProgressActionSlot(snap, left, y)
+                ? left + CardActionWidth + CardActionGap
+                : left;
+
+            DrawLeaveOrDisband(snap, leaveLeft, right, ref y);
+        }
+
+        /// <summary>
+        /// Draws Update progress at the left of the card's action row, if there is progress to
+        /// look up. Returns whether it took the slot, so the caller knows where its own button
+        /// starts.
+        ///
+        /// One helper for both card bodies. Wiring it into only one of them is exactly how it
+        /// ended up paired on the idle card and stranded on the recruiting one.
+        /// </summary>
+        private bool DrawProgressActionSlot(RecruitmentSnapshot snap, float left, float y)
+        {
+#if PFP_RATINGS
+            // Progress lookups only exist in the build that has the rating service behind them.
+            ImGui.SetCursorScreenPos(new Vector2(left, y));
+            return DrawProgressAction(new Vector2(CardActionWidth, CardButtonH),
+                snap.DutyName, snap.DutyRowId, PartyPlayers());
+#else
+            return false;
+#endif
+        }
+
+        private void DrawLeaveOrDisband(RecruitmentSnapshot snap, float left, float right, ref float y)
+        {
+            if (!snap.IsCrossWorldLeader || pfAutomation.IsInDuty())
+            {
                 DrawCardAction(snap, "Leave Party", left, right, ref y,
                     "Leave this party.", isDestructive: true);
+                return;
             }
+
+            DrawCardAction(snap, "Disband Party", left, right, ref y,
+                "Break up the party. You lead this cross-world party, so leaving it ends it "
+                + "for everyone.", isDestructive: true);
         }
 
         /// <summary>
@@ -439,23 +509,31 @@ namespace PfPresets
             // Pinned to the card's own bottom edge rather than flowing after whatever came before,
             // so the gap beneath it is the same whether the party is a strip or a six-row list.
             y = cardBottom - CardPadY - CardButtonH;
+
+            // Update progress leads the row here too. It was only wired into the idle card, so
+            // while a listing was actually up - the state this card exists for - the two buttons
+            // still sat on different lines at different sizes.
+            float actionLeft = DrawProgressActionSlot(snap, left, y)
+                ? left + CardActionWidth + CardActionGap
+                : left;
+
             // Which action belongs here is a function of state, not of who's leading. The old
             // version offered "End Recruitment" inside a duty, with no party, and at 8 of 8 -
             // none of which have a listing left to end.
             if (snap.IsLeader && snap.IsPartyFull)
             {
-                DrawCardAction(snap, "Queue to duty", left, right, ref y,
+                DrawCardAction(snap, "Queue to duty", actionLeft, right, ref y,
                     "Queue for the duty this listing was for.", isDestructive: false,
                     secondary: "Disband", secondaryTooltip: "Break up the party.");
             }
             else if (snap.IsLeader)
             {
-                DrawCardAction(snap, "End Recruitment", left, right, ref y,
+                DrawCardAction(snap, "End Recruitment", actionLeft, right, ref y,
                     "Take your Party Finder listing down.", isDestructive: true);
             }
             else
             {
-                DrawCardAction(snap, "Leave Party", left, right, ref y,
+                DrawCardAction(snap, "Leave Party", actionLeft, right, ref y,
                     "Leave this party.", isDestructive: true);
             }
         }
@@ -467,37 +545,33 @@ namespace PfPresets
         /// An optional secondary sits beside it, sized to its own label, for the one state that
         /// has two reasonable things to do.
         /// </summary>
+        /// <summary>Width of a card action, matching Apply preset in the list below it, and the
+        /// gap between two of them.</summary>
+        private const float CardActionWidth = 150f;
+        private const float CardActionGap = 8f;
+
         private void DrawCardAction(RecruitmentSnapshot snap, string label,
             float left, float right, ref float y, string tooltip, bool isDestructive,
             string? secondary = null, string? secondaryTooltip = null)
         {
-            float secondaryW = secondary != null
-                ? MathF.Max(90f, ImGui.CalcTextSize(secondary).X + 24f)
-                : 0f;
+            // The same width as every other card action. Disband beside End Recruitment used to be
+            // sized from its own text, so the same act was a different button depending on which
+            // row it appeared in.
+            float secondaryW = secondary != null ? CardActionWidth : 0f;
             float gap = secondary != null ? 6f : 0f;
-            float w = right - left - secondaryW - gap;
+
+            // Sized to the action, not to the card. A full-width Leave Party was the widest control
+            // on screen, which made walking out of a party look like the card's main purpose; it is
+            // now the same width as Apply preset, which is the button it should be measured
+            // against. Still clamped to the room available, for a narrow window.
+            float w = MathF.Max(90f, MathF.Min(CardActionWidth, right - left - secondaryW - gap));
 
             ImGui.SetCursorScreenPos(new Vector2(left, y));
 
-            if (isDestructive)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, AccentRed);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#e8806f"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
-                ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
-            }
-            else
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, JsCancelBg);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, JsCancelHover);
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, JsCancelHover);
-                ImGui.PushStyleColor(ImGuiCol.Text, JsText);
-            }
-
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
-            bool clicked = ImGui.Button($"{label}##CardAction", new Vector2(w, CardButtonH));
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(4);
+            var size = new Vector2(w, CardButtonH);
+            bool clicked = isDestructive
+                ? DrawDangerFilledButton($"{label}##CardAction", size)
+                : DrawPrimaryButton($"{label}##CardAction", size);
 
             if (ImGui.IsItemHovered())
                 PaddedTooltip(tooltip);
@@ -505,15 +579,8 @@ namespace PfPresets
             if (secondary != null)
             {
                 ImGui.SetCursorScreenPos(new Vector2(left + w + gap, y));
-                ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#7d3a33"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, AccentRed);
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
-                ImGui.PushStyleColor(ImGuiCol.Text, ColorFromHex("#ffe6e1"));
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
-                bool second = ImGui.Button($"{secondary}##CardActionSecond",
+                bool second = DrawDangerFilledButton($"{secondary}##CardActionSecond",
                     new Vector2(secondaryW, CardButtonH));
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor(4);
 
                 if (ImGui.IsItemHovered() && secondaryTooltip != null)
                     PaddedTooltip(secondaryTooltip);
@@ -530,6 +597,15 @@ namespace PfPresets
             {
                 if (label == "End Recruitment") pfAutomation.EndRecruitment();
                 else if (label == "Leave Party") pfAutomation.LeaveParty();
+                else if (label == "Disband Party")
+                {
+                    // Same dialog as every other irreversible action, and the question names the
+                    // consequence rather than the mechanic: "break up the party" is what the person
+                    // pressing it needs to weigh, not which API call runs.
+                    AskConfirm("Disband party", "Break up the party?", "Yes, disband",
+                        () => pfAutomation.DisbandParty(),
+                        detail: "Everyone is removed at once. This cannot be undone.");
+                }
                 else if (label == "Load Details") pfAutomation.LoadPartyListingDetails();
                 else if (label == "Queue to duty")
                 {

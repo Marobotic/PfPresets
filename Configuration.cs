@@ -14,16 +14,58 @@ namespace PfPresets
         public int Version { get; set; } = 0;
 
         /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.
-        /// Deliberately the same number in the ratings and non-ratings builds: the v2 fields are
-        /// inert data, so a config written by one build must load cleanly in the other.</summary>
-        public const int CurrentVersion = 2;
+        /// Deliberately the same number in the ratings and non-ratings builds: the v2 and v3 fields
+        /// are inert data, so a config written by one build must load cleanly in the other.</summary>
+        public const int CurrentVersion = 5;
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
 
         // ── UI Preferences ────────────────────────────────────────
-        public int PanelWidth { get; set; } = 420;
-        public int PanelHeight { get; set; } = 520;
+        public int PanelWidth { get; set; } = 980;
+        public int PanelHeight { get; set; } = 640;
+
+        /// <summary>
+        /// The one colour the player picks, used for every interactive accent in the chrome:
+        /// primary buttons, the active nav marker, section labels, checked toggles, the live
+        /// countdown and focused input borders.
+        ///
+        /// Stored as hex text rather than a Vector4 so the config file stays readable and a bad
+        /// value is recoverable by hand. Role and vote colours are deliberately not affected: those
+        /// are data, and a tank staying blue matters more than a consistent palette. Red is not on
+        /// offer - it belongs to Ko-fi and to destructive actions.
+        /// </summary>
+        public string AccentColorHex { get; set; } = "#9b6dff";
+
+        /// <summary>
+        /// Whether the plugin puts an "Apply a recruitment preset" button beside the game's
+        /// "Recruit Members".
+        ///
+        /// On by default. It is the one place someone is guaranteed to be standing when they want
+        /// any of this, and a plugin reachable only by a typed command is one people forget they
+        /// installed. Anyone who wants their Party Finder untouched can turn it off here and use
+        /// /pfa as before.
+        /// </summary>
+        public bool ShowPartyFinderButton { get; set; } = true;
+
+        /// <summary>
+        /// Whether the plugin puts a "Save as Preset" button under a Party Finder listing you are
+        /// viewing.
+        ///
+        /// Separate from <see cref="ShowPartyFinderButton"/> because the two appear in different
+        /// places and answer different questions - one is how you post a listing, the other is how
+        /// you keep somebody else's. Turning one off is no reason to lose the other.
+        /// </summary>
+        public bool ShowSaveListingButton { get; set; } = true;
+
+        /// <summary>
+        /// Whether the Recruit footer is showing its settings rather than just the live status bar.
+        ///
+        /// Remembered, because it is a preference about how much room the footer is allowed to
+        /// take: someone who has set the refresh interval once wants the bar, and someone tuning it
+        /// wants the controls to stay put between sessions.
+        /// </summary>
+        public bool FooterExpanded { get; set; } = false;
 
         // ── Auto Refresher ────────────────────────────────────────
         public bool AutoRefresherEnabled { get; set; } = false;
@@ -38,11 +80,32 @@ namespace PfPresets
         /// expires the way an unattended one normally would.</summary>
         public int AutoRefresherMaxHours { get; set; } = 0;
 
+        /// <summary>
+        /// The highest welcome revision this install has been shown, or 0 for a fresh one.
+        ///
+        /// A number rather than a bool so a future release with something genuinely new to say can
+        /// show it once to existing users too, without showing it twice to anyone.
+        /// </summary>
+        public int WelcomeSeenVersion { get; set; } = 0;
+
         // ── Anonymous usage stats ─────────────────────────────────
 
-        /// <summary>Whether to send anonymous usage counts. See <see cref="AnalyticsInstallId"/>
-        /// for exactly what that covers.</summary>
-        public bool AnalyticsEnabled { get; set; } = true;
+        /// <summary>How much anonymous usage data is sent. See <see cref="AnalyticsInstallId"/> and
+        /// <see cref="AnalyticsMode"/> for exactly what each level covers.</summary>
+        public AnalyticsMode AnalyticsMode { get; set; } = AnalyticsMode.Full;
+
+        /// <summary>
+        /// Superseded by <see cref="AnalyticsMode"/>. Kept only so a config written before the mode
+        /// existed can be read: nullable so "absent" is distinguishable from "explicitly off", which
+        /// is the whole question the migration has to answer. Nothing reads it after that.
+        /// </summary>
+        public bool? AnalyticsEnabled { get; set; }
+
+        /// <summary>Whether anything at all is sent.</summary>
+        public bool AnalyticsActive => AnalyticsMode != AnalyticsMode.Off;
+
+        /// <summary>Whether feature-usage counts are sent on top of the install id and version.</summary>
+        public bool AnalyticsDetailed => AnalyticsMode == AnalyticsMode.Full;
 
         /// <summary>
         /// A random id generated once on this machine, used only to avoid counting the same install
@@ -58,6 +121,128 @@ namespace PfPresets
 
         /// <summary>Presets applied on this install, ever.</summary>
         public int LifetimePresetsApplied { get; set; } = 0;
+
+        /// <summary>Presets brought in from a share code on this install, ever.</summary>
+        public int LifetimePresetsImported { get; set; } = 0;
+
+        /// <summary>Presets turned into a share code on this install, ever. Counted when the code is
+        /// produced, not when it is copied - generating it is the export, and plenty of people read
+        /// the code straight off the window.</summary>
+        public int LifetimePresetsExported { get; set; } = 0;
+
+        /// <summary>
+        /// Player progress lookups made on this install, ever.
+        ///
+        /// One number, not two. This was briefly split into "all fights" and "one fight" on the
+        /// expectation that a lookup covering every fight at once was coming; what actually shipped
+        /// was a rule about which expansion's listing to read, so every lookup is and always was
+        /// scoped to a single fight. The second counter could only ever have reported zero.
+        /// </summary>
+        public int LifetimeProgressFetches { get; set; } = 0;
+
+        /// <summary>Superseded by <see cref="LifetimeProgressFetches"/>. Read once by the migration
+        /// and never again; nullable so an absent field is distinguishable from a real zero.</summary>
+        public int? LifetimeProgressSpecificFight { get; set; }
+
+        // The counters above are only kept while the analytics mode is Full.
+        //
+        // Basic is documented as sending nothing but the install and the version, and a counter
+        // quietly accruing in the background against the day someone switches to Full is not that -
+        // it makes the earlier setting retroactive. So the count is not merely withheld, it is never
+        // taken. The cost is that switching Basic -> Full starts from where the numbers were left,
+        // which is the right way round: an undercount is a smaller lie than a count nobody agreed to.
+
+        /// <summary>Records a preset being created, if the analytics mode collects usage.</summary>
+        public void CountPresetCreated()
+        {
+            if (AnalyticsDetailed) LifetimePresetsCreated++;
+        }
+
+        /// <summary>Records a preset being applied, if the analytics mode collects usage.</summary>
+        public void CountPresetApplied()
+        {
+            if (AnalyticsDetailed) LifetimePresetsApplied++;
+        }
+
+        /// <summary>Records a preset being imported from a share code.</summary>
+        public void CountPresetImported()
+        {
+            if (AnalyticsDetailed) LifetimePresetsImported++;
+        }
+
+        /// <summary>Records a preset being turned into a share code.</summary>
+        public void CountPresetExported()
+        {
+            if (AnalyticsDetailed) LifetimePresetsExported++;
+        }
+
+        /// <summary>Records a player progress lookup.</summary>
+        public void CountProgressFetch()
+        {
+            if (AnalyticsDetailed) LifetimeProgressFetches++;
+        }
+
+        /// <summary>
+        /// How many times a preset has been applied for each duty, newest activity first when read.
+        ///
+        /// The one piece of analytics that is about content rather than about counts, and the only
+        /// reason it is defensible: a duty name says what people raid, not who with or when. No
+        /// timestamps beyond "last used" leave the machine, and the party is never involved.
+        ///
+        /// Collected silently and never shown in the plugin. It answers a question the author has
+        /// about where to spend effort, not one a player has about their own evening - a tab
+        /// showing it back would be decoration standing in for a feature.
+        /// </summary>
+        public List<DutyUsage> DutyUsage { get; set; } = new();
+
+        /// <summary>
+        /// The duties worth sending, busiest first and capped.
+        ///
+        /// Capped because the analytics endpoint has a body limit and a long-lived install
+        /// accumulates a long tail of ones. The shape of the answer is in the head of the list, so
+        /// truncating beats a request that gets rejected whole.
+        /// </summary>
+        public List<DutyUsage> TopDuties(int max)
+            => DutyUsage
+                .Where(d => d.Applied > 0 && !string.IsNullOrWhiteSpace(d.DutyName))
+                .OrderByDescending(d => d.Applied)
+                .Take(max)
+                .ToList();
+
+        /// <summary>Records a preset being applied for a duty.</summary>
+        public void CountDutyApplied(uint dutyRowId, string dutyName, string categoryName)
+        {
+            if (!AnalyticsDetailed || string.IsNullOrWhiteSpace(dutyName))
+                return;
+
+            // "None" is the placeholder a preset carries when no duty is set. Counting it would put
+            // a row at the top of the list that means "not answered".
+            if (dutyName.Equals("None", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string key = dutyRowId != 0 ? $"#{dutyRowId}" : dutyName.Trim().ToLowerInvariant();
+            var row = DutyUsage.Find(d => d.Key == key);
+
+            if (row == null)
+            {
+                row = new DutyUsage
+                {
+                    DutyRowId = dutyRowId,
+                    DutyName = dutyName,
+                    CategoryName = categoryName ?? string.Empty,
+                };
+                DutyUsage.Add(row);
+            }
+
+            // Refreshed on every apply so a duty renamed or recategorised by a patch corrects
+            // itself rather than keeping whatever it was first seen as.
+            row.DutyName = dutyName;
+            if (!string.IsNullOrWhiteSpace(categoryName))
+                row.CategoryName = categoryName;
+
+            row.Applied++;
+            row.LastAppliedUtc = DateTime.UtcNow;
+        }
 
         /// <summary>When enabled, a party member leaving while you recruit as leader broadens any
         /// slot locked to a single job to that job's role, so the freed seat is easier to fill.</summary>
@@ -201,6 +386,31 @@ namespace PfPresets
                 Version = 3;
             }
 
+            // v3 -> v4: the analytics on/off switch became a three-level mode. Only an explicit
+            // "off" carries meaning - a missing flag is an install that never saw the setting, and
+            // consent to send everything is not something to infer from silence either way, so it
+            // keeps the default. The old field is cleared so it can never re-apply.
+            if (Version < 4)
+            {
+                if (AnalyticsEnabled == false)
+                    AnalyticsMode = AnalyticsMode.Off;
+
+                AnalyticsEnabled = null;
+                Version = 4;
+            }
+
+            // v4 -> v5: the two progress counters became one. Only the single-fight tally ever
+            // moved - the other counted a kind of lookup that was never built - so it carries over
+            // whole and nothing is lost.
+            if (Version < 5)
+            {
+                if (LifetimeProgressSpecificFight is int previous && previous > LifetimeProgressFetches)
+                    LifetimeProgressFetches = previous;
+
+                LifetimeProgressSpecificFight = null;
+                Version = 5;
+            }
+
             log.Information($"[Migration] Configuration upgraded from v{startVersion} to v{Version}.");
             Save();
         }
@@ -218,7 +428,7 @@ namespace PfPresets
                 LangFrench = true,
             };
             Presets.Add(preset);
-            LifetimePresetsCreated++;
+            CountPresetCreated();
             Save();
             return preset;
         }
@@ -233,7 +443,8 @@ namespace PfPresets
                 preset.Name = $"{baseName} ({suffix++})";
 
             Presets.Add(preset);
-            LifetimePresetsCreated++;
+            CountPresetCreated();
+            CountPresetImported();
             Save();
             return preset;
         }
@@ -291,7 +502,7 @@ namespace PfPresets
 
             var copy = original.Duplicate();
             Presets.Add(copy);
-            LifetimePresetsCreated++;
+            CountPresetCreated();
             Save();
             return copy;
         }
@@ -318,7 +529,8 @@ namespace PfPresets
             if (preset != null)
             {
                 preset.LastUsedAt = DateTime.UtcNow;
-                LifetimePresetsApplied++;
+                CountPresetApplied();
+                CountDutyApplied(preset.DutyRowId, preset.DutyName, preset.DutyCategoryName);
                 Save();
             }
         }

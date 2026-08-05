@@ -337,6 +337,13 @@ namespace PfPresets
         [JsonIgnore]
         public string Key => $"{Name.Trim().ToLowerInvariant()}@{World.Trim().ToLowerInvariant()}";
 
+        /// <summary>
+        /// When this answer reached the client, so <see cref="AgeSec"/> can keep counting after
+        /// the response that carried it. Client-side only, and never sent anywhere.
+        /// </summary>
+        [JsonIgnore]
+        public DateTime AppliedAt { get; set; } = DateTime.UtcNow;
+
         /// <summary>"P3 59%", or "59%" when the fight has no phases worth naming.</summary>
         [JsonIgnore]
         public string ProgLabel => Phase > 0

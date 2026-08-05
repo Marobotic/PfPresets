@@ -95,6 +95,7 @@ namespace PfPresets
         private readonly IFramework framework;
         private readonly DutyDataHelper dutyDataHelper;
         private readonly IObjectTable objectTable;
+        private readonly ITargetManager targets;
         private readonly ICondition condition;
 
         /// <summary>Exposed for the UI (slot 1 shows the local player's current job).</summary>
@@ -173,7 +174,7 @@ namespace PfPresets
         };
 
         // ── Auto-adjust slot cache ────────────────────────────────
-        private List<(RoleType Role, uint? JobId, string Tooltip)>? cachedAutoAdjustedSlots = null;
+        private List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)>? cachedAutoAdjustedSlots = null;
         private DateTime lastAutoAdjustUpdate = DateTime.MinValue;
         private static readonly TimeSpan AutoAdjustCacheDuration = TimeSpan.FromSeconds(1);
 
@@ -187,6 +188,7 @@ namespace PfPresets
             IFramework framework,
             DutyDataHelper dutyDataHelper,
             IObjectTable objectTable,
+            ITargetManager targets,
             ICondition condition,
             ISigScanner sigScanner)
         {
@@ -199,6 +201,7 @@ namespace PfPresets
             this.framework = framework;
             this.dutyDataHelper = dutyDataHelper;
             this.objectTable = objectTable;
+            this.targets = targets;
             this.condition = condition;
 
             openPartyFinder = ResolveOpenPartyFinder(sigScanner);
@@ -474,7 +477,7 @@ namespace PfPresets
             {
                 if (!CanRecruit(out var reason))
                 {
-                    chatGui.Print($"[PF Presets] Cannot apply preset: {reason}");
+                    chatGui.Print($"[PF Analysis] Cannot apply preset: {reason}");
                     return;
                 }
 
@@ -482,7 +485,7 @@ namespace PfPresets
                 if (agent == null)
                 {
                     pluginLog.Warning("AgentLookingForGroup not available.");
-                    chatGui.Print("[PF Presets] Could not access Party Finder. Make sure you are logged in.");
+                    chatGui.Print("[PF Analysis] Could not access Party Finder. Make sure you are logged in.");
                     return;
                 }
 
@@ -507,19 +510,19 @@ namespace PfPresets
 
                     SubscribeFrameworkUpdate();
                     ShowChecklist = true;
-                    chatGui.Print($"[PF Presets] Applying preset: {preset.Name}...");
+                    chatGui.Print($"[PF Analysis] Applying preset: {preset.Name}...");
                     return;
                 }
 
                 // If not open, write settings and open it directly.
                 WriteSettingsToMemory(preset);
                 OpenAddonWindow();
-                chatGui.Print($"[PF Presets] Applying preset: {preset.Name}...");
+                chatGui.Print($"[PF Analysis] Applying preset: {preset.Name}...");
             }
             catch (Exception ex)
             {
                 pluginLog.Error(ex, "Failed to apply preset.");
-                chatGui.Print("[PF Presets] Error applying preset. Check the plugin log for details.");
+                chatGui.Print("[PF Analysis] Error applying preset. Check the plugin log for details.");
             }
         }
 
@@ -581,7 +584,7 @@ namespace PfPresets
             SubscribeFrameworkUpdate();
             ShowChecklist = true;
             if (lfgAddon != null)
-                chatGui.Print($"[PF Presets] Applying preset: {ActivePreset.Name}...");
+                chatGui.Print($"[PF Analysis] Applying preset: {ActivePreset.Name}...");
         }
 
         // ══════════════════════════════════════════════════════════
@@ -950,7 +953,7 @@ namespace PfPresets
             if (yesno->YesButton == null || !AtkHelpers.ClickAddonButton(addon, yesno->YesButton))
                 return false;
 
-            pluginLog.Information($"[PF Presets] Auto-confirmed party-composition warning: \"{prompt}\"");
+            pluginLog.Information($"[PF Analysis] Auto-confirmed party-composition warning: \"{prompt}\"");
             return true;
         }
 
@@ -1200,7 +1203,7 @@ namespace PfPresets
         /// achieves nothing. Does nothing when the composition has no melee slot to give up.
         /// </summary>
         private static unsafe void ApplyDoubleCasterSlot(
-            ulong* pSlotFlags, List<(RoleType Role, uint? JobId, string Tooltip)> autoSlots)
+            ulong* pSlotFlags, List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)> autoSlots)
         {
             int target = -1;
             for (int i = 0; i < autoSlots.Count && i < 8; i++)
@@ -1219,10 +1222,19 @@ namespace PfPresets
             pSlotFlags[target] = JobMasks.ToGameMask(melee | caster);
         }
 
-        private static ulong GetAutoSlotGameMask((RoleType Role, uint? JobId, string Tooltip) slot)
+        private static ulong GetAutoSlotGameMask((RoleType Role, uint? JobId, string Tooltip, JobCategory? Category) slot)
         {
             if (slot.JobId.HasValue)
                 return GetLockedJobGameMask(slot.JobId.Value);
+
+            // The sub-category when the slot has one, because it is strictly more specific than the
+            // role and the composition picked it deliberately. Only the healer seats actually
+            // differ - every other category maps one-to-one onto its role - but that is the pair
+            // that matters, and asking for a pure healer and a barrier healer by name is what makes
+            // the listing say so.
+            if (slot.Category.HasValue)
+                return JobMasks.ToGameMask(JobMasks.GetCategoryMask(slot.Category.Value));
+
             return JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role));
         }
 
@@ -1281,7 +1293,7 @@ namespace PfPresets
         /// current party members lock their slots, and remaining slots are filled from a standard
         /// 2T/2H/4D composition. Cached briefly to avoid per-frame native reads.
         /// </summary>
-        public unsafe List<(RoleType Role, uint? JobId, string Tooltip)> GetAutoAdjustedSlots()
+        public unsafe List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)> GetAutoAdjustedSlots()
         {
             if (cachedAutoAdjustedSlots != null &&
                 DateTime.Now - lastAutoAdjustUpdate < AutoAdjustCacheDuration)
@@ -1289,12 +1301,15 @@ namespace PfPresets
                 return cachedAutoAdjustedSlots;
             }
 
-            var result = new List<(RoleType Role, uint? JobId, string Tooltip)>();
+            var result = new List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)>();
 
             // Slot 1 (index 0) is the local player.
             uint localJobId = GetLocalPlayerJobId();
             string localJobName = JobData.FindById(localJobId)?.Name ?? "Unknown";
-            result.Add((RoleType.Free, localJobId > 0 ? localJobId : null, $"Slot 1: You ({localJobName})\nThis slot is locked to your current class/job."));
+            // No category: the slot is pinned to a job that is already standing in it, so there is
+            // nothing being sought and nothing to broaden.
+            result.Add((RoleType.Free, localJobId > 0 ? localJobId : null,
+                $"Slot 1: You ({localJobName})\nThis slot is locked to your current class/job.", null));
 
             // Gather other party members (excluding the local player).
             var otherPartyMembers = GetOtherPartyMembers();
@@ -1306,7 +1321,8 @@ namespace PfPresets
             {
                 var member = otherPartyMembers[i - 1];
                 string jobName = JobData.FindById(member.JobId)?.Name ?? "Unknown";
-                result.Add((RoleType.Free, member.JobId, $"Slot {i + 1}: {member.Name} ({jobName})\nThis slot is locked to this party member's job."));
+                result.Add((RoleType.Free, member.JobId,
+                    $"Slot {i + 1}: {member.Name} ({jobName})\nThis slot is locked to this party member's job.", null));
             }
 
             // Standard composition to fill the remaining seats: 2 tanks, pure + barrier healer,
@@ -1339,7 +1355,17 @@ namespace PfPresets
                 int catIdx = i - partySize;
                 JobCategory category = catIdx < remainingCategories.Count ? remainingCategories[catIdx] : JobCategory.MeleeDPS;
                 RoleType role = JobData.GetRoleForCategory(category);
-                result.Add((role, null, $"Slot {i + 1}: Auto-Adjusted ({DisplayNames.GetCategoryName(category)})\nThis slot will be automatically filled."));
+
+                // The category travels with the slot, and that is the whole of this fix.
+                //
+                // It used to be collapsed to a RoleType here and the mask rebuilt from that later,
+                // which is lossy in exactly one place: PureHealer and BarrierHealer are both
+                // RoleType.Healer. The composition above asks for one of each - it always did -
+                // and the conversion threw that away, so a party seeking two healers advertised
+                // both seats as "any healer" and cheerfully filled with two of the same kind.
+                result.Add((role, null,
+                    $"Slot {i + 1}: Auto-Adjusted ({DisplayNames.GetCategoryNameWithJobs(category)})\nThis slot will be automatically filled.",
+                    category));
             }
 
             cachedAutoAdjustedSlots = result;

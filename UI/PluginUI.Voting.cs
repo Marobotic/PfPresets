@@ -71,8 +71,6 @@ namespace PfPresets
         /// <summary>1 once the row is gone entirely, for callers deciding when a list is done.</summary>
         private static float RowExitProgress(RateState state) => RowExitPhases(state).Collapse;
 
-        /// <summary>Smoothstep.        /// <summary>Smoothstep. Linear collapses look mechanical; this eases both ends.</summary>
-        private static float Ease(float t) => t * t * (3f - 2f * t);
 
         private readonly Dictionary<string, RateState> rateStates = new();
 
@@ -261,9 +259,11 @@ namespace PfPresets
         /// </summary>
         private void DrawHoverRow(string id, Action<float> body, Vector4? washColor = null,
             bool forceLit = false, float? width = null, float? originX = null,
-            Action? contextMenu = null)
+            Action? contextMenu = null, float? height = null)
         {
-            float rowH = HoverRowHeight();
+            // Callers that sit beside a list of vote rows pass that list's height, so the two
+            // sections of the same column don't read as two different densities.
+            float rowH = height ?? HoverRowHeight();
             float rowW = width ?? (ImGui.GetContentRegionAvail().X - 12f);
 
             // X comes from the caller when it has one.
@@ -298,6 +298,10 @@ namespace PfPresets
             ImGui.PushID(id);
             try
             {
+                // Cleared before the body so a kebab press from the previous row can't carry over
+                // and open this one's menu.
+                rowMenuRequested = false;
+
                 ImGui.SetCursorScreenPos(new Vector2(min.X + 8f, origin.Y + (rowH - 22f) * 0.5f));
                 ImGui.BeginGroup();
                 try
@@ -312,7 +316,7 @@ namespace PfPresets
                 // Inside the PushID, so the popup's id is scoped to this row without every caller
                 // having to invent a unique name for it.
                 if (contextMenu != null)
-                    DrawRowContextMenu(hovered, contextMenu);
+                    DrawRowContextMenu(hovered, contextMenu, rowMenuRequested);
             }
             finally
             {
@@ -338,9 +342,9 @@ namespace PfPresets
         /// <paramref name="hovered"/> comes from the row's own rect test rather than
         /// IsItemHovered: the row is a hand-drawn rect, not an ImGui item.
         /// </summary>
-        private static void DrawRowContextMenu(bool hovered, Action items)
+        private static void DrawRowContextMenu(bool hovered, Action items, bool opened = false)
         {
-            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+            if (opened || (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right)))
                 ImGui.OpenPopup("rowctx");
 
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6, 6));
@@ -352,11 +356,69 @@ namespace PfPresets
             ImGui.PopStyleVar();
         }
 
+        /// <summary>
+        /// Set by <see cref="DrawRowKebab"/> and read by the row that owns it.
+        ///
+        /// A field rather than a return value because the button is drawn deep inside the row's
+        /// body callback, and the popup it opens is handled by DrawHoverRow afterwards. Both run
+        /// inside the same PushID on the same frame, one after the other, so there is nothing for
+        /// this to race with.
+        /// </summary>
+        private bool rowMenuRequested;
+
+        /// <summary>
+        /// The three-dash button at the end of a player row, opening the same menu as a right-click.
+        ///
+        /// A menu rather than the row of buttons this replaced. Report and Kick were the only two
+        /// actions that fitted, which meant every new one had to either displace a column or not
+        /// exist; and on a row already carrying a job icon, a name, a world, a rating chip and a
+        /// prog point, two more competing click targets is where a list stops being readable.
+        /// Right-click still works and always did - the button is there because nothing on screen
+        /// said so.
+        /// </summary>
+        private bool DrawRowKebab(float rightEdge, float rowHeight, string tooltip)
+        {
+            const float w = 22f;
+            float h = rowHeight;
+
+            Vector2 pos = new Vector2(rightEdge - w, ImGui.GetCursorScreenPos().Y);
+            ImGui.SetCursorScreenPos(pos);
+
+            // Transparent until hovered: at rest this is punctuation, not a control competing with
+            // the name beside it.
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, BorderDefault);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+
+            bool clicked = ImGui.Button("##rowkebab", new Vector2(w, h));
+
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor(3);
+
+            bool hot = ImGui.IsItemHovered();
+            DrawGlyphCentered(FontAwesomeIcon.EllipsisV, pos, new Vector2(pos.X + w, pos.Y + h),
+                hot ? TextPrimary : TextMuted);
+
+            if (hot && !string.IsNullOrEmpty(tooltip))
+                PaddedTooltip(tooltip);
+
+            if (clicked)
+                rowMenuRequested = true;
+
+            return clicked;
+        }
+
         /// <summary>Name plus world, clipped to whatever room is left before the given right edge.
         /// Returns nothing - it draws and hovers for the full text if it had to shorten.</summary>
         private void DrawRowIdentity(uint jobId, string name, string world, float leftEdge, float rightEdge)
         {
-            float iconSize = ImGui.GetTextLineHeight() + 4f;
+            // The icon is sized off the name's own line height, not the window's, so the two stay
+            // proportionate when the name face changes size.
+            float iconSize;
+            using (UiRowNameFont.Push())
+                iconSize = ImGui.GetTextLineHeight() + 6f;
+
             DrawJobIconInline(jobId, iconSize);
             ImGui.SameLine(0, 7);
 
@@ -364,11 +426,14 @@ namespace PfPresets
             string label = string.IsNullOrEmpty(world) ? shownName : $"{shownName}  @{world}";
             float room = rightEdge - (leftEdge + iconSize + 7f) - 8f;
 
-            ImGui.AlignTextToFramePadding();
-            string shown = Fit(label, room);
-            ImGui.TextColored(TextPrimary, shown);
-            if (shown != label && ImGui.IsItemHovered())
-                PaddedTooltip(label);
+            using (UiRowNameFont.Push())
+            {
+                ImGui.AlignTextToFramePadding();
+                string shown = Fit(label, room);
+                ImGui.TextColored(Ink, shown);
+                if (shown != label && ImGui.IsItemHovered())
+                    PaddedTooltip(label);
+            }
         }
 
         // ══════════════════════════════════════════════════════════
@@ -490,7 +555,7 @@ namespace PfPresets
                 }
 
                 ImGui.PushStyleColor(ImGuiCol.ChildBg, bg);
-                ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 6.0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 0f);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(RowPadX, RowPadY));
                 ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * (1f - slide));
 
@@ -637,7 +702,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, hover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, accent);
             ImGui.PushStyleColor(ImGuiCol.Border, border);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
 
             Vector2 pos = ImGui.GetCursorScreenPos();

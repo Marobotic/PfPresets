@@ -11,7 +11,7 @@ namespace PfPresets
     /// </summary>
     public class Plugin : IDalamudPlugin
     {
-        public string Name => "PF Presets";
+        public string Name => "PF Analysis";
 
         private readonly IDalamudPluginInterface pluginInterface;
         private readonly ICommandManager commandManager;
@@ -33,6 +33,7 @@ namespace PfPresets
         private readonly EncounterStore encounterStore;
         private VoteQueue voteQueue = null!;
         private readonly RatingHistory ratingHistory;
+        private readonly PlayerHistory playerHistory;
         private readonly PfApiClient ratingApi;
         private readonly RatingService ratingService;
         private readonly DutyTracker dutyTracker;
@@ -50,6 +51,7 @@ namespace PfPresets
             IPlayerState playerState,
             IFramework framework,
             IObjectTable objectTable,
+            ITargetManager targetManager,
             ICondition condition,
             ISigScanner sigScanner,
             IDutyState dutyState)
@@ -84,6 +86,7 @@ namespace PfPresets
                 framework,
                 this.dutyDataHelper,
                 this.objectTable,
+                targetManager,
                 condition,
                 sigScanner);
 
@@ -94,6 +97,12 @@ namespace PfPresets
             this.worldHelper = new WorldHelper(dataManager, pluginLog);
             this.encounterStore = new EncounterStore(this.pluginInterface, pluginLog);
             this.ratingHistory = new RatingHistory(this.pluginInterface, pluginLog);
+            this.playerHistory = new PlayerHistory(this.pluginInterface, pluginLog);
+
+            // Carries an upgrading install's known names into the permanent list, which would
+            // otherwise start empty and read as having forgotten everybody. No-op once it has run.
+            this.playerHistory.SeedFrom(
+                this.encounterStore.RecentContacts(), this.ratingHistory.Recent());
 
             this.ratingApi = new PfApiClient(
                 this.config,
@@ -102,7 +111,7 @@ namespace PfPresets
                 () => GetLocalIdentity(clientState, playerState));
 
             this.voteQueue = new VoteQueue(this.pluginInterface, pluginLog);
-            this.ratingService = new RatingService(this.ratingApi, this.config, pluginLog, this.encounterStore, this.ratingHistory, this.voteQueue);
+            this.ratingService = new RatingService(this.ratingApi, this.config, pluginLog, this.encounterStore, this.ratingHistory, this.voteQueue, this.playerHistory);
 
             this.dutyTracker = new DutyTracker(
                 dutyState,
@@ -129,9 +138,15 @@ namespace PfPresets
             this.ui.Worlds = this.worldHelper;
             this.ui.Encounters = this.encounterStore;
             this.ui.History = this.ratingHistory;
+            this.ui.Players = this.playerHistory;
             this.ui.LocalIdentity = () => GetLocalIdentity(clientState, playerState);
             this.ui.Party = new PartyCommands(pluginLog, this.chatGui);
+            this.ui.DiagnosticSink = line => this.chatGui.Print(line);
             this.dutyTracker.EncounterCompleted += this.ui.OnEncounterCompleted;
+
+            // The permanent who-have-I-met list is fed from the same event as everything else, so
+            // one judgement about whether a duty was worth recording serves every store.
+            this.dutyTracker.EncounterCompleted += this.playerHistory.RecordEncounter;
 #endif
 
             // Anonymous usage counts. Constructed last and entirely fire-and-forget: it never
@@ -145,10 +160,16 @@ namespace PfPresets
             // Register commands
             var mainCommandInfo = new CommandInfo(OnCommand)
             {
-                HelpMessage = "Opens the PF Presets window. \"/pfp apply <name>\" posts a preset, "
-                            + "\"/pfp refresh\" re-posts your listing, \"/pfp list\" shows your presets.",
+                HelpMessage = "Opens the PF Analysis window. \"/pfa apply <name>\" posts a preset, "
+                            + "\"/pfa refresh\" re-posts your listing, \"/pfa list\" shows your presets. "
+                            + "/pfp still works.",
                 ShowInHelp = true,
             };
+            // /pfa and /pfanalysis are the names the plugin goes by now; /pfp and /pfpresets stay
+            // registered as aliases. Dropping them would break every macro and every forum post
+            // that ever mentioned this plugin, to gain nothing.
+            this.commandManager.AddHandler("/pfa", mainCommandInfo);
+            this.commandManager.AddHandler("/pfanalysis", mainCommandInfo);
             this.commandManager.AddHandler("/pfp", mainCommandInfo);
             this.commandManager.AddHandler("/pfpresets", mainCommandInfo);
 
@@ -183,12 +204,12 @@ namespace PfPresets
             {
                 if (this.pfAutomation.IsRecruiting())
                 {
-                    this.chatGui.Print("[PF Presets] Refreshing Party Finder listing...");
+                    this.chatGui.Print("[PF Analysis] Refreshing Party Finder listing...");
                     this.pfAutomation.ExecuteRefreshTask();
                 }
                 else
                 {
-                    this.chatGui.Print("[PF Presets] You are not currently recruiting on Party Finder.");
+                    this.chatGui.Print("[PF Analysis] You are not currently recruiting on Party Finder.");
                 }
                 return;
             }
@@ -206,10 +227,10 @@ namespace PfPresets
             {
                 if (this.config.Presets.Count == 0)
                 {
-                    this.chatGui.Print("[PF Presets] You have no presets yet.");
+                    this.chatGui.Print("[PF Analysis] You have no presets yet.");
                     return;
                 }
-                this.chatGui.Print($"[PF Presets] {this.config.Presets.Count} preset(s):");
+                this.chatGui.Print($"[PF Analysis] {this.config.Presets.Count} preset(s):");
                 foreach (var preset in this.config.Presets)
                     this.chatGui.Print($"  {preset.Name}  ({preset.DutyName})");
                 return;
@@ -217,7 +238,7 @@ namespace PfPresets
 
             if (trimmed.Length > 0)
             {
-                this.chatGui.Print($"[PF Presets] Unknown command \"{trimmed}\". Try: /pfp apply <name>, /pfp refresh, /pfp list");
+                this.chatGui.Print($"[PF Analysis] Unknown command \"{trimmed}\". Try: /pfp apply <name>, /pfp refresh, /pfp list");
                 return;
             }
 
@@ -230,7 +251,7 @@ namespace PfPresets
         {
             if (string.IsNullOrWhiteSpace(name))
             {
-                this.chatGui.Print("[PF Presets] Usage: /pfp apply <preset name>");
+                this.chatGui.Print("[PF Analysis] Usage: /pfp apply <preset name>");
                 return;
             }
 
@@ -238,8 +259,8 @@ namespace PfPresets
             if (preset == null)
             {
                 this.chatGui.Print(ambiguous
-                    ? $"[PF Presets] \"{name}\" matches more than one preset. Use the full name."
-                    : $"[PF Presets] No preset named \"{name}\". Use /pfp list to see them.");
+                    ? $"[PF Analysis] \"{name}\" matches more than one preset. Use the full name."
+                    : $"[PF Analysis] No preset named \"{name}\". Use /pfp list to see them.");
                 return;
             }
 
@@ -249,14 +270,24 @@ namespace PfPresets
 
         private unsafe void OnDebugCommand(string command, string args)
         {
-            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
-            if (agent == null)
+            // "/pfpdebug chrome" asks the main window to report where its navigation actually
+            // landed on the next frame it draws. The tabs have gone missing twice without the code
+            // explaining why, and this is the only way to see the numbers from outside the game.
+            if (args.Trim().Equals("chrome", StringComparison.OrdinalIgnoreCase))
             {
-                chatGui.Print("[PF Presets Debug] AgentLookingForGroup not available.");
+                this.ui.ChromeDiagnosticRequested = true;
+                chatGui.Print("[PF Analysis Debug] Chrome report armed - open or focus the main window.");
                 return;
             }
 
-            chatGui.Print("[PF Presets Debug] Agent fields:");
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
+            if (agent == null)
+            {
+                chatGui.Print("[PF Analysis Debug] AgentLookingForGroup not available.");
+                return;
+            }
+
+            chatGui.Print("[PF Analysis Debug] Agent fields:");
             chatGui.Print($"  OwnListingId: {agent->OwnListingId}");
             chatGui.Print($"  ListingContentId: {agent->ListingContentId}");
             chatGui.Print($"  ListingAccountId: {agent->ListingAccountId}");
@@ -269,7 +300,7 @@ namespace PfPresets
             var localPlayer = this.objectTable.LocalPlayer;
             if (localPlayer != null)
             {
-                chatGui.Print("[PF Presets Debug] Local Player:");
+                chatGui.Print("[PF Analysis Debug] Local Player:");
                 chatGui.Print($"  OnlineStatus ID: {localPlayer.OnlineStatus.RowId}");
                 if (localPlayer.OnlineStatus.RowId > 0)
                 {
@@ -318,17 +349,21 @@ namespace PfPresets
 
             this.commandManager.RemoveHandler("/pfp");
             this.commandManager.RemoveHandler("/pfpresets");
+            this.commandManager.RemoveHandler("/pfa");
+            this.commandManager.RemoveHandler("/pfanalysis");
             this.commandManager.RemoveHandler("/pfpdebug");
 
 #if PFP_RATINGS
             this.clientState.Login -= this.ratingApi.OnCharacterChanged;
             this.clientState.Logout -= OnLogoutResetSession;
             this.dutyTracker.EncounterCompleted -= this.ui.OnEncounterCompleted;
+            this.dutyTracker.EncounterCompleted -= this.playerHistory.RecordEncounter;
             this.dutyTracker.Dispose();
             this.ratingService.Dispose();
             this.ratingApi.Dispose();
             this.encounterStore.Flush();
             this.ratingHistory.Flush();
+            this.playerHistory.Flush();
 #endif
 
             // Unsubscribes any in-flight automation from Framework.Update and stops the

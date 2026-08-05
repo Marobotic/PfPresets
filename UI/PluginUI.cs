@@ -83,6 +83,8 @@ namespace PfPresets
 
         public void Dispose()
         {
+            DisposeWelcomeFonts();
+            DisposeScaleFonts();
 #if PFP_RATINGS
             DisposeProfileFonts();
 #endif
@@ -100,7 +102,11 @@ namespace PfPresets
             // PushPluginTheme pushes onto ImGui's process-global color stack, shared with Dalamud
             // and every other plugin. The finally guarantees we pop exactly what we pushed even if a
             // draw call throws, so a bug in our UI can never leak styling into other plugins.
-            int themeColors = PushPluginTheme();
+            // The accent is a config value, so it is re-read here rather than at construction: a
+            // swatch clicked in Settings has to repaint every window on the very next frame.
+            RefreshAccent();
+
+            var theme = PushPluginTheme();
             try
             {
                 DrawMainWindow();
@@ -111,8 +117,10 @@ namespace PfPresets
                 DrawShareExportWindow();
                 DrawShareImportWindow();
                 DrawSaveFromListingOverlay();
+                DrawPartyFinderOpenButton();
                 DrawConfirmDialog();
                 DrawChangelogWindow();
+                DrawWelcomeWindow();
 #if PFP_RATINGS
                 DrawRatingPrompt();
                 DrawReportDialog();
@@ -120,7 +128,7 @@ namespace PfPresets
             }
             finally
             {
-                ImGui.PopStyleColor(themeColors);
+                PopPluginTheme(theme);
             }
         }
 
@@ -366,7 +374,7 @@ namespace PfPresets
 
             Vector2 tl = topLeft;
             Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
-            const float rounding = 4f;
+            const float rounding = 0f;
 
             int n = Math.Max(1, colors.Length);
             float band = size / n;

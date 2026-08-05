@@ -4,6 +4,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Arrays;
+using FFXIVClientStructs.FFXIV.Client.UI.Info;
 
 namespace PfPresets
 {
@@ -72,6 +73,16 @@ namespace PfPresets
 
         /// <summary>True when the local player leads the party (and so owns the listing).</summary>
         public bool IsLeader { get; init; }
+
+        /// <summary>
+        /// True when this is a cross-world party and the local player leads it.
+        ///
+        /// Distinct from <see cref="IsLeader"/> because leaving means something different here. In
+        /// an ordinary party a leader who leaves hands the party on and it carries on without them;
+        /// a cross-world party is the listing, so the leader walking out is the party ending -
+        /// which makes "Leave Party" a description of the mechanic rather than of the outcome.
+        /// </summary>
+        public bool IsCrossWorldLeader { get; init; }
 
         /// <summary>
         /// True when there is anyone else in the party right now, recruiting or not.
@@ -207,6 +218,7 @@ namespace PfPresets
                 {
                     Activity = ClassifyIdleActivity(),
                     IsLeader = IsPartyLeader(),
+                    IsCrossWorldLeader = IsCrossWorldPartyLeader(),
                     InParty = inParty,
                     DutyName = ctxName,
                     DutyRowId = ctxRow,
@@ -222,6 +234,7 @@ namespace PfPresets
                     Activity = PfActivity.Recruiting,
                     IsRecruiting = true,
                     IsLeader = IsPartyLeader(),
+                    IsCrossWorldLeader = IsCrossWorldPartyLeader(),
                     BlockedReason = canRecruit ? string.Empty : reason,
                 };
             }
@@ -239,6 +252,7 @@ namespace PfPresets
                 Activity = PfActivity.Recruiting,
                 IsRecruiting = true,
                 IsLeader = isLeader,
+                IsCrossWorldLeader = IsCrossWorldPartyLeader(),
                 Blocked = canRecruit ? string.Empty : reason,
             };
 
@@ -338,6 +352,62 @@ namespace PfPresets
         /// has actually fetched for this party, aged against its own clock so an ended listing
         /// can't keep reporting itself as live.
         /// </summary>
+        /// <summary>
+        /// Whether this is a cross-world party led by the local player.
+        ///
+        /// Both halves are read from the same proxy in one go: a same-world party has no cross-world
+        /// leader to be, and asking the cross-realm proxy about leadership when
+        /// <c>IsInCrossRealmParty</c> is false answers about a party that isn't there.
+        /// </summary>
+        public unsafe bool IsCrossWorldPartyLeader()
+        {
+            try
+            {
+                var proxy = InfoProxyCrossRealm.Instance();
+                return proxy != null
+                    && proxy->IsInCrossRealmParty
+                    && InfoProxyCrossRealm.IsLocalPlayerPartyLeader();
+            }
+            catch (Exception)
+            {
+                // A status read must never throw into the draw loop; not knowing means the button
+                // stays "Leave Party", which is the safe answer either way.
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Whether this character's account is on the game's blacklist.
+        ///
+        /// Read from the client's own proxy rather than from anything the plugin stores, so it is
+        /// the same answer the game would give and it stays right when the list is changed
+        /// somewhere else entirely - the blacklist window, another character, another PC.
+        ///
+        /// ContentId identifies the character; the account id is not something a plugin can see for
+        /// other players, and passing 0 is how the proxy is asked to match on content id alone.
+        /// </summary>
+        public unsafe bool IsBlacklisted(ulong contentId)
+        {
+            if (contentId == 0)
+                return false;
+
+            try
+            {
+                var proxy = InfoProxyBlacklist.Instance();
+                if (proxy == null)
+                    return false;
+
+                return proxy->GetBlockResultType(0, contentId)
+                    != InfoProxyBlacklist.BlockResultType.NotBlocked;
+            }
+            catch (Exception)
+            {
+                // Never throw into a draw loop over a badge. Not knowing reads as "not blocked",
+                // which shows the action rather than hiding it - the safe way to be wrong here.
+                return false;
+            }
+        }
+
         public bool IsPartyLeaderRecruiting()
         {
             ulong leaderId = GetPartyLeaderContentId();

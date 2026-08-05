@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -11,12 +12,21 @@ namespace PfPresets
     /// <summary>
     /// Sends anonymous usage counts so the plugin's reach can be measured.
     ///
-    /// What leaves this machine, in full:
+    /// What leaves this machine on <see cref="AnalyticsMode.Basic"/>, in full:
     ///   - a random install id generated locally (see Configuration.AnalyticsInstallId)
     ///   - the plugin version
-    ///   - how many presets have been created and applied on this install, ever
     ///
-    /// That is the entire payload. No character name, account id, world, duty, preset contents or
+    /// <see cref="AnalyticsMode.Full"/> adds, and nothing else:
+    ///   - how many presets have been created, applied, imported and exported on this install, ever
+    ///   - how many player progress lookups have been made
+    ///   - which duties presets have been applied for, and how often
+    ///
+    /// That last one is the only thing here that is not a bare number, and it is deliberate: it is
+    /// what tells the plugin's author whether the work is going into the content people actually
+    /// use it for. It is the duty's own name, as the game prints it on a Party Finder listing -
+    /// public information about content, not about a person.
+    ///
+    /// That is the entire payload. No character name, account id, world, party, preset contents or
     /// anything typed into a preset is collected, and the server discards IP addresses.
     ///
     /// It is built to be irrelevant when it fails: every call is fire-and-forget on a background
@@ -36,6 +46,10 @@ namespace PfPresets
         private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
 
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>How many duties travel with a ping. Twenty covers a raider's whole tier with
+        /// room to spare, and keeps the body well inside the server's limit.</summary>
+        private const int MaxDutiesReported = 20;
 
         private readonly Configuration config;
         private readonly IPluginLog log;
@@ -82,22 +96,51 @@ namespace PfPresets
 
         private async Task SendAsync()
         {
-            // Checked every cycle rather than once, so turning it off in settings takes effect
+            // Read every cycle rather than once, so changing the mode in settings takes effect
             // immediately without a reload.
-            if (!config.AnalyticsEnabled)
+            AnalyticsMode mode = config.AnalyticsMode;
+            if (mode == AnalyticsMode.Off)
                 return;
 
             try
             {
                 string installId = EnsureInstallId();
 
-                string body = JsonConvert.SerializeObject(new
+                // Built as a map rather than an anonymous type because the shape genuinely differs
+                // between modes: on Basic the usage counts are absent, not zero. Zeroes would be
+                // indistinguishable from a real install that has never made a preset and would
+                // quietly drag every average down.
+                var payload = new Dictionary<string, object>
                 {
-                    installId,
-                    version,
-                    presetsSaved = Math.Max(config.LifetimePresetsCreated, config.Presets.Count),
-                    presetsApplied = config.LifetimePresetsApplied,
-                });
+                    ["installId"] = installId,
+                    ["version"] = version,
+                    ["mode"] = mode == AnalyticsMode.Full ? "full" : "basic",
+                };
+
+                if (mode == AnalyticsMode.Full)
+                {
+                    payload["presetsSaved"] = Math.Max(config.LifetimePresetsCreated, config.Presets.Count);
+                    payload["presetsApplied"] = config.LifetimePresetsApplied;
+                    payload["presetsImported"] = config.LifetimePresetsImported;
+                    payload["presetsExported"] = config.LifetimePresetsExported;
+                    payload["progressFetches"] = config.LifetimeProgressFetches;
+
+                    // Busiest first and capped, because the endpoint takes a 2KB body and a
+                    // long-lived install accumulates a long tail of ones. A truncated list still
+                    // answers the question; a rejected request answers nothing.
+                    var duties = config.TopDuties(MaxDutiesReported);
+                    if (duties.Count > 0)
+                    {
+                        payload["duties"] = duties.ConvertAll(d => new Dictionary<string, object>
+                        {
+                            ["name"] = d.DutyName,
+                            ["category"] = d.CategoryName ?? string.Empty,
+                            ["applied"] = d.Applied,
+                        });
+                    }
+                }
+
+                string body = JsonConvert.SerializeObject(payload);
 
                 using var content = new StringContent(body, Encoding.UTF8, "application/json");
                 using var response = await http.PostAsync(Endpoint, content, cancel.Token).ConfigureAwait(false);

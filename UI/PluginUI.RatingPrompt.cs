@@ -33,6 +33,10 @@ namespace PfPresets
         internal EncounterStore? Encounters { get; set; }
         internal RatingHistory? History { get; set; }
 
+        /// <summary>Everyone ever met, kept permanently. Backs the Recent players list and is the
+        /// whole of what search looks through.</summary>
+        internal PlayerHistory? Players { get; set; }
+
         /// <summary>The character the plugin is acting as, or null when nobody is logged in. Set by
         /// Plugin, so the UI doesn't need its own copy of the game-state plumbing.</summary>
         internal Func<CharacterIdentity?>? LocalIdentity { get; set; }
@@ -150,7 +154,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(14, 12));
 
             try
@@ -222,7 +226,7 @@ namespace PfPresets
             }
 
             ImGui.Dummy(new Vector2(0, 2));
-            if (DrawSecondaryButton("Skip##PromptSkip", new Vector2(-1, 24)))
+            if (DrawSecondaryButton("Skip##PromptSkip", new Vector2(-1, ButtonHeight)))
                 SkipPrompt(encounter);
         }
 
@@ -265,7 +269,7 @@ namespace PfPresets
                 ImGui.PushStyleColor(ImGuiCol.Text, on ? TextPrimary : TextMuted);
                 ImGui.PushStyleColor(ImGuiCol.Border, on ? AccentBlue : BorderDefault);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 5.0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
 
                 // The count is how many are still unrated there, so you can see where the
                 // remaining work is without clicking through.
