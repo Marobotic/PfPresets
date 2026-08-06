@@ -77,14 +77,20 @@ namespace PfPresets
         /// The name is only present when that resolution succeeded, and the listing path uses the
         /// literal "None" for a listing with no specific duty, so both fall back to the unnamed
         /// wording rather than heading the panel with a gap or the word "None".
+        ///
+        /// "with" is dropped when there is nobody to be with - solo content, an unrestricted
+        /// dungeon run alone - since the panel below it is then just the way out.
         /// </summary>
-        private static string PartyPanelHeading(bool inDuty, string dutyName)
+        private static string PartyPanelHeading(bool inDuty, string dutyName, bool hasCompany)
         {
             if (!inDuty)
                 return "PARTY";
 
             bool named = !string.IsNullOrWhiteSpace(dutyName)
                 && !dutyName.Equals("None", StringComparison.OrdinalIgnoreCase);
+
+            if (!hasCompany)
+                return named ? $"In {dutyName}" : "In duty";
 
             return named ? $"In {dutyName} with" : "In duty with";
         }
@@ -102,16 +108,22 @@ namespace PfPresets
             if (ShowsEmbeddedParty(snap))
                 return;
 
-            if (PartyMemberCount() == 0)
-                return;
-
             bool inDuty = pfAutomation.IsInDuty();
+            int rows = PartyMemberCount();
+
+            // No party is only a reason to draw nothing when there is no duty either. The status
+            // card is suppressed inside duties by design - it has no listing to talk about - so a
+            // solo run (a Trust dungeon, an unrestricted one, any solo instance) fell through both
+            // and the window showed nothing at all about where the player was standing, and no way
+            // out of it. In here the panel is worth drawing for the duty name and the exit alone.
+            if (rows == 0 && !inDuty)
+                return;
 
             ImGui.Dummy(new Vector2(0, 2));
             ImGui.Indent(10);
             // Fit against the width left after the indent, so a long duty name ellipsises instead
             // of being clipped by the border.
-            DrawSectionLabel(Fit(PartyPanelHeading(inDuty, snap.DutyName),
+            DrawSectionLabel(Fit(PartyPanelHeading(inDuty, snap.DutyName, rows > 0),
                 ImGui.GetContentRegionAvail().X - 12f));
             ImGui.Unindent(10);
 
@@ -398,20 +410,31 @@ namespace PfPresets
                     + "so it doesn't spend everyone else's turn in the queue.",
             };
 
+            // A name the server looked up and had no record for reads as a state, not an untouched
+            // row. "Fetch" -> queued -> back to "Fetch" looked like the press did nothing; "Not
+            // listed yet" says the lookup happened and the character simply isn't in the data. The
+            // "yet" keeps it honestly re-checkable - a name that came back empty once often has
+            // something later - so it stays a button. Provider-agnostic on purpose: whether
+            // Tomestone or FFLogs came up empty is not the user's problem (see RatingService).
+            bool notListed = p?.Status is "notfound" or "unknown";
+            string label = notListed ? "Not listed yet" : "Fetch";
+
             // Offered but refused while the server is inside its own cooldown for them. It would
             // take the press either way and match it against the stored row without queueing
             // anything, which from here is indistinguishable from a button that does nothing.
             TimeSpan wait = Ratings.PlayerRefreshWait(who);
             if (wait > TimeSpan.Zero)
             {
-                return new ProgressCell("Fetch", TextMuted,
+                return new ProgressCell(label, TextMuted,
                     why + "\n\nAlready checked recently. The server re-reads one\n"
                         + $"character no more often than that, so this is worth\n"
                         + $"another go in {ShortWait(wait)}.",
                     isButton: true, disabled: true);
             }
 
-            return new ProgressCell("Fetch", TextSecondary, why, isButton: true);
+            // Muted for a name that came back empty, so it reads as a settled state rather than the
+            // inviting call-to-action a never-tried row gets.
+            return new ProgressCell(label, notListed ? TextMuted : TextSecondary, why, isButton: true);
         }
 
         /// <summary>"4 minutes", "40 seconds" - a wait as a person would say it.</summary>

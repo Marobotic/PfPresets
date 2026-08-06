@@ -6,15 +6,17 @@ using Dalamud.Interface;
 namespace PfPresets
 {
     /// <summary>
-    /// The "Apply a recruitment preset" button that opens the plugin from the game's own Party
-    /// Finder window, sitting beside "Recruit Members".
+    /// The "PF Analysis" button that opens the plugin from the game's own Party Finder window,
+    /// sitting beside "Recruit Members".
     ///
     /// It exists because the plugin was otherwise only reachable by typing a command, which is a
     /// thing people do once and then forget they can do. The Party Finder window is where someone
     /// already is when they want any of this, so that is where the way in belongs.
     ///
-    /// It says what pressing it is for rather than naming the plugin: someone standing in the
-    /// Party Finder wants to post a listing, not to be told which addon this is.
+    /// It carries the plugin's name. It used to describe the job instead ("Apply a recruitment
+    /// preset"), on the reasoning that nobody wants to be told which addon this is - but presets
+    /// are no longer the half of it, and a button naming one feature of several undersells the
+    /// window behind it as much as it explains it.
     ///
     /// Drawn the same way as the "Save as Preset" button: a fully transparent, borderless host
     /// window holding nothing but the button, so the only thing over the game is the control itself.
@@ -28,16 +30,16 @@ namespace PfPresets
         // set here was only ever a bound: at a UI scale where Recruit Members is 36px, asking for 30
         // produced 36, and the number in this file described nothing anyone could see.
         //
-        // The width is measured from the label rather than fixed: the label is a sentence now, it
-        // is centred rather than clipped, and a rect too narrow for it would let it hang out of
-        // both ends of its own button at larger font scales.
+        // The width is measured from the label rather than fixed: it is centred rather than
+        // clipped, and a rect too narrow for it would let it hang out of both ends of its own
+        // button at larger font scales.
         private const float PfOpenButtonMinW = 112f;
         private const float PfOpenButtonPadX = 14f;
         private const float PfOpenButtonH = 30f;
 
-        /// <summary>What the button says. Names the job rather than the plugin - somebody standing
-        /// in the Party Finder wants to post a listing, not to be told which addon this is.</summary>
-        private const string PfOpenButtonLabel = "Apply a recruitment preset";
+        /// <summary>What the button says: the plugin's name, matching what it is called everywhere
+        /// else it announces itself.</summary>
+        private const string PfOpenButtonLabel = "PF Analysis";
 
         // Kept off the game's button by a hair, so the two read as neighbours rather than as one
         // control that grew an extra half.
@@ -116,7 +118,9 @@ namespace PfPresets
                     DrawIconLabelCentered(LogoIcon, PfOpenButtonLabel, btnPos, size, JsOkText);
 
                     if (ImGui.IsItemHovered())
-                        PaddedTooltip("Open PF Analysis and post one of your saved presets.");
+                        // The label names the plugin now, so the tooltip is where the job goes -
+                        // otherwise the two say the same thing twice.
+                        PaddedTooltip("Post a saved recruitment preset, and see who joins you.");
                 }
             }
             finally

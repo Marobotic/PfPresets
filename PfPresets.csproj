@@ -2,9 +2,9 @@
     <PropertyGroup>
         <AssemblyName>PfPresets</AssemblyName>
         <RootNamespace>PfPresets</RootNamespace>
-        <Version>3.3.3.0</Version>
-        <FileVersion>3.3.3.0</FileVersion>
-        <AssemblyVersion>3.3.3.0</AssemblyVersion>
+        <Version>3.3.4.0</Version>
+        <FileVersion>3.3.4.0</FileVersion>
+        <AssemblyVersion>3.3.4.0</AssemblyVersion>
         <TargetFramework>net10.0-windows</TargetFramework>
         <Platforms>x64</Platforms>
         <Nullable>enable</Nullable>
@@ -16,21 +16,44 @@
     </PropertyGroup>
 
     <!--
-      Phase 2 community ratings. Kept behind a compile flag because the official Dalamud
-      repo's rules bar plugins that collect and share data about other players: a build
-      with EnableRatings=false contains none of the rating code and stays submittable
-      there, while the third-party repo ships the full thing.
+      Phase 2 community ratings, behind the PFP_RATINGS compile flag. The official Dalamud repo's
+      rules bar plugins that collect and share data about other players, so the conservative build
+      (EnableRatings=false) contains none of the rating code and stays submittable there; the
+      third-party repo ships the full thing.
 
-      Off by default so an unqualified `dotnet build` produces the conservative build.
-      Turn it on explicitly with -p:EnableRatings=true; build.sh does that for you
-      unless you pass its no-ratings switch.
+      THE DEFAULT IS true, AND THAT IS LOAD-BEARING - DO NOT FLIP IT BACK TO false.
+      Why: the tab strip, the My Profile tab and the Settings tab are ALL `#if PFP_RATINGS` (see
+      DrawNavStrip / DrawActiveTab in PluginUI.MainWindow.cs). A build without the flag therefore
+      has NO tabs at all. When the default was false, any bare `dotnet build` - an IDE build, a
+      quick CLI build, an agent verifying a change - produced a no-ratings DLL straight into
+      bin\Release, which is the directory the dev plugin loads from, and silently replaced the
+      running plugin with a tab-less one. THAT is the "tabs keep disappearing after every update"
+      bug. It kept recurring because the safe path (build.sh) was easy to bypass while the unsafe
+      path (a bare build) was the default. Making the full build the default closes the hole: the
+      DLL that lands in the dev-plugin dir now always has its tabs.
+
+      This does NOT weaken the official-repo build. The conservative build is never a bare build -
+      it is always deliberate, via `bash build.sh` with its no-ratings switch, which passes
+      -p:EnableRatings=false explicitly AND writes to a DIFFERENT directory (bin\ReleaseNoRatings)
+      so it can never overwrite the dev plugin. Because build.sh always passes the flag explicitly,
+      this default only ever affects bare builds. If you see the plugin with no Recruit/My Profile/
+      Settings tabs, you are running a no-ratings build - rebuild the ratings one into bin\Release.
     -->
     <PropertyGroup>
-        <EnableRatings Condition="'$(EnableRatings)' == ''">false</EnableRatings>
+        <EnableRatings Condition="'$(EnableRatings)' == ''">true</EnableRatings>
     </PropertyGroup>
     <PropertyGroup Condition="'$(EnableRatings)' == 'true'">
         <DefineConstants>$(DefineConstants);PFP_RATINGS</DefineConstants>
     </PropertyGroup>
+
+    <!--
+      Tripwire. A no-ratings build is legitimate, but only ever via build.sh's no-ratings switch
+      (which redirects output away from the dev plugin). Produced any other way it is almost
+      certainly an accident about to drop a tab-less DLL into bin\Release, so make it loud not silent.
+    -->
+    <Target Name="WarnNoRatingsBuild" BeforeTargets="Build" Condition="'$(EnableRatings)' != 'true'">
+        <Warning Text="Building WITHOUT PFP_RATINGS: this DLL has no tab strip, no My Profile and no Settings tab. If it lands in bin\Release it replaces the dev plugin with a tab-less one. Use 'bash build.sh' for the dev build, or 'build.sh --no-ratings' (outputs to bin\ReleaseNoRatings) for the conservative build." />
+    </Target>
 
   <ItemGroup>
     <Compile Remove="scratch\**" />

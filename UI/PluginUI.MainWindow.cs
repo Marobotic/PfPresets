@@ -129,6 +129,13 @@ namespace PfPresets
                             if (ChromeDiagnosticRequested) ReportChromeDiagnostic($"narrow layout: windowW={ImGui.GetWindowWidth():F0} "
                                 + $"(wide needs {WideLayoutMinWidth:F0})");
                             DrawNarrowTitleBar();
+                            // If the tab strip is missing at runtime, the cause is NOT here - it is
+                            // the build. The strip and two of its three tabs (My Profile, Settings)
+                            // are #if PFP_RATINGS, so a build without that flag has no tabs at all.
+                            // That only happens on a no-ratings build; see the EnableRatings block
+                            // in PfPresets.csproj for why the default is true and how the
+                            // conservative build is isolated. Do not "fix" a missing strip by
+                            // deleting this #if - rebuild with ratings into bin\Release.
 #if PFP_RATINGS
                             DrawNavStrip();
 #endif

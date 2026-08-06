@@ -27,12 +27,20 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.3.4", "August 2026", new[]
+            {
+                "A party member with no Tomestone record now reads \"Not listed yet\", instead of a Fetch button that never turns anything up.",
+                "The button beside Recruit Members now reads \"PF Analysis\".",
+            }),
+
             new("3.3.3", "August 2026", new[]
             {
                 "Right-click anyone in your party for a menu: profile, report, kick, blacklist.",
                 "Blacklist now works outside duties too. It uses the game's own blacklist.",
-                "The button by Recruit Members now says \"Apply a recruitment preset\", and hides while the plugin is open.",
+                "The button by Recruit Members now says \"PF Analysis\", and hides while the plugin is open.",
                 "Settings: switches for that button and for the Save as Preset button.",
+                "Clear and prog no longer trail a party around after recruiting. They stay while the party is full, queued for that duty, or in it.",
+                "Solo in a duty, the window now names it and offers Leave duty instead of showing nothing.",
                 "Leading a cross-world party, Leave Party now says Disband Party - because that is what it does.",
                 "Auto-adjust now asks for one pure healer and one barrier healer, not two of the same.",
                 "Recent players keeps everyone you meet, not just the people you rated.",

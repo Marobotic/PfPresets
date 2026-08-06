@@ -156,9 +156,13 @@ namespace PfPresets
         /// duty from - so the progress readout for the fight they just filled for would vanish the
         /// instant it mattered most. Holding it here lets a full party still show its prog point.
         /// Always a real game duty id (never a synthetic one), so <see cref="DutyHasProgress"/>
-        /// downstream can reason about it. Cleared once the party is gone.
+        /// downstream can reason about it.
+        ///
+        /// <c>Slots</c> is the listing's seat count, carried because "the party filled it" is the
+        /// only thing that keeps this alive once recruitment stops - see
+        /// <see cref="RecruitedDutyStillApplies"/> - and eight is not the answer for every listing.
         /// </summary>
-        private (uint RowId, string Name)? lastRecruitedDuty;
+        private (uint RowId, string Name, int Slots)? lastRecruitedDuty;
 
         private RecruitmentSnapshot? snapshotThisFrame;
         private int snapshotFrame = -1;
@@ -205,14 +209,16 @@ namespace PfPresets
 
             if (!recruiting)
             {
-                bool inParty = GetOtherPartyMemberDetails().Count > 0;
+                int partySize = CurrentPartySize();
+                bool inParty = partySize > 0;
 
-                // The party is gone: forget the fight it was recruiting for, so a fresh party
-                // later doesn't inherit a stale prog point.
-                if (!inParty)
+                // The listing's duty only outlives the listing while the party still stands for
+                // it. Once that stops being true - someone left, the group broke up, we're off
+                // doing something else - the fight is forgotten rather than trailed behind us.
+                if (!RecruitedDutyStillApplies(partySize))
                     lastRecruitedDuty = null;
 
-                var (ctxName, ctxRow) = ResolveIdleContextDuty(inParty);
+                var (ctxName, ctxRow) = ResolveIdleContextDuty();
 
                 return new RecruitmentSnapshot
                 {
@@ -265,7 +271,7 @@ namespace PfPresets
                     total = 8;
 
                 string ownDutyName = ResolveListedDutyName(info->SelectedDutyId);
-                RememberRecruitedDuty(info->SelectedDutyId, ownDutyName);
+                RememberRecruitedDuty(info->SelectedDutyId, ownDutyName, total);
 
                 return new RecruitmentSnapshot
                 {
@@ -313,7 +319,7 @@ namespace PfPresets
                 viewedMasks[i] = viewed.SlotFlags[i];
 
             string viewedDutyName = ResolveListedDutyName(viewed.DutyId);
-            RememberRecruitedDuty(viewed.DutyId, viewedDutyName);
+            RememberRecruitedDuty(viewed.DutyId, viewedDutyName, viewedTotal);
 
             var capturedLeft = CapturedListingTimeLeft();
 
@@ -563,8 +569,64 @@ namespace PfPresets
         /// <summary>Records the listing's duty so a party that later fills still knows which fight
         /// it filled for. A listing with no specific duty carries nothing worth remembering, so it
         /// clears the memory rather than pinning "None".</summary>
-        private void RememberRecruitedDuty(ushort dutyId, string name)
-            => lastRecruitedDuty = dutyId != 0 ? (dutyId, name) : null;
+        private void RememberRecruitedDuty(ushort dutyId, string name, int slots)
+            => lastRecruitedDuty = dutyId != 0 ? (dutyId, name, slots) : null;
+
+        /// <summary>How many people are in the party, counting yourself, or 0 when solo. Duty
+        /// Support NPCs fill seats in the game's own list but are not company, and a party of you
+        /// and three Trust NPCs has never filled a Party Finder listing.</summary>
+        private int CurrentPartySize()
+        {
+            int players = 0;
+            foreach (var m in GetOtherPartyMemberDetails())
+            {
+                if (!m.IsSupportNpc)
+                    players++;
+            }
+
+            return players > 0 ? players + 1 : 0;
+        }
+
+        /// <summary>
+        /// Whether the finished listing's duty is still this party's business.
+        ///
+        /// A listing's duty used to survive on any party at all, which meant a group that recruited
+        /// for an Extreme in the evening was still being told who had cleared it an hour later,
+        /// stood in a city, two people, nothing queued. The readout was true and completely beside
+        /// the point, and there was no way to make it go away short of disbanding.
+        ///
+        /// So it now survives in exactly the three situations where the fight is still ahead of the
+        /// party or under their feet: they filled the listing and are holding together, they are in
+        /// the queue for it, or they are inside it. Anything else - and losing a member outside the
+        /// duty is the ordinary case - drops it.
+        ///
+        /// Seat count comes from the listing rather than a fixed eight, because a light party
+        /// listing is full at four and would otherwise never qualify.
+        /// </summary>
+        private bool RecruitedDutyStillApplies(int partySize)
+        {
+            if (!lastRecruitedDuty.HasValue)
+                return false;
+
+            uint rowId = lastRecruitedDuty.Value.RowId;
+
+            // Standing in it. Compared rather than assumed: a party that went off to a roulette
+            // together is in *a* duty, just not this one, and that is a stale reading either way.
+            if (IsInDuty())
+                return dutyDataHelper.GetDutyByTerritoryType(clientState.TerritoryType)?.RowId == rowId;
+
+            // Queued for it. Same comparison, same reason - a roulette resolves to no row id at
+            // all, so it can never accidentally match.
+            if (IsInDutyQueue())
+                return ResolveQueueContext().RowId == rowId;
+
+            // Neither: only a party that actually filled the listing still stands for it.
+            int seats = lastRecruitedDuty.Value.Slots;
+            if (seats <= 0 || seats > 8)
+                seats = 8;
+
+            return partySize >= seats;
+        }
 
         /// <summary>
         /// The duty to attribute an idle party's progress readout to.
@@ -572,14 +634,15 @@ namespace PfPresets
         /// Inside a duty the current instance is authoritative and is resolved from the territory,
         /// which is the only source there is - there's no listing to read. In the Duty Finder queue
         /// it's whatever we queued for. Outside both, a party that just finished recruiting still
-        /// points at the fight it filled for. Otherwise there is nothing to show, and an empty name
-        /// is the panel's cue to say so.
+        /// points at the fight it filled for - for as long as it is still a party that filled it,
+        /// which <see cref="RecruitedDutyStillApplies"/> decides just before this is called.
+        /// Otherwise there is nothing to show, and an empty name is the panel's cue to say so.
         ///
         /// The queue is checked before the recruitment memory on purpose: queueing for a roulette
         /// straight after a Party Finder night was showing the *listing's* prog point - the old
         /// fight's percentage against a party queued for something else entirely.
         /// </summary>
-        private (string Name, uint RowId) ResolveIdleContextDuty(bool inParty)
+        private (string Name, uint RowId) ResolveIdleContextDuty()
         {
             if (IsInDuty())
             {
@@ -590,7 +653,7 @@ namespace PfPresets
             if (IsInDutyQueue())
                 return ResolveQueueContext();
 
-            if (inParty && lastRecruitedDuty.HasValue)
+            if (lastRecruitedDuty.HasValue)
                 return (lastRecruitedDuty.Value.Name, lastRecruitedDuty.Value.RowId);
 
             return (string.Empty, 0u);
