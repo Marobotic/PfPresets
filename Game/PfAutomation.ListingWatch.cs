@@ -81,10 +81,21 @@ namespace PfPresets
         /// <summary>Floor between two probes, whatever else is asking for one.</summary>
         private const int MinProbeSpacingMs = 10_000;
 
-        /// <summary>Attempts before the watcher gives up and waits for a new signal. Four, spread
-        /// over about three minutes: enough for a leader who posts their listing a moment after
-        /// forming the party, and not a poll.</summary>
-        private const int MaxProbeAttempts = 4;
+        /// <summary>
+        /// Automatic attempts before the watcher stops looking and leaves it to the player.
+        ///
+        /// One, not four. Every attempt opens the game's own listing window, and when the leader
+        /// has no listing up the game answers in the chat log - "This player is no longer
+        /// recruiting party members." - so four attempts meant four lines of chat spam about a
+        /// party that simply wasn't advertising. Asking again on a timer buys nothing either: a
+        /// listing that does not exist does not start existing because we looked a second time.
+        ///
+        /// Once this is spent the card offers "Load Details", which runs the same capture on
+        /// demand and reports what it found - see ListingProbeSpent. New evidence still re-arms
+        /// the counter (someoneJoined / becameRecruiting below), because somebody joining is proof
+        /// a listing went up and is worth exactly one more look.
+        /// </summary>
+        private const int MaxProbeAttempts = 1;
 
         private static readonly int[] ProbeBackoffMs = { 15_000, 45_000, 120_000, 300_000 };
 
@@ -96,6 +107,17 @@ namespace PfPresets
         /// <summary>Called by the status card every frame it draws. The card is the only consumer
         /// of the leader's listing, so it is also the switch that runs the watcher.</summary>
         public void MarkListingCardVisible() => lastCardVisibleTick = Environment.TickCount64;
+
+        /// <summary>
+        /// Whether the automatic look has been spent without turning up a listing.
+        ///
+        /// This is what decides that the manual button is worth showing. Before it, the watcher is
+        /// still going to try by itself in a moment, and offering a button for work already
+        /// scheduled just invites a second window - and a second line of the game's "no longer
+        /// recruiting" chat message - for one question. After it, nothing further happens on its
+        /// own, so the player needs a way to ask.
+        /// </summary>
+        public bool ListingProbeSpent => probeAttempts >= MaxProbeAttempts && !isCapturingListing;
 
         // ══════════════════════════════════════════════════════════
         //  THE WATCH

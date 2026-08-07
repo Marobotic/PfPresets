@@ -462,13 +462,29 @@ namespace PfPresets
             {
                 // Someone else leads and we have no trustworthy read of their listing. Say so and
                 // offer to fetch it, rather than showing our own settings as if they were theirs.
-                ClippedText(dl, "Details aren't loaded for this listing yet.",
+                //
+                // The offer waits for the watcher's one automatic look to be spent. While that is
+                // still coming, a button here would be a second way to ask the same question, and
+                // pressing it would cost another listing window and another line of the game's
+                // "This player is no longer recruiting party members." in chat. So the card says
+                // it is looking, and only becomes a button once looking by itself has stopped.
+                bool spent = pfAutomation.ListingProbeSpent;
+
+                ClippedText(dl,
+                    spent ? "No listing found for this party."
+                          : "Checking for a listing...",
                     left, right, y, line, TextMuted);
                 y += line + CardRowGap;
 
-                DrawCardAction(snap, "Load Details", left, right, ref y,
-                    "Open the party's listing briefly so its duty, slots and\ntimer can be read.",
-                    isDestructive: false);
+                if (spent)
+                {
+                    DrawCardAction(snap, "Load Details", left, right, ref y,
+                        "Check again for the party's listing.\n\n"
+                        + "Opens it briefly so its duty, slots and timer can be read.\n"
+                        + "Nothing is checked automatically after the first look, so\n"
+                        + "this is the way to ask once the leader has posted one.",
+                        isDestructive: false);
+                }
                 return;
             }
 

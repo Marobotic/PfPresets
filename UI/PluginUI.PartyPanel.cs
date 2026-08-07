@@ -734,6 +734,59 @@ namespace PfPresets
         /// has without leaving a hole. The queued and cooling-down states are the same button in
         /// the same place - swapping it for text made the row change height under the reader.
         /// </summary>
+        /// <summary>
+        /// The shortest wait before anyone in this party could actually be re-read, or zero when at
+        /// least one of them is fetchable right now.
+        ///
+        /// The server keeps a per-character cooldown so a name is not read from the provider more
+        /// often than it can meaningfully change - see PlayerRefreshWait. A press while every last
+        /// member is inside that window is accepted by the route, matched against the stored rows,
+        /// and queues nothing at all, which from this side is indistinguishable from a button that
+        /// does nothing. The per-row Fetch buttons already know this about their own character;
+        /// this is the same fact for the party, so the party's button can say so too.
+        ///
+        /// Anybody with no stored row at all reports zero, so a party containing one never-fetched
+        /// character still offers the press - there is real work to do for them.
+        /// </summary>
+        private TimeSpan PartyRefreshWait(List<(CharacterIdentity Who, string Region)> party)
+        {
+            if (Ratings == null || party.Count == 0)
+                return TimeSpan.Zero;
+
+            TimeSpan soonest = TimeSpan.MaxValue;
+            foreach (var (who, _) in party)
+            {
+                TimeSpan wait = Ratings.PlayerRefreshWait(who);
+
+                // Somebody is fetchable now: the press has work to do, so there is nothing to wait
+                // for and no reason to look at the rest.
+                if (wait <= TimeSpan.Zero)
+                    return TimeSpan.Zero;
+
+                if (wait < soonest)
+                    soonest = wait;
+            }
+
+            return soonest == TimeSpan.MaxValue ? TimeSpan.Zero : soonest;
+        }
+
+        /// <summary>A wait at button width: "12m", "45s". <see cref="ShortWait"/> spells it out for
+        /// prose, which is too wide here - the button is sized to its label, so a longer string
+        /// moves the control rather than just reading differently.</summary>
+        private static string CompactWait(TimeSpan wait)
+            => wait.TotalSeconds >= 90
+                ? $"{Math.Max(1, (int)Math.Ceiling(wait.TotalMinutes))}m"
+                : $"{Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds))}s";
+
+        /// <summary>The tooltip for a party whose every member was checked too recently to be worth
+        /// asking about again.</summary>
+        private static string AllOnCooldownTip(TimeSpan wait)
+            => "Everyone here was checked recently.\n\n"
+                + "The server re-reads one character no more often than that, so\n"
+                + "pressing now would fetch nothing for anybody. This becomes\n"
+                + $"worth another go in {ShortWait(wait)}, as each of them falls\n"
+                + "out of that window.";
+
         private bool DrawProgressAction(Vector2 size, string? dutyName, uint dutyRowId,
             List<PartyMemberInfo> players)
         {
@@ -764,10 +817,17 @@ namespace PfPresets
                 return true;
             }
 
-            bool ready = Ratings.ProgressButtonReady;
+            // Two different reasons the press can be refused, and they want different words: the
+            // short throttle on the button itself, and the server's much longer per-character
+            // window with every member already inside it.
+            TimeSpan cooling = PartyRefreshWait(party);
+            bool ready = Ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
+
             string label = ready
                 ? "Update progress##FetchProgress"
-                : $"Updated · {(int)Ratings.ProgressButtonWait.TotalSeconds}s##FetchProgress";
+                : cooling > TimeSpan.Zero
+                    ? $"Updated · {CompactWait(cooling)}##FetchProgress"
+                    : $"Updated · {(int)Ratings.ProgressButtonWait.TotalSeconds}s##FetchProgress";
 
             ImGui.BeginDisabled(!ready);
             bool pressed = DrawPrimaryButton(label, size);
@@ -777,11 +837,12 @@ namespace PfPresets
                 Ratings.RequestPartyProgress(duty, party);
             else if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
-                PaddedTooltip(
-                    (loaded ? "Re-checks this party against FFLogs.\n\n" : "Asks FFLogs how far this party has got.\n\n")
-                    + "Sends their names and worlds to FFLogs - the one time this\n"
-                    + "plugin sends anything to anyone but your own server. Cached\n"
-                    + "results are shared, so this updates them for everyone.");
+                PaddedTooltip(cooling > TimeSpan.Zero
+                    ? AllOnCooldownTip(cooling)
+                    : (loaded ? "Re-checks this party against FFLogs.\n\n" : "Asks FFLogs how far this party has got.\n\n")
+                        + "Sends their names and worlds to FFLogs - the one time this\n"
+                        + "plugin sends anything to anyone but your own server. Cached\n"
+                        + "results are shared, so this updates them for everyone.");
             }
 
             return true;
@@ -850,26 +911,32 @@ namespace PfPresets
                 float needed = ImGui.CalcTextSize(label).X + 24f;
                 float buttonW = Math.Max(60f, Math.Min(needed, room));
 
-                bool ready = Ratings.ProgressButtonReady;
+                // Same two refusals as the card's copy of this button - the short throttle, and the
+                // server's per-character window with everybody already inside it.
+                TimeSpan cooling = PartyRefreshWait(party);
+                bool ready = Ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
 
                 ImGui.BeginDisabled(!ready);
                 // Accent, not grey: this is the party card's own action, and the outlined secondary
                 // style put it at the same weight as the things around it that only navigate.
                 bool pressed = DrawAccentOutlineButton(
                     ready ? $"{label}##FetchProgress"
-                          : $"Updated · {(int)Ratings.ProgressButtonWait.TotalSeconds}s##FetchProgress",
+                          : cooling > TimeSpan.Zero
+                              ? $"Updated · {CompactWait(cooling)}##FetchProgress"
+                              : $"Updated · {(int)Ratings.ProgressButtonWait.TotalSeconds}s##FetchProgress",
                     new Vector2(buttonW, 22));
                 ImGui.EndDisabled();
 
                 if (pressed && ready)
                     Ratings.RequestPartyProgress(duty, party);
-                else if (ImGui.IsItemHovered())
+                else if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
-                    PaddedTooltip(
-                        (loaded ? "Re-checks this party against FFLogs.\n\n" : "Asks FFLogs how far this party has got.\n\n")
-                        + "Sends their names and worlds to FFLogs - the one time this\n"
-                        + "plugin sends anything to anyone but your own server. Cached\n"
-                        + "results are shared, so this updates them for everyone.");
+                    PaddedTooltip(cooling > TimeSpan.Zero
+                        ? AllOnCooldownTip(cooling)
+                        : (loaded ? "Re-checks this party against FFLogs.\n\n" : "Asks FFLogs how far this party has got.\n\n")
+                            + "Sends their names and worlds to FFLogs - the one time this\n"
+                            + "plugin sends anything to anyone but your own server. Cached\n"
+                            + "results are shared, so this updates them for everyone.");
                 }
             }
 
