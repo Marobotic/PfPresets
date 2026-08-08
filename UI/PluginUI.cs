@@ -118,6 +118,7 @@ namespace PfPresets
                 DrawShareImportWindow();
                 DrawSaveFromListingOverlay();
                 DrawPartyFinderOpenButton();
+                ReportOverlayDiagnostic();
                 DrawConfirmDialog();
                 DrawChangelogWindow();
                 DrawWelcomeWindow();
@@ -174,6 +175,71 @@ namespace PfPresets
         {
             partyHasNonBattleJobThisFrame ??= pfAutomation.PartyHasNonBattleJob();
             return partyHasNonBattleJobThisFrame.Value;
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  GAME OVERLAY COORDINATES
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Converts a position read off the game's own UI into the space ImGui positions windows in.
+        ///
+        /// The game reports node and addon positions relative to its client area - (0,0) is the top
+        /// left of the rendered frame. ImGui, with viewports enabled, positions top-level windows in
+        /// virtual-desktop coordinates, where (0,0) is the top left of the primary monitor. The two
+        /// agree exactly when the game's client area starts at the desktop origin, and only then.
+        ///
+        /// That is why the buttons parked against the Party Finder looked pixel-perfect for a long
+        /// time and then quietly drifted: nothing about them changed, the game window stopped
+        /// starting at (0,0). A second monitor, a rearranged display layout, running windowed
+        /// instead of borderless - any of those puts the client area somewhere else on the desktop,
+        /// and the whole offset lands on every overlay anchored to a game rectangle. Every other
+        /// window in the plugin already goes through the viewport (see the centred dialogs and the
+        /// rating prompt); these two were the ones reading raw game coordinates.
+        ///
+        /// A no-op when the viewport does start at the origin, so it cannot make a correct case wrong.
+        /// </summary>
+        private static Vector2 GameToScreen(Vector2 gamePos) => ImGui.GetMainViewport().Pos + gamePos;
+
+        /// <summary>Set by /pfpdebug overlay. The next frame reports the numbers the two
+        /// game-anchored buttons are positioned from, then clears itself.</summary>
+        internal bool OverlayDiagnosticRequested { get; set; }
+
+        /// <summary>
+        /// Says out loud where the game thinks its windows are and where ImGui thinks the screen
+        /// starts.
+        ///
+        /// The two disagreeing is invisible from the code and invisible from a screenshot - it
+        /// looks exactly like a button drawn at the wrong offset - and it depends on the machine
+        /// the plugin is running on, which is the one thing that cannot be read from here.
+        /// </summary>
+        private void ReportOverlayDiagnostic()
+        {
+            if (!OverlayDiagnosticRequested)
+                return;
+
+            OverlayDiagnosticRequested = false;
+
+            var vp = ImGui.GetMainViewport();
+            void Say(string what) => DiagnosticSink?.Invoke($"[PF Analysis debug] {what}");
+
+            Say($"viewport pos=({vp.Pos.X:F0},{vp.Pos.Y:F0}) size=({vp.Size.X:F0},{vp.Size.Y:F0})");
+            Say($"display=({ImGui.GetIO().DisplaySize.X:F0},{ImGui.GetIO().DisplaySize.Y:F0})");
+
+            if (pfAutomation.TryGetPartyFinderWindowRect(out var winPos, out var winSize))
+                Say($"LookingForGroup game rect=({winPos.X:F0},{winPos.Y:F0}) {winSize.X:F0}x{winSize.Y:F0}");
+            else
+                Say("LookingForGroup: not open");
+
+            if (pfAutomation.TryGetRecruitButtonRect(out var anchorPos, out var anchorSize))
+                Say($"Recruit Members game rect=({anchorPos.X:F0},{anchorPos.Y:F0}) {anchorSize.X:F0}x{anchorSize.Y:F0}");
+            else
+                Say("Recruit Members: not visible");
+
+            if (pfAutomation.TryGetListingWindowRect(out var listPos, out var listSize))
+                Say($"LookingForGroupDetail game rect=({listPos.X:F0},{listPos.Y:F0}) {listSize.X:F0}x{listSize.Y:F0}");
+            else
+                Say("LookingForGroupDetail: not open");
         }
 
         // ══════════════════════════════════════════════════════════

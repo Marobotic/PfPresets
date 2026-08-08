@@ -27,6 +27,13 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.3.5", "August 2026", new[]
+            {
+                "Buttons anchored to game windows (PF Analysis, Save as Preset) now position correctly on multi-monitor and windowed setups.",
+                "The listing watcher now probes once instead of repeating when no listing exists, keeping chat clean.",
+                "Update Progress shows cooldown status (\"Updated · 12m\") with a tooltip when members are within the refresh window.",
+            }),
+
             new("3.3.4", "August 2026", new[]
             {
                 "A party member with no Tomestone record now reads \"Not listed yet\", instead of a Fetch button that never turns anything up.",

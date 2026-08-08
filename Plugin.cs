@@ -158,20 +158,24 @@ namespace PfPresets
             this.ui.Analytics = this.analytics;
 
             // Register commands
-            var mainCommandInfo = new CommandInfo(OnCommand)
-            {
-                HelpMessage = "Opens the PF Analysis window. \"/pfa apply <name>\" posts a preset, "
-                            + "\"/pfa refresh\" re-posts your listing, \"/pfa list\" shows your presets. "
-                            + "/pfp still works.",
-                ShowInHelp = true,
-            };
             // /pfa and /pfanalysis are the names the plugin goes by now; /pfp and /pfpresets stay
             // registered as aliases. Dropping them would break every macro and every forum post
-            // that ever mentioned this plugin, to gain nothing.
-            this.commandManager.AddHandler("/pfa", mainCommandInfo);
-            this.commandManager.AddHandler("/pfanalysis", mainCommandInfo);
-            this.commandManager.AddHandler("/pfp", mainCommandInfo);
-            this.commandManager.AddHandler("/pfpresets", mainCommandInfo);
+            // that ever mentioned this plugin, to gain nothing. Only /pfa carries the help text -
+            // repeating the same paragraph four times just made the command list unreadable.
+            this.commandManager.AddHandler("/pfa", new CommandInfo(OnCommand)
+            {
+                HelpMessage = "Open the PF Analysis window. Subcommands: apply <name>, refresh, list.",
+                ShowInHelp = true,
+            });
+
+            foreach (var alias in new[] { "/pfanalysis", "/pfp", "/pfpresets" })
+            {
+                this.commandManager.AddHandler(alias, new CommandInfo(OnCommand)
+                {
+                    HelpMessage = "Alias for /pfa.",
+                    ShowInHelp = true,
+                });
+            }
 
             this.commandManager.AddHandler("/pfpdebug", new CommandInfo(OnDebugCommand)
             {
@@ -277,6 +281,17 @@ namespace PfPresets
             {
                 this.ui.ChromeDiagnosticRequested = true;
                 chatGui.Print("[PF Analysis Debug] Chrome report armed - open or focus the main window.");
+                return;
+            }
+
+            // "/pfpdebug overlay" reports the coordinates the two buttons drawn over the game's own
+            // windows are placed from. Whether the game's client area starts at the desktop origin
+            // decides whether those two spaces agree, and that is a property of the machine rather
+            // than of the code - so the only way to see it is to ask the running client.
+            if (args.Trim().Equals("overlay", StringComparison.OrdinalIgnoreCase))
+            {
+                this.ui.OverlayDiagnosticRequested = true;
+                chatGui.Print("[PF Analysis Debug] Overlay report armed - open the Party Finder.");
                 return;
             }
 

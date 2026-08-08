@@ -1254,6 +1254,26 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// What the local player is on right now, and at what level. Zero job when the character
+        /// isn't loaded yet.
+        ///
+        /// Read off the game rather than looked up. This is the one character the client can always
+        /// answer for, so asking Tomestone about it would be spending a request to get a staler
+        /// version of a fact already in memory - and the profile card's own line sat empty for the
+        /// whole of the wait.
+        ///
+        /// Level, not EffectiveLevel: inside synced content the interesting figure is what the
+        /// character actually is, not what the duty has temporarily made them.
+        /// </summary>
+        public (uint JobId, int Level) GetLocalJobAndLevel()
+        {
+            if (!playerState.IsLoaded)
+                return (0, 0);
+
+            return (GetLocalPlayerJobId(), playerState.Level);
+        }
+
+        /// <summary>
         /// The local player as a party member, or null when they aren't loaded yet.
         ///
         /// The party reads deliberately exclude the local player - a list of people to rate should

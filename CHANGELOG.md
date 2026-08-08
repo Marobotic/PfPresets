@@ -1,6 +1,16 @@
 # Changelog
 
-## 3.2.2
+## 3.3.5
+
+**Overlay button positioning now respects multi-monitor and windowed setups.** Buttons anchored to game windows (like *PF Analysis* beside Recruit Members and *Save as Preset*) now map game coordinates to virtual desktop space correctly, preventing alignment drift on non-primary monitors or windowed modes. Added `/pfpdebug overlay` diagnostic.
+
+**Listing watcher checks once when no listing exists.** Probing no longer repeats four times over three minutes for non-recruiting parties, keeping your chat log clean.
+
+**Update Progress shows cooldown status.** When party members are within their server refresh window, the button displays *"Updated · 12m"* with an explanatory tooltip rather than appearing unresponsive.
+
+---
+
+
 
 **Progress percentages are now tied to the current fight.** They persist when your party fills or goes idle, and only clear or switch when a new duty is detected through Party Finder recruitment, Duty Finder queue, or duty commencement.
 

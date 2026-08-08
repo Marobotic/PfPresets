@@ -196,6 +196,28 @@ namespace PfPresets
             return players.RatingFor(who);
         }
 
+        /// <summary>
+        /// What is already known about this player, without asking for anything.
+        ///
+        /// <see cref="Get"/> reads and requests in one gesture, which is right for a party of eight
+        /// and wrong for a list of everyone this install has ever met: calling it per row makes the
+        /// length of that list the size of the request, and scrolling it a way to poll the server.
+        ///
+        /// This is the read half on its own. The caller decides separately, and for far fewer
+        /// players, which of them are worth a lookup - see the recent players list, which asks only
+        /// about the rows actually on screen.
+        ///
+        /// Falls back to disk for the same reason Get does: what was true when we last looked beats
+        /// an empty column, and it is replaced the moment a real answer lands.
+        /// </summary>
+        public PlayerRating? Peek(CharacterIdentity who)
+        {
+            if (!who.IsValid)
+                return null;
+
+            return cache.TryGetValue(who.Key, out var entry) ? entry.Value : players.RatingFor(who);
+        }
+
         /// <summary>True when a lookup for this player is queued or running and we have nothing
         /// cached yet - the UI's cue to draw a spinner rather than "no ratings".</summary>
         public bool IsLoading(CharacterIdentity who)

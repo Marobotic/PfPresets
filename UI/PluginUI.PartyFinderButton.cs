@@ -23,19 +23,34 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
-        // A flat 30px tall, and that is the whole footprint - the host window is the button, with no
-        // padding, no border and no minimum size of its own to inflate it.
+        // The host window is the button, with no padding, no border and no minimum size of its own
+        // to inflate it.
         //
-        // Not derived from the game's button height any more. Tying it to the anchor meant the size
-        // set here was only ever a bound: at a UI scale where Recruit Members is 36px, asking for 30
-        // produced 36, and the number in this file described nothing anyone could see.
-        //
-        // The width is measured from the label rather than fixed: it is centred rather than
-        // clipped, and a rect too narrow for it would let it hang out of both ends of its own
-        // button at larger font scales.
+        // The width stays measured from the label rather than borrowed from the anchor. Recruit
+        // Members is 204px of mostly empty button, and copying that would buy alignment on an edge
+        // nothing sits against at the cost of a control four times the size of its own text.
         private const float PfOpenButtonMinW = 112f;
         private const float PfOpenButtonPadX = 14f;
-        private const float PfOpenButtonH = 30f;
+
+        /// <summary>
+        /// How much of Recruit Members' height this button takes.
+        ///
+        /// Deliberately not all of it. Matching the anchor exactly did line the two up, and made
+        /// this read as the game's equal - which it is not. Recruit Members is what the window is
+        /// for; this is a way into a plugin, parked beside it.
+        ///
+        /// A fraction rather than the flat 30px it was, because 30 is only the right number at one
+        /// UI scale. At the anchor's usual 43 this lands on 30 - the size that looked right - and
+        /// it stays the same proportion, still centred on the game's button, if the player scales
+        /// their interface up.
+        /// </summary>
+        private const float PfOpenButtonHeightRatio = 0.7f;
+
+        /// <summary>Height when the anchor's own is unreadable, and the bounds its share is clamped
+        /// into. Only reached if the game hands us a rectangle we shouldn't trust.</summary>
+        private const float PfOpenButtonFallbackH = 30f;
+        private const float PfOpenButtonMinH = 22f;
+        private const float PfOpenButtonMaxH = 60f;
 
         /// <summary>What the button says: the plugin's name, matching what it is called everywhere
         /// else it announces itself.</summary>
@@ -69,8 +84,16 @@ namespace PfPresets
                 iconW = ImGui.CalcTextSize(LogoIcon.ToIconString()).X;
 
             float contentW = iconW + 8f + ImGui.CalcTextSize(PfOpenButtonLabel).X;
+
+            // A share of the anchor's height, so the two stay in the same relationship at any UI
+            // scale. The clamp is only there to catch a rectangle worth distrusting.
+            float height = anchorSize.Y > 0f
+                ? Math.Clamp(anchorSize.Y * PfOpenButtonHeightRatio,
+                    PfOpenButtonMinH, PfOpenButtonMaxH)
+                : PfOpenButtonFallbackH;
+
             var size = new Vector2(Math.Max(PfOpenButtonMinW, contentW + PfOpenButtonPadX * 2),
-                PfOpenButtonH);
+                height);
 
             // To the right of Recruit Members by default. When the window's edge is too close for
             // that, the button drops below the window rather than hanging off the side or covering
@@ -81,7 +104,10 @@ namespace PfPresets
             if (haveWindow && pos.X + size.X > winPos.X + winSize.X)
                 pos = new Vector2(anchorPos.X, winPos.Y + winSize.Y + 4f);
 
-            ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+            // Everything above is in the game's coordinates, including the bounds check - the two
+            // rectangles being compared both come from the game, so converting either of them first
+            // would only be work. The conversion happens once, here, on the way out.
+            ImGui.SetNextWindowPos(GameToScreen(pos), ImGuiCond.Always);
             ImGui.SetNextWindowSize(size, ImGuiCond.Always);
 
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0f, 0f, 0f, 0f));

@@ -447,7 +447,11 @@ namespace PfPresets
         /// Named -Inline to keep it distinct from the job selector's DrawJobIcon, which takes a
         /// JobInfo and is an interactive toggle rather than a passive icon.
         /// </summary>
-        private void DrawJobIconInline(uint jobId, float size, bool offline = false)
+        /// <param name="remembered">The job is the last one we saw them on rather than one the
+        /// game is reporting now. Says so on the hover, because an icon that looks live and isn't
+        /// is the one way this can mislead.</param>
+        private void DrawJobIconInline(uint jobId, float size, bool offline = false,
+            bool remembered = false)
         {
             var job = JobData.FindById(jobId);
 
@@ -464,7 +468,11 @@ namespace PfPresets
                     DrawOfflineMark(pos, size);
 
                 if (job != null && ImGui.IsItemHovered())
-                    PaddedTooltip(offline ? $"{job.Name}\nOffline or disconnected" : job.Name);
+                {
+                    PaddedTooltip(job.Name
+                        + (remembered ? "\nLast job we saw them on" : string.Empty)
+                        + (offline ? "\nOffline or disconnected" : string.Empty));
+                }
                 return;
             }
 

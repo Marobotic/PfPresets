@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -463,7 +464,19 @@ namespace PfPresets
                 : 0f;
 
             const float padTop = 12f, padBottom = 12f;
-            const float nameH = 20f, chipsH = 18f, slotStripH = 20f, gap = 6f;
+            const float nameH = 20f, slotStripH = 20f, gap = 6f;
+
+            // The chips wrap, so their block is as tall as the number of rows they take. It was a
+            // flat 18px and the row was drawn straight across regardless of how much room it had -
+            // a preset carrying all three (an objective, a completion filter and one-per-job) ran
+            // the last chip under the actions column, so "ONE PER JOB" sat behind Apply preset.
+            //
+            // Measured here rather than while drawing, because the height decides the hover fill
+            // and the hit area and both have to be right on the row's first frame.
+            var chips = PresetChips(preset);
+            int chipRows = Math.Max(1, ChipRowCount(chips, infoWidth));
+            float chipsH = chipRows * ChipRowHeight + (chipRows - 1) * ChipRowGap;
+
             float metaLineH = wide ? 0f : lineH + 4f;
 
             const float stripGap = 10f;
@@ -548,16 +561,27 @@ namespace PfPresets
             // ── Objective chips, and the narrow layout's meta line ─
             {
                 float chipX = infoX;
-                if (preset.ObjectiveId != 0)
-                    chipX += DrawChip(new Vector2(chipX, cursorY),
-                        DisplayNames.GetObjectiveName(preset.ObjectiveId), Dim) + 6f;
-                if (preset.CompletionStatusEnabled)
-                    chipX += DrawChip(new Vector2(chipX, cursorY),
-                        DisplayNames.GetCompletionStatusName(preset.CompletionStatusType), Faint) + 6f;
-                if (preset.OnePlayerPerJob)
-                    DrawChip(new Vector2(chipX, cursorY), "One per job", Faint);
+                float chipY = cursorY;
 
-                cursorY += 18f + 6f;
+                foreach (var (text, colour) in chips)
+                {
+                    float w = ChipWidth(text);
+
+                    // Onto the next line rather than under the actions column. Never on the first
+                    // chip of a row, which has nowhere better to go and is clipped by Fit-less
+                    // drawing anyway - one chip too wide for the column is a narrow window, not a
+                    // layout to solve.
+                    if (chipX > infoX && chipX + w > infoX + infoWidth)
+                    {
+                        chipX = infoX;
+                        chipY += ChipRowHeight + ChipRowGap;
+                    }
+
+                    DrawChip(new Vector2(chipX, chipY), text, colour);
+                    chipX += w + ChipGap;
+                }
+
+                cursorY += chipsH + 6f;
             }
 
             if (!wide)
@@ -796,6 +820,67 @@ namespace PfPresets
         /// Outlined rather than filled: these mark facts about a preset, and a row of filled pills
         /// reads as a row of buttons.
         /// </summary>
+        /// <summary>Gap between two chips on the same line.</summary>
+        private const float ChipGap = 6f;
+
+        /// <summary>One chip's line box, and the gap between two wrapped lines of them. The box is
+        /// a pixel taller than the chip itself draws, which is the breathing room the single-line
+        /// layout always had.</summary>
+        private const float ChipRowHeight = 18f;
+        private const float ChipRowGap = 4f;
+
+        /// <summary>
+        /// The chips a preset earns, in the order they are drawn.
+        ///
+        /// Pulled out of the drawing because the row's height has to know how many there are and
+        /// how wide, one pass before anything is on screen.
+        /// </summary>
+        private List<(string Text, Vector4 Colour)> PresetChips(PfPresetData preset)
+        {
+            var chips = new List<(string, Vector4)>(3);
+
+            if (preset.ObjectiveId != 0)
+                chips.Add((DisplayNames.GetObjectiveName(preset.ObjectiveId), Dim));
+            if (preset.CompletionStatusEnabled)
+                chips.Add((DisplayNames.GetCompletionStatusName(preset.CompletionStatusType), Faint));
+            if (preset.OnePlayerPerJob)
+                chips.Add(("One per job", Faint));
+
+            return chips;
+        }
+
+        /// <summary>Width one chip occupies, measured exactly the way <see cref="DrawChip"/> will
+        /// draw it - same font, same casing, same padding - so the two cannot disagree.</summary>
+        private float ChipWidth(string text)
+        {
+            using (UiLabelFont.Push())
+                return ImGui.CalcTextSize(text.ToUpperInvariant()).X + 12f;
+        }
+
+        /// <summary>How many lines the chips wrap to at this width. Walks them the same way the
+        /// drawing does, so the reserved height is the height actually used.</summary>
+        private int ChipRowCount(List<(string Text, Vector4 Colour)> chips, float width)
+        {
+            if (chips.Count == 0)
+                return 0;
+
+            int rows = 1;
+            float x = 0f;
+
+            foreach (var (text, _) in chips)
+            {
+                float w = ChipWidth(text);
+                if (x > 0f && x + w > width)
+                {
+                    rows++;
+                    x = 0f;
+                }
+                x += w + ChipGap;
+            }
+
+            return rows;
+        }
+
         private float DrawChip(Vector2 topLeft, string text, Vector4 color)
         {
             var dl = ImGui.GetWindowDrawList();
@@ -860,6 +945,10 @@ namespace PfPresets
 
         /// <summary>The bar's stand-in when there isn't: just enough strip to hold the caret.</summary>
         private const float FooterCaretRowHeight = 44f;
+
+        /// <summary>How much of the bar the duty name and status line keep before the Refresh
+        /// button is allowed to take any of it. Roughly "Recruiting · 7 / 8 · refresh in 22:32".</summary>
+        private const float FooterMinTextRoom = 210f;
 
         /// <summary>
         /// Whether the footer has anything live to report.
@@ -947,12 +1036,26 @@ namespace PfPresets
             // Right-hand controls first: the text has to know how much room is left before it can
             // be fitted, and a duty name is the one thing here long enough to need the answer.
             const float caretW = ButtonHeight;
-            float refreshW = 128f;
             float caretX = winX + width - 12f - caretW;
-            float refreshX = caretX - 8f - refreshW;
-
             float textX = markMin.X + mark + 12f;
-            float textRoom = MathF.Max(80f, refreshX - 12f - textX);
+
+            // The button used to be a flat 128px, and the text room under it was clamped to a
+            // minimum rather than measured - so at the window's smallest width the button simply
+            // sat on top of "refresh in 22:32". It is sized against what is actually left instead,
+            // and gives up its label before it gives up the countdown, because the countdown is
+            // the thing you glance at the strip to read.
+            float roomForButton = caretX - 8f - (textX + FooterMinTextRoom + 12f);
+            string refreshLabel = "Refresh now";
+            float refreshW = ImGui.CalcTextSize(refreshLabel).X + ButtonPadX * 2f;
+            if (refreshW > roomForButton)
+            {
+                refreshLabel = "Refresh";
+                refreshW = MathF.Max(ButtonHeight,
+                    ImGui.CalcTextSize(refreshLabel).X + ButtonPadX * 2f);
+            }
+
+            float refreshX = caretX - 8f - refreshW;
+            float textRoom = MathF.Max(60f, refreshX - 12f - textX);
 
             string title = snap.IsRecruiting && !string.IsNullOrEmpty(snap.DutyName)
                 ? snap.DutyName
@@ -970,7 +1073,7 @@ namespace PfPresets
             bool canRefresh = snap.IsLeader;
             ImGui.SetCursorScreenPos(new Vector2(refreshX, midY - ButtonHeight * 0.5f));
             ImGui.BeginDisabled(!canRefresh);
-            if (DrawPrimaryButton("Refresh now##FooterRefreshNow", new Vector2(refreshW, ButtonHeight)))
+            if (DrawPrimaryButton($"{refreshLabel}##FooterRefreshNow", new Vector2(refreshW, ButtonHeight)))
                 pfAutomation.ExecuteRefreshTask();
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
@@ -1053,11 +1156,21 @@ namespace PfPresets
                 if (!config.AutoRefresherEnabled || IsRecruitmentRefresherActive())
                     return;
 
-                const string joiner = " · refresh in ";
+                (string text, Vector4 colour) = FooterCountdown();
+
+                // This line is drawn as a run rather than laid out, so it has to check the room it
+                // was given: a narrow window drops the wording before it drops the clock.
+                float limit = x + room;
+                float timeW = ImGui.CalcTextSize(text).X;
+                string joiner = " · refresh in ";
+                if (cursor + ImGui.CalcTextSize(joiner).X + timeW > limit)
+                    joiner = " · ";
+                if (cursor + ImGui.CalcTextSize(joiner).X + timeW > limit)
+                    return;
+
                 dl.AddText(new Vector2(cursor, y), dim, joiner);
                 cursor += ImGui.CalcTextSize(joiner).X;
 
-                (string text, Vector4 colour) = FooterCountdown();
                 dl.AddText(new Vector2(cursor, y), ImGui.ColorConvertFloat4ToU32(colour), text);
             }
         }

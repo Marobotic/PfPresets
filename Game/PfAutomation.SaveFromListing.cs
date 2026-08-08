@@ -16,8 +16,16 @@ namespace PfPresets
     /// </summary>
     public partial class PfAutomation
     {
-        /// <summary>Screen rectangle of the listing detail window, or null when it isn't open.
-        /// Used to park the "Save as Preset" button against it.</summary>
+        /// <summary>
+        /// Screen rectangle of the listing detail window's visible frame, or false when it isn't
+        /// open. Used to park the "Save as Preset" button against it.
+        ///
+        /// Measured off the window frame node rather than the addon's root. The root is the whole
+        /// extent the addon reserves, and for this window that runs well past the border anyone can
+        /// see - the game leaves a transparent margin around the frame. A button placed four pixels
+        /// below the root therefore sat a visible gap below the window, four pixels under an edge
+        /// that isn't drawn. The frame node is the border, so four pixels below it is four pixels.
+        /// </summary>
         public unsafe bool TryGetListingWindowRect(out Vector2 position, out Vector2 size)
         {
             position = default;
@@ -31,9 +39,15 @@ namespace PfPresets
             if (!addon->IsVisible || addon->RootNode == null)
                 return false;
 
+            // The root as the fallback: a window without a standard frame still has to be anchored
+            // to something, and being a little low beats not drawing the button at all.
+            var frame = addon->WindowNode != null
+                ? &addon->WindowNode->AtkResNode
+                : addon->RootNode;
+
             float scale = addon->Scale <= 0f ? 1f : addon->Scale;
-            position = new Vector2(addon->X, addon->Y);
-            size = new Vector2(addon->RootNode->Width * scale, addon->RootNode->Height * scale);
+            position = new Vector2(frame->ScreenX, frame->ScreenY);
+            size = new Vector2(frame->Width * scale, frame->Height * scale);
             return size.X > 0f && size.Y > 0f;
         }
 

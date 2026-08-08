@@ -37,6 +37,20 @@ namespace PfPresets
         private string ratingSearchError = string.Empty;
 
         /// <summary>
+        /// The tab Back returns to, when the profile was opened from somewhere else.
+        ///
+        /// Looking someone up from the party list on Recruit used to leave you on My Profile with
+        /// their card and no way back but the tab strip - Back only cleared the search, which
+        /// answers "what am I looking at" and not "where was I". Null means the profile was opened
+        /// from this tab, where Back is already a move within it.
+        /// </summary>
+        private MainTab? profileReturnTab;
+
+        /// <summary>Set when a card is opened, so the narrow layout starts at the top of it rather
+        /// than wherever the list underneath was scrolled to.</summary>
+        private bool profileScrollPending;
+
+        /// <summary>
         /// Name matches from people this install has actually met, for the current input.
         ///
         /// Local by necessity, not by preference: the server stores every character as
@@ -131,7 +145,12 @@ namespace PfPresets
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
 
             if (ImGui.Button($"##Nav{tab}", size))
+            {
+                // Choosing a tab by hand is its own navigation: whatever Back was remembering is
+                // no longer where you came from.
                 activeTab = tab;
+                profileReturnTab = null;
+            }
 
             bool hovered = ImGui.IsItemHovered();
 
@@ -199,11 +218,35 @@ namespace PfPresets
                 {
                     // Narrow: the card first, because it is the one thing on this tab that is about
                     // you, and the tab is called My Profile.
+                    //
+                    // While somebody is looked up, the card is the whole tab. Stacked, the lists
+                    // stayed on screen underneath a card that had opened above the fold, so looking
+                    // someone up from a list looked like it had done nothing at all - the same
+                    // people were still sitting there. Side by side there is no such problem, which
+                    // is why the wide layout keeps both.
+                    // Typing is the exception: suggestions are the answer to what is being typed
+                    // right now, and they belong on screen whoever is on the card.
+                    bool lookedUp = ratingSearchTarget != null && ratingSearchSuggestions.Count == 0;
+                    if (lookedUp && profileScrollPending)
+                    {
+                        ImGui.SetScrollY(0f);
+                        profileScrollPending = false;
+                    }
+
                     DrawProfilePane(compact: true);
-                    ImGui.Dummy(new Vector2(0, 8));
-                    DrawRatingLists();
+
+                    if (!lookedUp)
+                    {
+                        ImGui.Dummy(new Vector2(0, 8));
+                        DrawRatingLists();
+                    }
+
                     return;
                 }
+
+                // Wide enough for both columns: nothing was ever hidden here, so nothing needs
+                // scrolling back either.
+                profileScrollPending = false;
 
                 float listWidth = bodyWidth - ProfilePaneWidth - 18f;
 
@@ -364,8 +407,17 @@ namespace PfPresets
             ImGui.Dummy(new Vector2(0, 2));
 
             clickedProfile = null;
+            recentRatingBatch.Clear();
+
             foreach (var entry in recent)
                 DrawRecentPlayerRow(entry);
+
+            // One request for the rows the reader can actually see, after they have all been
+            // drawn. Prefetch skips anything already fresh, so a list held still costs nothing
+            // after its first pass, and the service coalesces what is left into a single batched
+            // call rather than one per name.
+            if (recentRatingBatch.Count > 0)
+                Ratings?.Prefetch(recentRatingBatch);
 
             if (clickedProfile != null)
             {
@@ -389,12 +441,32 @@ namespace PfPresets
             if (!who.IsValid)
                 return;
 
+            // Where to put you back. Only recorded when the profile is opened from another tab:
+            // opening one card from another card's list should not queue up a chain of Backs.
+            if (activeTab != MainTab.Ratings)
+                profileReturnTab = activeTab;
+
             activeTab = MainTab.Ratings;
-            ratingSearchTarget = who;
-            ratingSearchInput = $"{who.Name}@{who.World}";
-            ratingSearchSuggestFor = ratingSearchInput;
+            SelectSearchResult(who);
+        }
+
+        /// <summary>
+        /// Back: leaves the looked-up card, and puts you back where you opened it from.
+        ///
+        /// Clearing the search is part of leaving, not a separate act - the field held the name of
+        /// somebody you are no longer looking at, and coming back to My Profile later to find a
+        /// stale search still in it is the same confusion one step delayed.
+        /// </summary>
+        private void CloseProfile()
+        {
+            ratingSearchTarget = null;
+            ratingSearchInput = string.Empty;
             ratingSearchSuggestions.Clear();
             ratingSearchError = string.Empty;
+
+            if (profileReturnTab is { } back)
+                activeTab = back;
+            profileReturnTab = null;
         }
 
         /// <summary>
@@ -406,8 +478,41 @@ namespace PfPresets
         /// </summary>
         private static float RecentRowHeight() => RateRowHeight(withSubline: false) + 8f;
 
+        /// <summary>
+        /// The rows on screen this frame, gathered for one batched lookup after the list is drawn.
+        ///
+        /// A field rather than a local so the list itself is reused: this runs every frame the tab
+        /// is open, and a fresh allocation per frame for a column of numbers is not a trade worth
+        /// making.
+        /// </summary>
+        private readonly List<CharacterIdentity> recentRatingBatch = new();
+
+        /// <summary>
+        /// Ceiling on how many players one frame will ask about, however tall the window is.
+        ///
+        /// Comfortably more than fits on screen at any sane size, so in practice it never binds -
+        /// it is here so a bug in the visibility test, or some future layout that draws this list
+        /// without a clip rect, cannot turn into a request for four hundred names.
+        /// </summary>
+        private const int RecentRatingBatchMax = 40;
+
         private void DrawRecentPlayerRow(PlayerSeen entry)
         {
+            // Whether this row is inside the scroll view rather than above or below it. The list is
+            // everyone this install has ever met - hundreds of people on an old one - and the
+            // reader is looking at maybe fifteen of them. Asking about the rest would make the size
+            // of the request the size of the history file.
+            //
+            // Tested before the row is drawn, while the cursor is still at its top-left, which is
+            // what IsRectVisible measures from.
+            bool onScreen = ImGui.IsRectVisible(new Vector2(1f, RecentRowHeight()));
+            if (onScreen && recentRatingBatch.Count < RecentRatingBatchMax)
+                recentRatingBatch.Add(entry.Identity);
+
+            // Read without asking: whatever is already in memory or on disk. The ask for the
+            // visible rows is queued above and its answer lands on a later frame.
+            var score = Ratings?.Peek(entry.Identity);
+
             // What this install thinks of them, when it has an opinion. The list is now everyone
             // met rather than only everyone rated, so most rows have no arrow - and the ones that
             // do are the trace that rating someone worked, which is why the rating history exists.
@@ -430,10 +535,22 @@ namespace PfPresets
                 // offset, whatever either of them says.
                 const float timeColumn = 52f;
                 const float menuColumn = 26f;
+
+                // The community score gets a column of its own, left of your own vote. The two are
+                // different facts - what everyone thinks, and what you did about it - and the whole
+                // point of putting the first one here is that reading it should not mean opening
+                // forty profiles.
+                const float scoreColumn = 46f;
+
                 float timeRight = rightEdge - menuColumn;
                 float arrowLeft = timeRight - timeColumn - 22f;
+                float scoreLeft = arrowLeft - scoreColumn - 6f;
 
-                DrawRowIdentity(entry.JobId, entry.Name, entry.World, start.X, arrowLeft - 8f);
+                DrawRowIdentity(entry.JobId, entry.Name, entry.World, start.X, scoreLeft - 8f);
+
+                ImGui.SameLine();
+                ImGui.SetCursorScreenPos(new Vector2(scoreLeft, start.Y));
+                DrawScoreColumn(entry.Identity, score, scoreColumn, onScreen);
 
                 ImGui.SameLine();
                 ImGui.SetCursorScreenPos(new Vector2(arrowLeft, start.Y));
@@ -483,6 +600,66 @@ namespace PfPresets
                     clickedProfile = entry.Identity;
             }, contextMenu: () => DrawPlayerMenuItems(entry.Identity),
                height: RecentRowHeight());
+        }
+
+        /// <summary>
+        /// The community's weighted score, right-aligned in a fixed column.
+        ///
+        /// Takes the rating it was handed rather than fetching one, which is the whole difference
+        /// between this and <see cref="DrawRatingChip"/>: that one reads and requests together,
+        /// which is right for a party of eight and would make this list's length its request size.
+        ///
+        /// Blank, not zero and not a dash, for the many people nobody has voted on. A column of
+        /// dashes down a list of forty looks like data and is not, and a "0" is a real score that
+        /// somebody could have earned.
+        /// </summary>
+        private void DrawScoreColumn(CharacterIdentity who, PlayerRating? rating, float column,
+            bool onScreen)
+        {
+            ImGui.AlignTextToFramePadding();
+
+            if (rating is { Gated: false, OptedOut: false } && rating.Count > 0)
+            {
+                bool up = rating.Score >= 0;
+                int shown = Math.Abs(rating.Score);
+
+                float used = ArrowCountWidth(shown);
+                if (used < column)
+                {
+                    ImGui.Dummy(new Vector2(column - used, 0));
+                    ImGui.SameLine(0, 0);
+                }
+
+                DrawArrowCount(up ? FontAwesomeIcon.CaretUp : FontAwesomeIcon.CaretDown, shown,
+                    NetScoreColor(rating.Score));
+
+                if (ImGui.IsItemHovered())
+                {
+                    PaddedTooltip($"{who}\n\n"
+                        + $"Weighted score {rating.Score}\n"
+                        + $"{rating.Upvotes} up, {rating.Downvotes} down, {rating.Count} votes");
+                }
+                return;
+            }
+
+            // The dots are worth the space only while an answer is actually coming. Off screen
+            // nothing was ever asked, so a row scrolled past with no score is settled rather than
+            // pending, and drawing "···" on it would promise something that isn't on its way.
+            bool loading = rating == null && onScreen && Ratings?.IsLoading(who) == true;
+            if (!loading)
+            {
+                ImGui.Dummy(new Vector2(column, 0));
+                return;
+            }
+
+            const string dots = "···";
+            float tw = ImGui.CalcTextSize(dots).X;
+            if (tw < column)
+            {
+                ImGui.Dummy(new Vector2(column - tw, 0));
+                ImGui.SameLine(0, 0);
+            }
+            ImGui.TextColored(TextMuted, dots);
         }
 
         /// <summary>
@@ -878,6 +1055,7 @@ namespace PfPresets
             ratingSearchSuggestFor = ratingSearchInput;
             ratingSearchSuggestions.Clear();
             ratingSearchError = string.Empty;
+            profileScrollPending = true;
         }
 
         /// <summary>
@@ -927,6 +1105,7 @@ namespace PfPresets
             }
 
             ratingSearchTarget = new CharacterIdentity(name, world);
+            profileScrollPending = true;
         }
 
         /// <summary>

@@ -96,10 +96,7 @@ namespace PfPresets
                 var backSize = new Vector2(110, ButtonHeight);
                 Vector2 backPos = ImGui.GetCursorScreenPos();
                 if (DrawPrimaryButton("##ClearSearch", backSize))
-                {
-                    ratingSearchTarget = null;
-                    ratingSearchInput = string.Empty;
-                }
+                    CloseProfile();
                 // Drawn by hand so the arrow comes from the icon font, which a plain button label
                 // cannot reach.
                 DrawIconLabelLeft(FontAwesomeIcon.ArrowLeft, "Back", backPos, backSize, OnAccent);
@@ -188,8 +185,26 @@ namespace PfPresets
             // words with the icon nowhere on the card, which is the one piece of identity the game
             // itself always draws as a picture.
             var info = Ratings?.CharacterFor(who);
-            bool hasJob = info != null && !string.IsNullOrWhiteSpace(info.JobName);
+            uint jobId = info?.JobId ?? 0;
+            string jobName = info?.JobName ?? string.Empty;
+            int jobLevel = info?.JobLevel ?? 0;
 
+            // Your own card reads the game instead of the network. A locally-known job carries the
+            // id and nothing else (see CharacterFor), so on the one character we can always answer
+            // for, the line showed the world and stopped - no job, no level, and no lookup coming
+            // that would fill them in.
+            if (IsSelf(who))
+            {
+                var (liveJob, liveLevel) = pfAutomation.GetLocalJobAndLevel();
+                if (liveJob != 0)
+                {
+                    jobId = liveJob;
+                    jobName = JobData.FindById(liveJob)?.Name ?? jobName;
+                    jobLevel = liveLevel;
+                }
+            }
+
+            bool hasJob = jobId != 0 && !string.IsNullOrWhiteSpace(jobName);
 
             float iconSize;
             using (UiBodyFont.Push())
@@ -197,14 +212,16 @@ namespace PfPresets
 
             if (hasJob)
             {
-                DrawJobIconInline(info!.JobId, iconSize);
+                DrawJobIconInline(jobId, iconSize);
                 ImGui.SameLine(0, 7);
                 room -= iconSize + 7f;
             }
 
+            // "Level 100 Gunbreaker" rather than "Lv100 Gunbreaker": this is the only prose on the
+            // card, and the abbreviation was saving four characters on a line with room to spare.
             string job = !hasJob
                 ? string.Empty
-                : info!.JobLevel > 0 ? $" · Lv{info.JobLevel} {info.JobName}" : $" · {info.JobName}";
+                : jobLevel > 0 ? $" · Level {jobLevel} {jobName}" : $" · {jobName}";
 
             using (UiBodyFont.Push())
             {

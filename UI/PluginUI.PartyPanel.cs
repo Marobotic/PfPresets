@@ -1113,7 +1113,20 @@ namespace PfPresets
 
             Vector2 start = ImGui.GetCursorScreenPos();
 
-            DrawJobIconInline(member.JobId, iconSize, member.IsOffline);
+            // Someone who logged out, teleported away or otherwise stopped being visible to the
+            // client reports no job at all, and the "?" that put in the icon's place said "we never
+            // knew what they play" about a person we had just finished a duty with. The last job we
+            // saw on them stands in until the game hands us a live one again - a job from ten
+            // minutes ago is a far better answer than no answer, and the hover says which it is.
+            uint jobId = member.JobId;
+            bool rememberedJob = false;
+            if (jobId == 0 && identity != null)
+            {
+                jobId = Players?.JobFor(identity) ?? 0;
+                rememberedJob = jobId != 0;
+            }
+
+            DrawJobIconInline(jobId, iconSize, member.IsOffline, rememberedJob);
             ImGui.SameLine(0, 7);
 
             // The progress column is measured before the name is fitted rather than drawn after

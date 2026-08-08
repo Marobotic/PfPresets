@@ -46,8 +46,10 @@ namespace PfPresets
 
             var buttonSize = new Vector2(SaveListingButtonW, SaveListingButtonH);
 
-            // Sit just below the game's window, left-aligned with it.
-            ImGui.SetNextWindowPos(new Vector2(addonPos.X, addonPos.Y + addonSize.Y + 4f), ImGuiCond.Always);
+            // Sit just below the game's window, left-aligned with it. The rectangle is in the game's
+            // own coordinates, so it goes through GameToScreen before ImGui is told about it.
+            ImGui.SetNextWindowPos(
+                GameToScreen(new Vector2(addonPos.X, addonPos.Y + addonSize.Y + 4f)), ImGuiCond.Always);
             ImGui.SetNextWindowSize(buttonSize, ImGuiCond.Always);
 
             // Fully transparent host window: no background, no border, no padding, so only the
