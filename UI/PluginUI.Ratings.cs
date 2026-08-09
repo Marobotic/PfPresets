@@ -536,49 +536,30 @@ namespace PfPresets
                 const float timeColumn = 52f;
                 const float menuColumn = 26f;
 
-                // The community score gets a column of its own, left of your own vote. The two are
-                // different facts - what everyone thinks, and what you did about it - and the whole
-                // point of putting the first one here is that reading it should not mean opening
-                // forty profiles.
+                // The community score's column, and the last thing on the row before the time.
+                //
+                // Your own vote used to have a caret of its own immediately right of this one, and
+                // the pair did not survive contact with real data. Both are carets, both take their
+                // green from the same #4ea36b - AccentGreen is literally defined as Positive - and
+                // they sat six pixels apart, so the only thing telling them apart was that one had
+                // a number after it and one did not. Nobody reads a difference that fine, and while
+                // the score column was blank on most rows the collision stayed invisible; as votes
+                // accumulated and the scores filled in, every rated row grew a second green arrow.
+                //
+                // What everyone thinks is the fact worth scanning down a list. What you did about
+                // them is one person's opinion you already know, so it moves to this column's
+                // tooltip and stays on their profile card.
                 const float scoreColumn = 46f;
+                const float scoreGap = 16f;
 
                 float timeRight = rightEdge - menuColumn;
-                float arrowLeft = timeRight - timeColumn - 22f;
-                float scoreLeft = arrowLeft - scoreColumn - 6f;
+                float scoreLeft = timeRight - timeColumn - scoreGap - scoreColumn;
 
                 DrawRowIdentity(entry.JobId, entry.Name, entry.World, start.X, scoreLeft - 8f);
 
                 ImGui.SameLine();
                 ImGui.SetCursorScreenPos(new Vector2(scoreLeft, start.Y));
-                DrawScoreColumn(entry.Identity, score, scoreColumn, onScreen);
-
-                ImGui.SameLine();
-                ImGui.SetCursorScreenPos(new Vector2(arrowLeft, start.Y));
-
-                if (rated == null)
-                {
-                    // Met but never rated, which is now the common case. Left blank rather than
-                    // given a placeholder: a dot in every row would be noise standing in for
-                    // nothing, and the column is only interesting where it says something.
-                }
-                else if (rated.Direction == VoteDirection.Unknown)
-                {
-                    ImGui.AlignTextToFramePadding();
-                    ImGui.TextColored(TextMuted, "\u00b7");
-                    if (ImGui.IsItemHovered())
-                        PaddedTooltip("Rated, but this install no longer remembers which way.");
-                }
-                else
-                {
-                    bool up = rated.Direction == VoteDirection.Up;
-                    ImGui.PushFont(UiBuilder.IconFont);
-                    ImGui.AlignTextToFramePadding();
-                    ImGui.TextColored(up ? AccentGreen : AccentRed,
-                        (up ? FontAwesomeIcon.CaretUp : FontAwesomeIcon.CaretDown).ToIconString());
-                    ImGui.PopFont();
-                    if (ImGui.IsItemHovered())
-                        PaddedTooltip($"You rated them {(up ? "up" : "down")} {Ago(rated.RatedUtc)}.");
-                }
+                DrawScoreColumn(entry.Identity, score, scoreColumn, onScreen, rated);
 
                 ImGui.SameLine();
                 float agoW = ImGui.CalcTextSize(ago).X;
@@ -613,8 +594,10 @@ namespace PfPresets
         /// dashes down a list of forty looks like data and is not, and a "0" is a real score that
         /// somebody could have earned.
         /// </summary>
+        /// <param name="rated">This install's own vote on them, when there is one. It has no mark
+        /// of its own on the row any more, so it rides along in this column's tooltip.</param>
         private void DrawScoreColumn(CharacterIdentity who, PlayerRating? rating, float column,
-            bool onScreen)
+            bool onScreen, RatingGiven? rated = null)
         {
             ImGui.AlignTextToFramePadding();
 
@@ -637,7 +620,8 @@ namespace PfPresets
                 {
                     PaddedTooltip($"{who}\n\n"
                         + $"Weighted score {rating.Score}\n"
-                        + $"{rating.Upvotes} up, {rating.Downvotes} down, {rating.Count} votes");
+                        + $"{rating.Upvotes} up, {rating.Downvotes} down, {rating.Count} votes"
+                        + OwnVoteLine(rated));
                 }
                 return;
             }
@@ -660,6 +644,25 @@ namespace PfPresets
                 ImGui.SameLine(0, 0);
             }
             ImGui.TextColored(TextMuted, dots);
+        }
+
+        /// <summary>
+        /// The "and here is what you did about them" line appended to the score tooltip.
+        ///
+        /// Empty when this install never voted, rather than a line saying so. The tooltip is opened
+        /// to read the score; "you have not rated them" on every unrated row is a sentence that
+        /// never changes and never helps.
+        /// </summary>
+        private string OwnVoteLine(RatingGiven? rated)
+        {
+            if (rated == null)
+                return string.Empty;
+
+            if (rated.Direction == VoteDirection.Unknown)
+                return "\n\nYou rated them, but this install no longer remembers which way.";
+
+            bool up = rated.Direction == VoteDirection.Up;
+            return $"\n\nYou rated them {(up ? "up" : "down")} {Ago(rated.RatedUtc)}.";
         }
 
         /// <summary>

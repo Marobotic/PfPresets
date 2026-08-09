@@ -32,6 +32,7 @@ namespace PfPresets
                 "A listing you're viewing now shows the leader's community score beside their name, so you see it before joining rather than after. Turn it off under Settings → Party Finder.",
                 "Blacklisting from the player menu has been removed. The game only lets a plugin blacklist someone in narrow circumstances, and the result was an option that often couldn't do what it offered - blacklisting is better done from the game's own Contact List or blacklist window, where it always works.",
                 "Profile cards lead with the job icon beside the name, at the name's own size, and the line below is left to the world, level and job.",
+                "Recent players shows the community score on its own. Your own vote sat beside it as a second arrow in the same green, so a player you had rated appeared to have two; it now reads in the score's tooltip.",
                 "Auto-translate phrases in a listing's comment now read as the phrase, in the game's green and red brackets, instead of as blank space or stray characters.",
                 "A preset saved from a listing that used auto-translate posts that phrase back exactly as it was, rather than replacing it with ordinary text.",
                 "The comment counter now counts bytes, which is what the game's limit actually measures: symbols and auto-translate cost three bytes each, so a comment can be full well before it looks it.",
