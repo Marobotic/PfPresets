@@ -27,7 +27,7 @@ namespace PfPresets
 
         private int refreshCount = 0;
         private double minutesElapsed = 0;
-        private string? previousCommentString = null;
+        private byte[]? previousCommentBytes = null;
         private bool isRefreshExecuting = false;
 
         /// <summary>Total time the current listing has been kept alive by the refresher, in hours.
@@ -147,7 +147,7 @@ namespace PfPresets
             {
                 // Recruitment ended (or the feature was turned off): the next listing starts with a
                 // fresh interval and a fresh duration budget.
-                previousCommentString = null;
+                previousCommentBytes = null;
                 refreshCount = 0;
                 minutesElapsed = 0;
                 hoursRecruiting = 0;
@@ -257,15 +257,24 @@ namespace PfPresets
                         return false;
                     }
 
-                    string comment = agent->StoredRecruitmentInfo.CommentString;
-                    if (previousCommentString != null && comment != previousCommentString && string.IsNullOrWhiteSpace(comment))
+                    // Kept as bytes rather than as a string. The comment buffer is SeString, so a
+                    // listing carrying an auto-translate phrase used to lose it the first time the
+                    // refresher stashed and restored it - the round trip through a C# string
+                    // decoded the payload to replacement characters and wrote those back.
+                    byte* commentBuffer = (byte*)&agent->StoredRecruitmentInfo + OffsetComment;
+                    byte[] comment = CommentText.RawBytes(commentBuffer, MaxCommentLength + 1);
+                    bool cleared = comment.Length == 0 ||
+                        string.IsNullOrWhiteSpace(CommentText.Decode(comment));
+
+                    if (previousCommentBytes != null && cleared)
                     {
-                        pluginLog.Information($"[AutoRefresher] Comment was cleared out, reapplying: '{previousCommentString}'");
-                        agent->StoredRecruitmentInfo.CommentString = previousCommentString;
+                        pluginLog.Information(
+                            $"[AutoRefresher] Comment was cleared out, reapplying: '{CommentText.Decode(previousCommentBytes)}'");
+                        AtkHelpers.SetFixedBytes(commentBuffer, previousCommentBytes, MaxCommentLength + 1);
                     }
-                    else if (!string.IsNullOrWhiteSpace(comment))
+                    else if (!cleared)
                     {
-                        previousCommentString = comment;
+                        previousCommentBytes = comment;
                     }
 
                     openPartyFinder(agent, playerState.ContentId);

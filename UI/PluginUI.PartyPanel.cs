@@ -206,11 +206,7 @@ namespace PfPresets
                 // much width the action column reserves, and that has to be the same on every row
                 // or the columns left of it stop lining up. Whether the buttons are actually
                 // drawn is decided per row.
-                // The game numbers party slots from 1 in the order the party list shows them,
-                // which is the order being iterated here - that number is the only handle the
-                // blacklist command has on a person.
-                DrawPartyMemberRow(member, allowKick, width, originX, isSelf, dutyName, dutyRowId,
-                    partySlot: players.IndexOf(member) + 1);
+                DrawPartyMemberRow(member, allowKick, width, originX, isSelf, dutyName, dutyRowId);
             }
 
             // Jobs observed above are written down at most every twenty seconds, not per frame.
@@ -1057,8 +1053,7 @@ namespace PfPresets
         /// <summary>One party member. Shares the list-row primitive with Recent players, so the
         /// two lists match in height, padding and hover behaviour by construction.</summary>
         private void DrawPartyMemberRow(PartyMemberInfo member, bool allowKick, float width,
-            float? originX, bool isSelf = false, string? dutyName = null, uint dutyRowId = 0,
-            int partySlot = 0)
+            float? originX, bool isSelf = false, string? dutyName = null, uint dutyRowId = 0)
         {
             var identity = ToIdentity(member);
             bool canKick = allowKick && pfAutomation.IsPartyLeader();
@@ -1084,9 +1079,7 @@ namespace PfPresets
                 contextMenu: identity == null
                     ? null
                     : () => DrawPlayerMenuItems(identity, dutyName, dutyRowId,
-                        kick: isSelf || !canKick ? null : member,
-                        member: isSelf ? null : member,
-                        partySlot: isSelf ? 0 : partySlot));
+                        kick: isSelf || !canKick ? null : member));
         }
 
         /// <summary>Room reserved at the end of every row for the menu button. Constant whether or
@@ -1169,7 +1162,7 @@ namespace PfPresets
 
             ImGui.SameLine();
             ImGui.SetCursorScreenPos(new Vector2(blockLeft, start.Y));
-            DrawRowKebab(rightEdge, btnH, "Report, kick, blacklist");
+            DrawRowKebab(rightEdge, btnH, "Report, kick");
         }
     }
 }

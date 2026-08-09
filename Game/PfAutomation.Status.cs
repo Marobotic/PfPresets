@@ -280,7 +280,9 @@ namespace PfPresets
                     IsLeader = true,
                     DutyName = ownDutyName,
                     DutyRowId = info->SelectedDutyId,
-                    Comment = info->CommentString ?? string.Empty,
+                    // Read as SeString, not as text: CommentString decodes an auto-translate
+                    // phrase's payload bytes as if they were characters and hands back junk.
+                    Comment = CommentText.Decode((byte*)info + OffsetComment, MaxCommentLength + 1),
                     Filled = filled,
                     Open = BuildOpenSeatsFromMasks(SlotMasksOf(info), total, filled.Count),
                     SlotsTotal = total,
@@ -331,7 +333,7 @@ namespace PfPresets
                 LeaderName = viewed.LeaderString.ToString() ?? string.Empty,
                 DutyName = viewedDutyName,
                 DutyRowId = viewed.DutyId,
-                Comment = viewed.CommentString.ToString() ?? string.Empty,
+                Comment = CommentText.Decode(viewed.Comment),
                 Filled = filled,
                 Open = BuildOpenSeatsFromMasks(viewedMasks, viewedTotal, viewed.SlotsFilled),
                 SlotsTotal = viewedTotal,
@@ -378,38 +380,6 @@ namespace PfPresets
             {
                 // A status read must never throw into the draw loop; not knowing means the button
                 // stays "Leave Party", which is the safe answer either way.
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Whether this character's account is on the game's blacklist.
-        ///
-        /// Read from the client's own proxy rather than from anything the plugin stores, so it is
-        /// the same answer the game would give and it stays right when the list is changed
-        /// somewhere else entirely - the blacklist window, another character, another PC.
-        ///
-        /// ContentId identifies the character; the account id is not something a plugin can see for
-        /// other players, and passing 0 is how the proxy is asked to match on content id alone.
-        /// </summary>
-        public unsafe bool IsBlacklisted(ulong contentId)
-        {
-            if (contentId == 0)
-                return false;
-
-            try
-            {
-                var proxy = InfoProxyBlacklist.Instance();
-                if (proxy == null)
-                    return false;
-
-                return proxy->GetBlockResultType(0, contentId)
-                    != InfoProxyBlacklist.BlockResultType.NotBlocked;
-            }
-            catch (Exception)
-            {
-                // Never throw into a draw loop over a badge. Not knowing reads as "not blocked",
-                // which shows the action rather than hiding it - the safe way to be wrong here.
                 return false;
             }
         }

@@ -84,15 +84,23 @@ namespace PfPresets
         /// it run under the card border - ImGui clips instead of wrapping, so an overlong comment
         /// used to simply lose its tail with no sign there was more.
         /// </summary>
-        private static List<string> WrapComment(string comment, float width)
+        private static List<string> WrapComment(string comment, float width) =>
+            WrapCommentToLines(comment, width, CommentMaxLines);
+
+        /// <summary>
+        /// <see cref="WrapComment"/> with the line cap as an argument, so the preset rows - which
+        /// wrap the same text to their own width - can share the one piece of wrapping logic
+        /// rather than measure it a second way and disagree about the height.
+        /// </summary>
+        private static List<string> WrapCommentToLines(string comment, float width, int maxLines)
         {
             var lines = new List<string>();
-            if (string.IsNullOrWhiteSpace(comment) || width <= 0f)
+            if (string.IsNullOrWhiteSpace(comment) || width <= 0f || maxLines <= 0)
                 return lines;
 
             string rest = comment.Trim();
 
-            while (rest.Length > 0 && lines.Count < CommentMaxLines)
+            while (rest.Length > 0 && lines.Count < maxLines)
             {
                 if (ImGui.CalcTextSize(rest).X <= width)
                 {
@@ -101,7 +109,7 @@ namespace PfPresets
                 }
 
                 // Last line we are allowed: take what fits, with an ellipsis.
-                if (lines.Count == CommentMaxLines - 1)
+                if (lines.Count == maxLines - 1)
                 {
                     lines.Add(Fit(rest, width));
                     break;
@@ -503,7 +511,7 @@ namespace PfPresets
 
                 foreach (string commentLine in commentLines)
                 {
-                    ClippedText(dl, commentLine, left, right, y, line, TextPrimary);
+                    ClippedCommentLine(dl, commentLine, left, right, y, line, TextPrimary);
                     y += line;
                 }
 

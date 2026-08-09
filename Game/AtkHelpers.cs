@@ -120,10 +120,17 @@ namespace PfPresets
             ClickDropDownToggle(dropdown);
         }
 
-        /// <summary>Writes a UTF-8 string into a fixed-size, null-terminated buffer.</summary>
-        public static void SetFixedString(byte* dest, string value, int maxLength)
+        /// <summary>
+        /// Writes raw bytes into a fixed-size, null-terminated buffer.
+        ///
+        /// Bytes rather than a string, and deliberately the only way in: these buffers hold
+        /// SeString, not text. An auto-translate phrase is a payload no string can round-trip, so
+        /// a convenient string overload here would quietly destroy one - which is exactly what the
+        /// comment path used to do. Callers encode, and own the truncation: cutting a byte array
+        /// blind can split a character or a payload in half.
+        /// </summary>
+        public static void SetFixedBytes(byte* dest, ReadOnlySpan<byte> bytes, int maxLength)
         {
-            var bytes = Encoding.UTF8.GetBytes(value);
             int len = Math.Min(bytes.Length, maxLength - 1);
             for (int i = 0; i < len; i++)
                 dest[i] = bytes[i];

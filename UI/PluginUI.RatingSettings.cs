@@ -94,6 +94,11 @@ namespace PfPresets
                 "Puts a button under a listing you're viewing that keeps it as one of your "
                 + "presets. Off leaves listings untouched.");
 
+            DrawSetting("Leader's score on a listing", () => config.ShowListingLeaderRating,
+                v => config.ShowListingLeaderRating = v,
+                "Shows the listing leader's community score beside their name while you're "
+                + "viewing it, so you see it before joining rather than after. Needs ratings on.");
+
             DrawSetting("Auto-refresh listing", () => config.AutoRefresherEnabled,
                 v => config.AutoRefresherEnabled = v,
                 IsRecruitmentRefresherActive()

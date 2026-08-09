@@ -209,14 +209,17 @@ namespace PfPresets
             float twoLineHeight = ImGui.GetTextLineHeight() * 2 + ImGui.GetStyle().FramePadding.Y * 2;
             ImGui.InputTextMultiline("##Comment", ref editorComment, PfAutomation.MaxCommentLength + 1, new Vector2(-1, twoLineHeight), (ImGuiInputTextFlags)0x01000000);
             PopFramedInput();
-            if (editorComment.Length > PfAutomation.MaxCommentLength)
-                editorComment = editorComment.Substring(0, PfAutomation.MaxCommentLength);
-            int charCount = editorComment.Length;
-            ImGui.TextColored(charCount >= PfAutomation.MaxCommentLength ? AccentRed : TextMuted, $"{charCount}/{PfAutomation.MaxCommentLength}");
+            // Counted in bytes, because that is what the game's buffer holds. Characters overstate
+            // what fits by up to three times: every symbol in the game's set, and every character
+            // of an auto-translate phrase, is three bytes in UTF-8.
+            editorComment = CommentText.TruncateToBytes(editorComment, PfAutomation.MaxCommentLength);
+            int byteCount = CommentText.ByteLength(editorComment);
+            ImGui.TextColored(byteCount >= PfAutomation.MaxCommentLength ? AccentRed : TextMuted,
+                $"{byteCount}/{PfAutomation.MaxCommentLength} bytes");
             ImGui.SameLine();
             ImGui.TextColored(TextSecondary, " | Wrapped Preview:");
             ImGui.Indent(10);
-            ImGui.TextColored(TextMuted, WrapText(editorComment, 38));
+            DrawCommentLines(WrapText(editorComment, 38).Split('\n'), TextMuted);
             ImGui.Unindent(10);
             ImGui.Dummy(new Vector2(0, 6));
 

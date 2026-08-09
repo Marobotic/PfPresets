@@ -41,8 +41,27 @@ namespace PfPresets
         public int ObjectiveId { get; set; } = 0;
 
         // ── Comment ───────────────────────────────────────────────
-        /// <summary>Free-text comment, max 191 characters (192-byte buffer in game memory).</summary>
+        /// <summary>
+        /// The comment as text. Auto-translate phrases appear here expanded, wrapped in the game's
+        /// bracket glyphs - readable, searchable, and what the UI draws.
+        ///
+        /// The budget is 192 <em>bytes</em> in game memory, not 192 characters: the game's symbols
+        /// are three bytes each in UTF-8, so this can be well under 191 characters and still be full.
+        /// </summary>
         public string Comment { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The comment's original SeString bytes, base64, when this preset was built from a real
+        /// listing. Null for anything typed in the plugin.
+        ///
+        /// An auto-translate phrase is a payload, not text, and the phrase text alone cannot be
+        /// turned back into one - so re-posting a preset saved off such a listing would have
+        /// replaced a real, self-translating phrase with literal bracket characters. Keeping the
+        /// bytes means the listing goes back up exactly as it was found. They are used only while
+        /// <see cref="Comment"/> still matches what they decode to; edit the text and the plugin
+        /// falls back to posting the text.
+        /// </summary>
+        public string? CommentRaw { get; set; } = null;
 
         // ── Role Slots ────────────────────────────────────────────
         /// <summary>The 8 role slots of a normal party.</summary>
@@ -88,9 +107,9 @@ namespace PfPresets
         /// Skips the note if it wouldn't fit rather than truncating it to nonsense, and skips it if
         /// the comment already mentions it - people often type it themselves.
         /// </summary>
-        public string ResolveComment(int maxLength)
+        public string ResolveComment(int maxBytes)
         {
-            string comment = Comment ?? string.Empty;
+            string comment = CommentText.TruncateToBytes(Comment ?? string.Empty, maxBytes);
 
             if (!AllowDoubleCaster || !NoteDoubleCasterInComment)
                 return comment;
@@ -101,7 +120,64 @@ namespace PfPresets
             string separator = comment.Length > 0 ? " || " : string.Empty;
             string withNote = comment + separator + DoubleCasterNote;
 
-            return withNote.Length <= maxLength ? withNote : comment;
+            return CommentText.ByteLength(withNote) <= maxBytes ? withNote : comment;
+        }
+
+        /// <summary>
+        /// The comment as bytes for the game's buffer, preserving auto-translate payloads when the
+        /// preset came from a real listing and the text has not been edited since.
+        ///
+        /// This is what the apply path writes. <see cref="ResolveComment"/> remains the text form,
+        /// for display and for the places that can only take a string.
+        /// </summary>
+        public byte[] ResolveCommentBytes(int maxBytes)
+        {
+            byte[] body = OriginalCommentBytes(maxBytes)
+                ?? System.Text.Encoding.UTF8.GetBytes(
+                       CommentText.TruncateToBytes(Comment ?? string.Empty, maxBytes));
+
+            if (!AllowDoubleCaster || !NoteDoubleCasterInComment)
+                return body;
+
+            if ((Comment ?? string.Empty).Contains("caster", StringComparison.OrdinalIgnoreCase))
+                return body;
+
+            byte[] note = System.Text.Encoding.UTF8.GetBytes(
+                (body.Length > 0 ? " || " : string.Empty) + DoubleCasterNote);
+
+            // Skip the note rather than truncate it to nonsense - and never at the cost of cutting
+            // the comment, which here could mean slicing a payload in half.
+            if (body.Length + note.Length > maxBytes)
+                return body;
+
+            var combined = new byte[body.Length + note.Length];
+            body.CopyTo(combined, 0);
+            note.CopyTo(combined, body.Length);
+            return combined;
+        }
+
+        /// <summary>
+        /// The saved listing bytes, but only while they still describe <see cref="Comment"/>.
+        /// Any edit to the text makes them stale, and posting stale bytes would silently ignore
+        /// what the user just typed.
+        /// </summary>
+        private byte[]? OriginalCommentBytes(int maxBytes)
+        {
+            if (string.IsNullOrEmpty(CommentRaw))
+                return null;
+
+            try
+            {
+                byte[] bytes = Convert.FromBase64String(CommentRaw);
+                if (bytes.Length == 0 || bytes.Length > maxBytes)
+                    return null;
+
+                return CommentText.Decode(bytes) == (Comment ?? string.Empty) ? bytes : null;
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
         }
         public bool RemoveRoleRestrictions { get; set; } = false;
         public bool OnePlayerPerJob { get; set; } = false;

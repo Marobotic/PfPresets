@@ -160,7 +160,14 @@ namespace PfPresets
             p.LastUsedAt = DateTime.MinValue;
 
             p.Name = string.IsNullOrWhiteSpace(p.Name) ? "Imported Preset" : Truncate(p.Name.Trim(), 64);
-            p.Comment = Truncate(p.Comment ?? string.Empty, PfAutomation.MaxCommentLength);
+            // Bytes, matching the game's buffer - see CommentText.
+            p.Comment = CommentText.TruncateToBytes(p.Comment ?? string.Empty, PfAutomation.MaxCommentLength);
+
+            // Only bounded here. Whether an imported preset's payload bytes are usable at all is
+            // decided when it is posted, where they count for nothing unless they still decode to
+            // exactly the comment above - so a pasted share code cannot smuggle in a listing that
+            // reads as one thing and posts another.
+            p.CommentRaw = p.CommentRaw is { Length: > 0 and <= 512 } raw ? raw : null;
 
             p.DutyCategoryId = Math.Clamp(p.DutyCategoryId, 0, DutyCategories.Names.Length - 1);
             p.DutyCategoryName = string.IsNullOrWhiteSpace(p.DutyCategoryName)

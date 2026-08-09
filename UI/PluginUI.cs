@@ -125,6 +125,7 @@ namespace PfPresets
 #if PFP_RATINGS
                 DrawRatingPrompt();
                 DrawReportDialog();
+                DrawListingLeaderRatingOverlay();
 #endif
             }
             finally

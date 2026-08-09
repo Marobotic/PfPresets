@@ -175,15 +175,8 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 6));
 
-            float room = ImGui.GetContentRegionAvail().X - CardPad;
-            using (UiPersonFont.Push())
-                ImGui.TextColored(Ink, Fit(DisplayName(who.Name), room));
-
-            ImGui.Dummy(new Vector2(0, 4));
-
-            // World and job on one line, led by the job's own icon. The line said "Warrior" in
-            // words with the icon nowhere on the card, which is the one piece of identity the game
-            // itself always draws as a picture.
+            // Resolved before anything is drawn, because the job's icon now leads the name rather
+            // than the line below it.
             var info = Ratings?.CharacterFor(who);
             uint jobId = info?.JobId ?? 0;
             string jobName = info?.JobName ?? string.Empty;
@@ -206,16 +199,34 @@ namespace PfPresets
 
             bool hasJob = jobId != 0 && !string.IsNullOrWhiteSpace(jobName);
 
-            float iconSize;
-            using (UiBodyFont.Push())
-                iconSize = ImGui.GetTextLineHeight() + 4f;
+            // The job icon at the name's own size, beside the name.
+            //
+            // It used to sit small at the head of the world line, where it was a second, quieter
+            // statement of something the same line already said in words. Beside the name it is the
+            // thing the game itself uses to say who somebody is, at the size that reading a name
+            // happens at - and the line below is left to be prose.
+            //
+            // Sized off the person font's line height, not a constant: the icon has to match
+            // whatever the name is set in, and a fixed number would only be right at one size. The
+            // draw happens inside the same font push so that the abbreviation fallback, for a job
+            // whose icon won't load, comes out just as large.
+            float room = ImGui.GetContentRegionAvail().X - CardPad;
 
-            if (hasJob)
+            using (UiPersonFont.Push())
             {
-                DrawJobIconInline(jobId, iconSize);
-                ImGui.SameLine(0, 7);
-                room -= iconSize + 7f;
+                float nameHeight = ImGui.GetTextLineHeight();
+
+                if (hasJob)
+                {
+                    DrawJobIconInline(jobId, nameHeight);
+                    ImGui.SameLine(0, 8);
+                    room -= nameHeight + 8f;
+                }
+
+                ImGui.TextColored(Ink, Fit(DisplayName(who.Name), room));
             }
+
+            ImGui.Dummy(new Vector2(0, 4));
 
             // "Level 100 Gunbreaker" rather than "Lv100 Gunbreaker": this is the only prose on the
             // card, and the abbreviation was saving four characters on a line with room to spare.
@@ -226,7 +237,8 @@ namespace PfPresets
             using (UiBodyFont.Push())
             {
                 ImGui.AlignTextToFramePadding();
-                ImGui.TextColored(Dim, Fit($"@{who.World}{job}", room));
+                ImGui.TextColored(Dim,
+                    Fit($"@{who.World}{job}", ImGui.GetContentRegionAvail().X - CardPad));
             }
 
             ImGui.Dummy(new Vector2(0, 16));

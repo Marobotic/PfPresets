@@ -679,8 +679,7 @@ namespace PfPresets
         /// <param name="kick">The party member this row stands for, when kicking them is something
         /// that can happen from here. Null everywhere else, which is most places.</param>
         private void DrawPlayerMenuItems(CharacterIdentity who, string? dutyName = null,
-            uint dutyRowId = 0, PartyMemberInfo? kick = null,
-            PartyMemberInfo? member = null, int partySlot = 0)
+            uint dutyRowId = 0, PartyMemberInfo? kick = null)
         {
             if (ImGui.Selectable("  View profile"))
                 OpenProfile(who);
@@ -738,8 +737,6 @@ namespace PfPresets
                 }
             }
 
-            DrawBlacklistMenuItem(who, member, partySlot);
-
             ImGui.Separator();
 
             // Omitted rather than disabled when FFLogs has no region for their world: a greyed-out
@@ -751,98 +748,6 @@ namespace PfPresets
                 Dalamud.Utility.Util.OpenLink(CharacterLinks.Tomestone(who.Name, who.World));
             if (ImGui.Selectable("  Lodestone"))
                 Dalamud.Utility.Util.OpenLink(CharacterLinks.LodestoneSearch(who.Name, who.World));
-        }
-
-        /// <summary>
-        /// The game's blacklist, not one of ours.
-        ///
-        /// A list kept inside the plugin blocks nothing: it cannot stop a tell, a party invite or a
-        /// shout, and it vanishes with the plugin. The game's blacklist does all of that and
-        /// outlives us, so this drives that and keeps no list of its own.
-        ///
-        /// It can only be offered for someone in the party. Inside a duty that goes through the
-        /// game's command, which takes their party slot; outside one the party is usually
-        /// cross-world, where no placeholder resolves, and it is driven through the Contacts window
-        /// instead - the same right-click a person would use by hand.
-        ///
-        /// A player you are merely looking at in Recent players is in neither, so nothing can be
-        /// pointed at them. Rather than pretend, that case opens the blacklist window to finish by
-        /// hand.
-        /// </summary>
-        /// <param name="member">The party member this row stands for, when it is one.</param>
-        /// <param name="partySlot">Their 1-based slot in the party list.</param>
-        private void DrawBlacklistMenuItem(CharacterIdentity who, PartyMemberInfo? member, int partySlot)
-        {
-            // Read from the game every time rather than remembered: the list can be changed in the
-            // blacklist window, on another character or on another PC, and a cached answer would
-            // start lying the moment it was.
-            bool blocked = member != null && pfAutomation.IsBlacklisted(member.Value.ContentId);
-
-            if (blocked)
-            {
-                ImGui.BeginDisabled();
-                ImGui.Selectable("  Blacklisted");
-                ImGui.EndDisabled();
-
-                if (ImGui.IsItemHovered())
-                    PaddedTooltip($"{DisplayName(who.Name)} is on your game blacklist.\n\n"
-                        + "Removing someone is done from the game's own blacklist window.");
-                return;
-            }
-
-            if (member == null || partySlot < 1 || partySlot > 8)
-            {
-                if (ImGui.Selectable("  Open blacklist"))
-                    pfAutomation.OpenGameBlacklist();
-
-                if (ImGui.IsItemHovered())
-                    PaddedTooltip("The game can only blacklist someone in your party or under "
-                        + "your cursor, so this opens its blacklist window instead.");
-                return;
-            }
-
-            if (!ImGui.Selectable("  Blacklist"))
-                return;
-
-            int slot = partySlot;
-            string realName = who.Name;
-            ulong id = member.Value.ContentId;
-            AskConfirm("Blacklist player", $"Blacklist {DisplayName(who.Name)}?",
-                "Yes, blacklist",
-                () => RunBlacklist(slot, realName, id),
-                detail: "Uses the game's own blacklist, which blocks their tells, invites and "
-                    + "chat. It blacklists the account rather than the character, so it covers "
-                    + "their alts too. Undo it from the game's blacklist window.");
-        }
-
-        /// <summary>
-        /// Runs the blacklist and reports what the game was actually able to do.
-        ///
-        /// Worth reporting because it genuinely differs: in a duty the member's slot names them
-        /// outright and it is done before the menu closes, while outside one it is a walk through
-        /// the Contacts window that takes a couple of seconds and can still fail at the end.
-        /// Saying nothing in either case would look like the button did nothing.
-        /// </summary>
-        private void RunBlacklist(int partySlot, string name, ulong contentId)
-        {
-            var outcome = pfAutomation.BlacklistPlayer(partySlot, name, contentId);
-
-            if (outcome == BlacklistAttempt.RunningViaContacts)
-            {
-                // The Contacts window is about to open and click through itself, which is alarming
-                // to watch without a word of warning. The result is printed to chat by the
-                // automation once the game has actually answered.
-                ratingStatusMessage = $"Blacklisting {DisplayName(name)} through Contacts...";
-                ratingStatusExpiresUtc = DateTime.UtcNow.AddSeconds(10);
-            }
-            else if (outcome == BlacklistAttempt.Unreachable)
-            {
-                pfAutomation.OpenGameBlacklist();
-                ImGui.SetClipboardText(name);
-                ratingStatusMessage = $"{DisplayName(name)} isn't nearby - name copied, "
-                    + "add them in the blacklist window.";
-                ratingStatusExpiresUtc = DateTime.UtcNow.AddSeconds(10);
-            }
         }
 
         /// <summary>Shown until the feature is switched on. It states plainly what turning it on

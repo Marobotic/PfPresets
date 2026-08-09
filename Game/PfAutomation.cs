@@ -814,8 +814,12 @@ namespace PfPresets
             // visually correct.
 
             // 1. Comment
+            //
+            // Bytes, not a string: the widget is what the Recruit button reads back, so handing it
+            // text would undo the payload-preserving write that WriteGeneralSettingsToMemory just
+            // made and post literal bracket glyphs instead of a real auto-translate phrase.
             if (addon->CommentTextInput != null)
-                addon->CommentTextInput->SetText(preset.ResolveComment(MaxCommentLength));
+                addon->CommentTextInput->SetText(preset.ResolveCommentBytes(MaxCommentLength));
 
             // 2. Private party passcode
             if (addon->FormPrivatePartyCheckbox != null)
@@ -1147,10 +1151,10 @@ namespace PfPresets
             recruitment->NumberOfSlotsInMainParty = 8;
             recruitment->NumberOfGroups = 1;
 
-            // Comment (192-byte fixed buffer)
-            string comment = preset.ResolveComment(MaxCommentLength);
-            string safeComment = comment.Length > MaxCommentLength ? comment.Substring(0, MaxCommentLength) : comment;
-            AtkHelpers.SetFixedString((byte*)recruitment + OffsetComment, safeComment, MaxCommentLength + 1);
+            // Comment (192-byte fixed buffer, holding SeString rather than plain text - so it is
+            // written as bytes, which is the only way an auto-translate phrase survives the trip).
+            AtkHelpers.SetFixedBytes((byte*)recruitment + OffsetComment,
+                preset.ResolveCommentBytes(MaxCommentLength), MaxCommentLength + 1);
         }
 
         private unsafe void WriteSlotFlagsToMemory(PfPresetData preset)

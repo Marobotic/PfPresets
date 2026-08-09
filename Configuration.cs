@@ -59,6 +59,15 @@ namespace PfPresets
         public bool ShowSaveListingButton { get; set; } = true;
 
         /// <summary>
+        /// Whether a listing you are viewing shows its leader's community score beside their name.
+        ///
+        /// Its own setting rather than part of the party scores, because it is the one score shown
+        /// about somebody you have not met: the party rows describe people you are already with,
+        /// and this one is read while deciding whether to join at all.
+        /// </summary>
+        public bool ShowListingLeaderRating { get; set; } = true;
+
+        /// <summary>
         /// Whether the Recruit footer is showing its settings rather than just the live status bar.
         ///
         /// Remembered, because it is a preference about how much room the footer is allowed to

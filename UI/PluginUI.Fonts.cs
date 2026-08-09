@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Dalamud.Interface.GameFonts;
 using Dalamud.Interface.ManagedFontAtlas;
 
 namespace PfPresets
@@ -41,12 +43,29 @@ namespace PfPresets
             return robotoBytes = buffer.ToArray();
         }
 
+        /// <summary>
+        /// The auto-translate brackets, which are game glyphs rather than characters: they live in
+        /// the private-use area and no ordinary font has them, Roboto included. Merged into every
+        /// handle so a comment carrying an auto-translate phrase draws its brackets instead of two
+        /// empty boxes, wherever in the plugin it happens to be drawn.
+        /// </summary>
+        /// An ImGui glyph range: one begin/end pair - the two brackets are adjacent code points -
+        /// terminated by zero.
+        private static readonly ushort[] AutoTranslateGlyphs =
+        {
+            CommentText.AutoTranslateOpen, CommentText.AutoTranslateClose, 0,
+        };
+
         /// <summary>Builds the handle on first use and caches it in the caller's field.</summary>
         private IFontHandle Font(ref IFontHandle? slot, float px)
         {
             slot ??= pluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(tk =>
-                tk.OnPreBuild(pre => pre.AddFontFromMemory(
-                    Roboto(), new SafeFontConfig { SizePx = px }, "Roboto")));
+                tk.OnPreBuild(pre =>
+                {
+                    var roboto = pre.AddFontFromMemory(
+                        Roboto(), new SafeFontConfig { SizePx = px }, "Roboto");
+                    pre.AddGameGlyphs(new GameFontStyle(GameFontFamily.Axis, px), AutoTranslateGlyphs, roboto);
+                }));
             return slot;
         }
     }

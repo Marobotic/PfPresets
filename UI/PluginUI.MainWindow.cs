@@ -600,10 +600,12 @@ namespace PfPresets
             if (hasComment)
             {
                 ImGui.SetCursorScreenPos(new Vector2(infoX, cursorY));
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + infoWidth);
+
+                // Drawn line by line rather than as one wrapped block, because an auto-translate
+                // phrase's brackets have to be tinted separately from the words between them, and
+                // ImGui's own wrapping colours a whole call at once.
                 using (UiBodyFont.Push())
-                    ImGui.TextColored(Dim, ClampToLines(comment, infoWidth, 2));
-                ImGui.PopTextWrapPos();
+                    DrawWrappedComment(comment, infoWidth, 2, Dim);
                 cursorY += commentH + 6f;
             }
 
@@ -913,32 +915,6 @@ namespace PfPresets
                 return MathF.Max(1f, MathF.Ceiling(ImGui.CalcTextSize(comment).X / width));
         }
 
-        /// <summary>
-        /// Cuts a comment to the given number of wrapped lines, with an ellipsis if it was cut.
-        ///
-        /// The row reserves height for two lines; text longer than that would otherwise overrun the
-        /// rule beneath it and print over the next preset.
-        /// </summary>
-        private string ClampToLines(string comment, float width, int lines)
-        {
-            if (width <= 0f)
-                return comment;
-
-            using (UiBodyFont.Push())
-            {
-                float budget = width * lines;
-                if (ImGui.CalcTextSize(comment).X <= budget)
-                    return comment;
-
-                for (int len = comment.Length - 1; len > 0; len--)
-                {
-                    string cut = comment[..len];
-                    if (ImGui.CalcTextSize(cut).X <= budget - ImGui.CalcTextSize("…").X)
-                        return cut + "…";
-                }
-                return "…";
-            }
-        }
 
         /// <summary>The live bar, when there is a listing for it to be about.</summary>
         private const float FooterBarHeight = 56f;

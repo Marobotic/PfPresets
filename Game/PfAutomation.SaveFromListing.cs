@@ -187,7 +187,11 @@ namespace PfPresets
                 DutyRowId = duty != null && !DutyDataHelper.IsSyntheticRowId(duty.RowId) ? duty.RowId : 0,
                 DutyName = dutyName,
                 ObjectiveId = ObjectiveIdFromFlags(listing.Objective),
-                Comment = TrimComment(listing.CommentString.ToString() ?? string.Empty),
+                // Both forms of the comment: the text to show, and the bytes to re-post. The text
+                // alone would be a one-way trip - an auto-translate phrase cannot be rebuilt from
+                // the words it expands to.
+                Comment = TrimComment(CommentText.Decode(listing.Comment)),
+                CommentRaw = EncodeCommentRaw(listing.Comment),
 
                 CompletionStatusEnabled = listing.CompletionStatus != AgentLookingForGroup.CompletionStatus.None,
                 CompletionStatusType = CompletionTypeFromFlags(listing.CompletionStatus),
@@ -233,8 +237,31 @@ namespace PfPresets
             return baseName;
         }
 
+        /// <summary>
+        /// Clamps a decoded comment to the game's budget, which is bytes rather than characters -
+        /// a comment of the game's symbols is three bytes per character.
+        /// </summary>
         private static string TrimComment(string comment) =>
-            comment.Length > MaxCommentLength ? comment.Substring(0, MaxCommentLength) : comment;
+            CommentText.TruncateToBytes(comment, MaxCommentLength);
+
+        /// <summary>
+        /// Stores the listing's own bytes so the preset can post it back unchanged. Only worth
+        /// keeping when there is a payload in there; plain text rebuilds from the text perfectly
+        /// well, and every preset carrying a redundant base64 copy just bloats the config.
+        /// </summary>
+        private static unsafe string? EncodeCommentRaw(ReadOnlySpan<byte> raw)
+        {
+            int end = raw.IndexOf((byte)0);
+            if (end >= 0)
+                raw = raw[..end];
+
+            if (raw.Length == 0 || raw.Length > MaxCommentLength)
+                return null;
+
+            return CommentText.HasAutoTranslate(CommentText.Decode(raw))
+                ? Convert.ToBase64String(raw)
+                : null;
+        }
 
         /// <summary>DutyCategory is a flags enum where the category id is the set bit's position.</summary>
         private static int CategoryIdFromFlags(AgentLookingForGroup.DutyCategory category)
