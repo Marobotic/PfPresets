@@ -99,4 +99,22 @@
     <EmbeddedResource Include="Data\Fonts\Roboto.ttf" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The installer icon, copied next to the DLL rather than only living in the repository.
+
+      Dalamud resolves the two cases differently. A plugin installed from a repo takes its icon
+      from the manifest's IconUrl, which is why the purple mark already looks right in the plugin
+      list. A dev plugin has no manifest on any server, so Dalamud looks for a real file at
+      images/icon.png beside the assembly and falls back to its generic dev-plugin icon when there
+      is not one - the icon was correct everywhere except the build actually being tested.
+
+      This does NOT reach the release zip, and it cannot: DalamudPackager 11 packs a fixed set of
+      files (dll, deps.json, json, pdb) and ignores subdirectories, exposing no include option to
+      change that. Installed copies are unaffected because they take the icon from IconUrl, which
+      is the path that already works. So this file exists for exactly one consumer - the dev build.
+    -->
+    <None Include="images\icon.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
