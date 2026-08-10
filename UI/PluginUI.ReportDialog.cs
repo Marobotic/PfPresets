@@ -128,10 +128,16 @@ namespace PfPresets
             DrawStyledCheckbox("Send anonymously##ReportAnon", ref reportAnonymous);
             if (ImGui.IsItemHovered())
             {
+                // Reworded when the notification began carrying the submitting address. The old
+                // text implied more than it delivered, and a promise of anonymity that quietly
+                // isn't one is worse than no promise: somebody reporting a person they are afraid
+                // of should be able to read this and decide, not find out afterwards.
                 PaddedTooltip(
                     "Leaves your name off the report.\n\n"
                     + "The report itself still arrives - who you reported, the reason,\n"
-                    + "and your note. Only your own name is withheld.\n\n"
+                    + "and your note. Your character name is withheld.\n\n"
+                    + "This is not full anonymity: reports carry the connection they were\n"
+                    + "sent from, so that abusive reporting can be dealt with.\n\n"
                     + "A named report is easier to act on, because it can be followed\n"
                     + "up on and weighed against the reporter's history.");
             }

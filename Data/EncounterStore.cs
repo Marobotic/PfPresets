@@ -276,6 +276,44 @@ namespace PfPresets
         /// This is the gate on rating: you may only rate people you have played with, so a name
         /// typed into a search box is never rateable on its own.
         /// </summary>
+        /// <summary>
+        /// The most recent duty inside the voting window that this character was in.
+        ///
+        /// The evidence a vote carries is built from this: which duty, how long it ran, and who
+        /// else was there. Most recent rather than first, because if you have run two duties with
+        /// somebody today it is the later one you have an opinion about.
+        /// </summary>
+        public DutyEncounter? LatestWith(CharacterIdentity who)
+        {
+            if (!who.IsValid)
+                return null;
+
+            var cutoff = DateTime.UtcNow - VotingWindow;
+            DutyEncounter? best = null;
+
+            lock (gate)
+            {
+                foreach (var encounter in encounters)
+                {
+                    if (encounter.CompletedUtc < cutoff)
+                        continue;
+                    if (best != null && encounter.CompletedUtc <= best.CompletedUtc)
+                        continue;
+
+                    foreach (var member in encounter.Members)
+                    {
+                        if (member.IsValid && member.Identity.Equals(who))
+                        {
+                            best = encounter;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return best;
+        }
+
         public bool HasMet(CharacterIdentity who)
         {
             if (!who.IsValid)

@@ -279,6 +279,16 @@ namespace PfPresets
         /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
         public bool PostDutyPromptEnabled { get; set; } = true;
 
+        /// <summary>
+        /// Whether this character's Ultimate and savage tier clears go to the achievements feed.
+        ///
+        /// On by default, which is the one default in this file that shares something about the
+        /// player rather than about other people - and it shares a clear, which is a thing people
+        /// announce in shout the moment it happens. Turning it off stops this client posting AND
+        /// hides what is already up there; see PushBroadcastSetting.
+        /// </summary>
+        public bool BroadcastAchievements { get; set; } = true;
+
         /// <summary>Whether to show ratings beside the members of the party you are actually in.
         /// Deliberately not offered while browsing the Party Finder: a score attached to a listing
         /// you haven't joined turns the feature into a screening tool for strangers, which is not

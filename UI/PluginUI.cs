@@ -85,6 +85,7 @@ namespace PfPresets
         {
             DisposeWelcomeFonts();
             DisposeScaleFonts();
+            DisposeSiteIcons();
 #if PFP_RATINGS
             DisposeProfileFonts();
 #endif
@@ -127,6 +128,8 @@ namespace PfPresets
                 DrawReportDialog();
                 DrawListingLeaderRatingOverlay();
 #endif
+                // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+                DrawAdminOverlay();
             }
             finally
             {

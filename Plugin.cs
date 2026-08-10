@@ -9,7 +9,7 @@ namespace PfPresets
     /// Plugin entry point: wires up services, registers chat commands, and hooks the
     /// Dalamud UI/framework events.
     /// </summary>
-    public class Plugin : IDalamudPlugin
+    public partial class Plugin : IDalamudPlugin
     {
         public string Name => "PF Analysis";
 
@@ -147,6 +147,10 @@ namespace PfPresets
             // The permanent who-have-I-met list is fed from the same event as everything else, so
             // one judgement about whether a duty was worth recording serves every store.
             this.dutyTracker.EncounterCompleted += this.playerHistory.RecordEncounter;
+
+            // And the achievements feed. Every finished duty is offered; the server decides which
+            // ones are worth a post and says no to nearly all of them, silently.
+            this.dutyTracker.EncounterCompleted += this.ratingService.PostAchievement;
 #endif
 
             // Anonymous usage counts. Constructed last and entirely fire-and-forget: it never
@@ -156,6 +160,10 @@ namespace PfPresets
                 pluginLog,
                 pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown");
             this.ui.Analytics = this.analytics;
+
+            // Erased entirely in an ordinary build - the implementation is not in this repository.
+            // See UI/PluginUI.AdminHooks.cs for why the moderator build works this way.
+            InitAdmin(pluginLog);
 
             // Register commands
             // /pfa and /pfanalysis are the names the plugin goes by now; /pfp and /pfpresets stay
@@ -354,8 +362,13 @@ namespace PfPresets
         private void OnLogoutResetSession(int type, int code) => this.ratingApi.OnCharacterChanged();
 #endif
 
+        /// <summary>Moderator tooling, present only on the machines that hold a key.</summary>
+        partial void InitAdmin(IPluginLog log);
+        partial void DisposeAdmin();
+
         public void Dispose()
         {
+            DisposeAdmin();
             this.framework.Update -= OnFrameworkUpdate;
 
             this.pluginInterface.UiBuilder.Draw -= this.ui.Draw;
@@ -373,6 +386,7 @@ namespace PfPresets
             this.clientState.Logout -= OnLogoutResetSession;
             this.dutyTracker.EncounterCompleted -= this.ui.OnEncounterCompleted;
             this.dutyTracker.EncounterCompleted -= this.playerHistory.RecordEncounter;
+            this.dutyTracker.EncounterCompleted -= this.ratingService.PostAchievement;
             this.dutyTracker.Dispose();
             this.ratingService.Dispose();
             this.ratingApi.Dispose();

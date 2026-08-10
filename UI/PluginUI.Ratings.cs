@@ -19,6 +19,13 @@ namespace PfPresets
         Presets = 0,
         Ratings = 1,
         Settings = 2,
+        Achievements = 3,
+
+        // Identities for tabs contributed by optional components. Nothing in this repository adds
+        // them to the list or draws them; they exist so that a component which does has a stable
+        // value to key on rather than inventing one.
+        ExtraOne = 100,
+        ExtraTwo = 101,
     }
 
     /// <summary>
@@ -86,25 +93,10 @@ namespace PfPresets
             float winX = ImGui.GetWindowPos().X;
             float width = ImGui.GetWindowWidth();
 
-            // Ratings is absent, not disabled, when the feature is off. A tab that exists only to
-            // explain why it does nothing is worse than no tab: the setting already says what it
-            // does, and the strip should describe the plugin you are actually running.
-            var tabList = new List<(string Label, FontAwesomeIcon Icon, MainTab Tab)>
-            {
-                ("Recruit", FontAwesomeIcon.Users, MainTab.Presets),
-            };
-
-            if (config.RatingsEnabled)
-                tabList.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
-
-            tabList.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
-
-            var tabs = tabList.ToArray();
-
-            // Turning ratings off while looking at them would otherwise leave the window on a tab
-            // that is no longer in the strip.
-            if (activeTab == MainTab.Ratings && !config.RatingsEnabled)
-                activeTab = MainTab.Presets;
+            // One list, shared with the rail - see TabList. It used to be built again here, and
+            // the two copies drifted: a tab added to one simply did not exist in the other, which
+            // is exactly the layout depending on how wide the window happened to be.
+            var tabs = TabList().ToArray();
 
             float segWidth = (width - 16f) / tabs.Length;
 
@@ -720,7 +712,10 @@ namespace PfPresets
 
             ImGui.Separator();
 
-            if (ImGui.Selectable("  Report"))
+            // Not on yourself. The server refuses a self-report outright, so the item could only
+            // ever open a dialog, take a note, and fail - a control whose entire behaviour is to
+            // waste somebody's time is worse than one that isn't there.
+            if (!IsSelf(who) && ImGui.Selectable("  Report"))
                 OpenReportDialog(who);
 
             // Kick sits with Report because both are things you do *about* someone, and it is only

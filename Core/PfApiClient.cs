@@ -47,18 +47,31 @@ namespace PfPresets
         public T? Value { get; }
         public TimeSpan? RetryAfter { get; }
 
-        private ApiResult(ApiStatus status, T? value, TimeSpan? retryAfter)
+        /// <summary>
+        /// What the server said to tell the player, or empty when it didn't say.
+        ///
+        /// Preferred over anything written here, because wording baked into a plugin can only be
+        /// corrected at the speed of everybody updating - and the refusals worth explaining are
+        /// exactly the ones whose shape keeps changing. Empty is normal and expected: an
+        /// unreachable server cannot send a sentence, which is precisely when the local fallback
+        /// matters most.
+        /// </summary>
+        public string Message { get; }
+
+        private ApiResult(ApiStatus status, T? value, TimeSpan? retryAfter, string message)
         {
             Status = status;
             Value = value;
             RetryAfter = retryAfter;
+            Message = message;
         }
 
         public bool IsOk => Status == ApiStatus.Ok && Value != null;
 
-        public static ApiResult<T> Ok(T value) => new(ApiStatus.Ok, value, null);
-        public static ApiResult<T> Fail(ApiStatus status, TimeSpan? retryAfter = null)
-            => new(status, null, retryAfter);
+        public static ApiResult<T> Ok(T value) => new(ApiStatus.Ok, value, null, string.Empty);
+        public static ApiResult<T> Fail(ApiStatus status, TimeSpan? retryAfter = null,
+            string message = "")
+            => new(status, null, retryAfter, message);
     }
 
     /// <summary>
@@ -167,6 +180,15 @@ namespace PfPresets
         public CancellationToken ShutdownToken => cancel.Token;
 
         /// <summary>
+        /// The character this client is acting as, or null when logged out.
+        ///
+        /// Exposed because the vote path needs to name the local player in the evidence it sends,
+        /// and this class already holds the provider - threading a second copy of the same function
+        /// through the service would give two answers that could disagree at a character switch.
+        /// </summary>
+        public CharacterIdentity? LocalIdentity => identityProvider();
+
+        /// <summary>
         /// The endpoint in use: the configured override when it's a usable absolute URL, otherwise
         /// the shipping one. A malformed override falls back rather than throwing - a typo in a
         /// settings box must not stop the plugin loading.
@@ -268,6 +290,76 @@ namespace PfPresets
                 HttpMethod.Post, "progress", request).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// One character's high-end clears, for the profile card.
+        ///
+        /// Reading is free - it stops at the server's own table, and every card opening does one.
+        /// Only <see cref="ClearsRequest.Refresh"/> can cause anything to reach a third party, and
+        /// then only if nobody has looked this character up in the last hour.
+        /// </summary>
+        public async Task<ApiResult<ClearsResponse>> GetClearsAsync(ClearsRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.World))
+                return ApiResult<ClearsResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<ClearsResponse>(
+                HttpMethod.Post, "clears", request).ConfigureAwait(false);
+        }
+
+        // ── Achievements ──────────────────────────────────────────
+
+        /// <summary>
+        /// Offers a clear to the feed.
+        ///
+        /// Called for every duty that finishes, and answers "not worth a post" for almost all of
+        /// them - what counts is the server's decision, so a patch that adds an Ultimate needs no
+        /// plugin update. Nothing here is worth telling the user about: a clear that fails to post
+        /// is a line in the log, not a message printed over somebody's victory.
+        /// </summary>
+        public async Task<ApiResult<AchievementPostResponse>> PostAchievementAsync(
+            AchievementPostRequest request)
+        {
+            if (string.IsNullOrEmpty(request.Evidence))
+                return ApiResult<AchievementPostResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<AchievementPostResponse>(
+                HttpMethod.Post, "achievements", request).ConfigureAwait(false);
+        }
+
+        /// <summary>The feed, newest first. Reaches our own table and nothing else.</summary>
+        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(long beforeUnixMs = 0)
+            => await SendAsync<AchievementFeedResponse>(
+                HttpMethod.Post, "achievements/feed",
+                new AchievementFeedRequest { Before = beforeUnixMs }).ConfigureAwait(false);
+
+        public async Task<ApiResult<AchievementReactResponse>> HeartAsync(string id)
+            => await SendAsync<AchievementReactResponse>(
+                HttpMethod.Post, "achievements/heart",
+                new AchievementReactRequest { Id = id }).ConfigureAwait(false);
+
+        public async Task<ApiResult<AchievementReactResponse>> ShareAsync(string id)
+            => await SendAsync<AchievementReactResponse>(
+                HttpMethod.Post, "achievements/reshare",
+                new AchievementReactRequest { Id = id }).ConfigureAwait(false);
+
+        /// <summary>Turns broadcasting on or off for the character this session belongs to. The
+        /// server checks it against the session's own character, so this cannot be pointed at
+        /// anybody else's.</summary>
+        public async Task<ApiResult<BroadcastSettingResponse>> SetBroadcastAsync(
+            CharacterIdentity who, bool broadcast)
+        {
+            if (!who.IsValid)
+                return ApiResult<BroadcastSettingResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<BroadcastSettingResponse>(
+                HttpMethod.Post, "achievements/settings",
+                new BroadcastSettingRequest
+                {
+                    Character = new CharacterRef { Name = who.Name, World = who.World },
+                    Broadcast = broadcast,
+                }).ConfigureAwait(false);
+        }
+
         /// <summary>Job and level for a profile view. Answered from the server's own cache after
         /// the first lookup, so this is cheap to call and rarely reaches a third party.</summary>
         public async Task<ApiResult<CharacterInfo>> GetCharacterAsync(CharacterIdentity who)
@@ -288,10 +380,10 @@ namespace PfPresets
         public async Task<ApiResult<RatingPolicy>> GetPolicyAsync()
             => await SendAsync<RatingPolicy>(HttpMethod.Get, "policy", null, requireAuth: false).ConfigureAwait(false);
 
-        /// <summary>Erases the caller's cooldown ledger server-side. Their past ratings are already
-        /// stored with no link back to them, so there is nothing else of theirs to delete.</summary>
-        public async Task<ApiResult<EmptyResponse>> DeleteMyLedgerAsync()
-            => await SendAsync<EmptyResponse>(HttpMethod.Delete, "me/ledger", null).ConfigureAwait(false);
+        // DeleteMyLedgerAsync is gone, with the route behind it. The cooldown ledger is the
+        // anti-abuse record - erasing it on request let anybody rate the same person over and over
+        // at full weight, and because the caller's identity was a claimed name it could be pointed
+        // at somebody else's ledger just as easily as your own.
 
         internal sealed class EmptyResponse { }
 
@@ -356,26 +448,31 @@ namespace PfPresets
                             : ApiResult<TRes>.Ok(parsed);
                     }
 
+                    // Whatever the server wants the player told. Read before the switch so every
+                    // refusal below carries it, and tolerant of its absence - an older server, or a
+                    // proxy's own error page, simply has none.
+                    string said = await ReadServerMessageAsync(response).ConfigureAwait(false);
+
                     // Deliberate refusals are answers, not failures: they must not trip the
                     // breaker, and retrying them would just repeat the same rejection.
                     switch (response.StatusCode)
                     {
                         case HttpStatusCode.Conflict:
                             OnSuccess();
-                            return ApiResult<TRes>.Fail(ApiStatus.Cooldown, ReadRetryAfter(response));
+                            return ApiResult<TRes>.Fail(ApiStatus.Cooldown, ReadRetryAfter(response), said);
                         case HttpStatusCode.TooManyRequests:
                             OnSuccess();
-                            return ApiResult<TRes>.Fail(ApiStatus.RateLimited, ReadRetryAfter(response));
+                            return ApiResult<TRes>.Fail(ApiStatus.RateLimited, ReadRetryAfter(response), said);
                         case HttpStatusCode.Forbidden:
                             OnSuccess();
-                            return ApiResult<TRes>.Fail(ApiStatus.Refused);
+                            return ApiResult<TRes>.Fail(ApiStatus.Refused, null, said);
                     }
 
                     if ((int)response.StatusCode is >= 400 and < 500)
                     {
                         OnSuccess(); // the server is healthy; the request was wrong
                         LogOnce($"[Ratings] {path} rejected: {(int)response.StatusCode}.");
-                        return ApiResult<TRes>.Fail(ApiStatus.BadRequest);
+                        return ApiResult<TRes>.Fail(ApiStatus.BadRequest, null, said);
                     }
 
                     // 5xx: retry with backoff.
@@ -437,6 +534,35 @@ namespace PfPresets
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             return request;
+        }
+
+        /// <summary>
+        /// The `message` field off an error body, or empty.
+        ///
+        /// Never throws and never blocks a refusal: a body that isn't JSON, isn't ours, or isn't
+        /// there at all is an ordinary outcome, and the caller falls back to its own wording.
+        /// </summary>
+        private static async Task<string> ReadServerMessageAsync(HttpResponseMessage response)
+        {
+            try
+            {
+                string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(json) || json.Length > 4096)
+                    return string.Empty;
+
+                var body = JsonConvert.DeserializeObject<ServerError>(json, ReadSettings);
+                return body?.Message?.Trim() ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        private sealed class ServerError
+        {
+            public string? Error { get; set; }
+            public string? Message { get; set; }
         }
 
         private static TimeSpan? ReadRetryAfter(HttpResponseMessage response)

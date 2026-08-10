@@ -27,6 +27,16 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.4.0", "August 2026", new[]
+            {
+                "Profile cards now show clears: every Ultimate, the current savage tier, and every Extreme and Unreal of the expansion, with the best parse on each.",
+                "Only clears are shown: a section appears once that player has cleared something in it, and lists what they've cleared. The count beside the heading says how many of the section there are.",
+                "The button at the bottom of a card fetches those clears from Tomestone and FFLogs. Once anyone fetches a player everybody sees the same answer, and any player can be read again an hour later.",
+                "A clear counts whether it was logged or not - an achievement on the Lodestone proves it as well as a kill on FFLogs does - so people who never upload logs no longer read as having cleared nothing.",
+                "FFLogs, Tomestone and the Lodestone are now icons in the card's top corner rather than three buttons across it, which is where the clears went.",
+                "Reporting a player has moved off the profile card. It's on the right-click menu in the party list, with the other things you do about somebody.",
+            }),
+
             new("3.3.6", "August 2026", new[]
             {
                 "A listing you're viewing now shows the leader's community score beside their name, so you see it before joining rather than after. Turn it off under Settings → Party Finder.",

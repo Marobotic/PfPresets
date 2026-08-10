@@ -52,7 +52,21 @@ namespace PfPresets
         public double WeightApplied { get; init; }
         public DateTime? NextEligibleAt { get; init; }
 
-        public string Message => Outcome switch
+        /// <summary>What the server said to show, when it said anything.</summary>
+        public string ServerMessage { get; init; }
+
+        /// <summary>
+        /// The server's wording wins.
+        ///
+        /// The sentences below are a fallback for when there is nothing to prefer - an unreachable
+        /// server, or one too old to send one. Everything else is worded on the server so it can be
+        /// corrected without thirty thousand people updating first.
+        /// </summary>
+        public string Message => !string.IsNullOrWhiteSpace(ServerMessage)
+            ? ServerMessage
+            : LocalMessage;
+
+        private string LocalMessage => Outcome switch
         {
             SubmitOutcome.Submitted => WeightApplied >= 0.999
                 ? "Rated."
@@ -86,7 +100,10 @@ namespace PfPresets
     /// into batch requests, so a full party plus a screen of contacts costs one request rather
     /// than thirty.
     /// </summary>
-    internal sealed class RatingService : IDisposable
+    // Partial so the clears feature - its own cache, its own queue watch, its own cooldown - sits
+    // in RatingService.Clears.cs rather than being threaded through sixteen hundred lines that are
+    // about ratings and progression. Same class, same fields; just a file boundary.
+    internal sealed partial class RatingService : IDisposable
     {
         /// <summary>How long a fetched rating is considered fresh. Ratings move slowly - a player's
         /// average doesn't meaningfully change inside ten minutes - so this is generous on purpose.</summary>
@@ -466,12 +483,30 @@ namespace PfPresets
 
             foreach (var c in candidates)
             {
-                if (LocalCooldownUntil(c.Identity) == null)
-                    result.Add(c);
+                if (LocalCooldownUntil(c.Identity) != null)
+                    continue;
+
+                // A banned player is dropped before the list is built rather than shown and
+                // refused. The server rejects the vote either way, but offering somebody a button
+                // that always fails is worse than not offering it: nothing about the refusal would
+                // tell the voter why, and "the plugin is broken" is the reasonable conclusion.
+                if (IsBanned(c.Identity))
+                    continue;
+
+                result.Add(c);
             }
 
             return result;
         }
+
+        /// <summary>
+        /// Seals the duty this vote came out of into the request.
+        ///
+        /// A partial with no implementation in this repository, so an ordinary build erases both
+        /// the method and the call - see the note at the call site for why that is the right
+        /// failure rather than a broken one.
+        /// </summary>
+        partial void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence);
 
         /// <summary>Whether the local player has finished a duty with this character. Rating is
         /// only ever offered for people this returns true for.</summary>
@@ -486,8 +521,17 @@ namespace PfPresets
                 return false;
 
             var cached = Get(who);
-            return cached?.OptedOut != true;
+            return cached?.OptedOut != true && cached?.Banned != true;
         }
+
+        /// <summary>
+        /// Whether this character has been banned from the rating system.
+        ///
+        /// Answered from whatever the last lookup said, so an unknown player reads as not banned -
+        /// the server is the authority and refuses their votes regardless. This exists to keep them
+        /// out of lists, not to enforce anything.
+        /// </summary>
+        public bool IsBanned(CharacterIdentity who) => Get(who)?.Banned == true;
 
         /// <summary>
         /// Records that a rating just happened, stamped from our own clock.
@@ -560,15 +604,30 @@ namespace PfPresets
                 return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
             }
 
+            int score = vote == VoteDirection.Up ? 1 : -1;
+
+            // The duty this vote is about, sealed by a component that is not in this repository.
+            //
+            // Built here rather than in the queue because it is only honest at the moment of
+            // sending: it carries a timestamp the server checks for drift, so a payload sealed an
+            // hour ago and flushed now would be refused.
+            //
+            // A build without that component leaves this empty and the server refuses the vote,
+            // which is the correct behaviour rather than a failure - such a build can read ratings
+            // and cannot cast them.
+            string evidence = string.Empty;
+            BuildVoteEvidence(target, score, ref evidence);
+
             var request = new SubmitRatingRequest
             {
                 VoteId = queued.VoteId,
                 Target = target,
-                Score = vote == VoteDirection.Up ? 1 : -1,
+                Score = score,
                 Tags = tags & RatingTags.KnownMask,
                 DutyRowId = dutyRowId,
                 SocialLink = socialLink,
                 MetAt = metAtUtc,
+                Evidence = evidence,
             };
 
             var result = await api.SubmitAsync(request).ConfigureAwait(false);
@@ -611,16 +670,29 @@ namespace PfPresets
                     var serverUntil = result.RetryAfter.HasValue
                         ? DateTime.UtcNow.Add(result.RetryAfter.Value)
                         : (DateTime?)null;
-                    return new SubmitResult { Outcome = SubmitOutcome.OnCooldown, NextEligibleAt = serverUntil };
+                    return new SubmitResult
+                    {
+                        Outcome = SubmitOutcome.OnCooldown,
+                        NextEligibleAt = serverUntil,
+                        ServerMessage = result.Message,
+                    };
 
                 case ApiStatus.Refused:
                     votes.Failed(queued, permanent: true);
                     Invalidate(target);
-                    return new SubmitResult { Outcome = SubmitOutcome.OptedOut };
+                    return new SubmitResult
+                    {
+                        Outcome = SubmitOutcome.OptedOut,
+                        ServerMessage = result.Message,
+                    };
 
                 default:
                     votes.Failed(queued, permanent: true);
-                    return new SubmitResult { Outcome = SubmitOutcome.Rejected };
+                    return new SubmitResult
+                    {
+                        Outcome = SubmitOutcome.Rejected,
+                        ServerMessage = result.Message,
+                    };
             }
         }
 
@@ -1180,9 +1252,11 @@ namespace PfPresets
 
                     if (!result.IsOk || result.Value == null)
                     {
-                        progressNote = result.Status == ApiStatus.Offline
-                            ? "Couldn't reach the server."
-                            : "Couldn't fetch progress right now.";
+                        progressNote = !string.IsNullOrWhiteSpace(result.Message)
+                            ? result.Message
+                            : result.Status == ApiStatus.Offline
+                                ? "Couldn't reach the server."
+                                : "Couldn't fetch progress right now.";
 
                         // Cleared after a while so the row recovers on its own. It used to sit
                         // there permanently, which made a single failed call look like the feature
@@ -1576,13 +1650,10 @@ namespace PfPresets
             };
         }
 
-        /// <summary>Asks the server to erase this voter's cooldown ledger. Their submitted ratings
-        /// are untouched because they carry no link back to them - there is nothing in them that
-        /// identifies the voter to erase.</summary>
-        public async Task ForgetServerHistoryAsync()
-        {
-            await api.DeleteMyLedgerAsync().ConfigureAwait(false);
-        }
+        // ForgetServerHistoryAsync is gone, with the endpoint it called. It erased this
+        // player's cooldown ledger on the server, which is the record that stops the same person
+        // being rated twice - and since the repeat-vote discount is computed from the vote count on
+        // those rows, erasing them made every subsequent repeat count at full weight again.
 
         public void Dispose()
         {

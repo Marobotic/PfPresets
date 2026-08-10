@@ -85,6 +85,13 @@ namespace PfPresets
 
             var rating = Ratings?.Get(who);
 
+            // What the server already knows about their clears, and nothing more. This is a read of
+            // our own table - it costs a query on our box and never reaches Tomestone or FFLogs -
+            // so a card always opens showing whatever anybody has already fetched. Only the footer
+            // button can cause a provider to be asked.
+            Ratings?.EnsureClearsLoaded(who, Worlds?.GetFfLogsRegion(who.World));
+            var clears = Ratings?.ClearsFor(who);
+
             ImGui.Dummy(new Vector2(0, 8));
 
             // No Back button on your own card: it isn't somewhere you navigated to, it is what
@@ -128,11 +135,20 @@ namespace PfPresets
                 DrawProfileScore(who, rating);
                 DrawProfileNumbers(who, rating);
 
+                // Who they are, then what they have cleared, then where you have run into them.
+                //
+                // The order is the order the questions get asked. "Seen recently in" used to sit
+                // directly under the score, which put a list of your own duty history between the
+                // rating and the clears - two facts about the player, separated by a fact about
+                // you. It reads last because it is the only part of the card that is about you.
+                DrawClearsSections(clears);
+                DrawClearsFooter(who, clears);
+
                 // Not on your own card. You know where you've been, and the list exists to tell
                 // you who a stranger is.
                 if (!IsSelf(who))
                 {
-                    ImGui.Dummy(new Vector2(0, 12));
+                    DrawRuleHair(12f, 10f);
                     DrawSeenRecentlyIn(who);
                 }
 
@@ -163,15 +179,29 @@ namespace PfPresets
         /// </summary>
         private void DrawProfileIdentity(CharacterIdentity who)
         {
-            // The same tracked caps as every other heading in the plugin.
+            // The same tracked caps as every other heading in the plugin, with the three places
+            // this character can be read sitting opposite as their own marks.
+            //
+            // They used to be three full-width buttons under the score, which gave opening a web
+            // page the same visual weight as the number the card exists for. As favicons in the
+            // corner they are recognisable at a glance, take a fifth of the room, and leave the
+            // body of the card to the two things worth reading: the score and the clears.
             var dl = ImGui.GetWindowDrawList();
+
+            // Both taken before the heading is drawn, and both from the cursor rather than from the
+            // window: this is inside the card's indent, so the cursor plus the space available is
+            // the card's own right edge and stays right if the card is ever drawn in a column.
+            Vector2 headerPos = ImGui.GetCursorScreenPos();
+            float headerRight = headerPos.X + ImGui.GetContentRegionAvail().X - CardPad;
+
             using (UiCaptionFont.Push())
             {
                 float lineH = ImGui.GetTextLineHeight();
-                DrawTrackedCaps(dl, ImGui.GetCursorScreenPos(),
-                    IsSelf(who) ? "Your profile" : "Looked up", Dim);
+                DrawTrackedCaps(dl, headerPos, IsSelf(who) ? "Your profile" : "Looked up", Dim);
                 ImGui.Dummy(new Vector2(ImGui.GetContentRegionAvail().X, lineH));
             }
+
+            DrawProfileSiteLinks(who, headerPos.Y, headerRight);
 
             ImGui.Dummy(new Vector2(0, 6));
 
@@ -357,17 +387,9 @@ namespace PfPresets
             ImGui.SameLine(0, 16);
             DrawArrowCount(FontAwesomeIcon.CaretDown, down, Negative);
 
-            ImGui.SameLine(0, 14);
-            ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(RuleStrong, "|");
-
-            ImGui.SameLine(0, 14);
-            ImGui.AlignTextToFramePadding();
-            ImGui.PushStyleColor(ImGuiCol.Text, Dim);
-            ImGui.TextUnformatted(voters.ToString());
-            ImGui.SameLine(0, 6);
-            ImGui.TextUnformatted("total");
-            ImGui.PopStyleColor();
+            // No running total. It was the sum of the two figures either side of it, which the
+            // reader can do at a glance, and it sat next to the weighted score looking like a
+            // second answer to the same question - the one thing this card must not have.
 
             // The explanation is on the dot beside the counts, like every other explanation in the
             // plugin. Printed, it was three lines of small grey type between the figure and the
@@ -377,66 +399,66 @@ namespace PfPresets
                 + "on the same person, so the figure reflects agreement among strangers rather "
                 + "than a small group voting often.");
 
-            ImGui.Dummy(new Vector2(0, 12));
-            DrawProfileActions(who);
+            // Nothing follows the counts any more. The three link buttons that used to sit here are
+            // favicons in the card's corner, and the space they took is where the clears go.
         }
 
         /// <summary>
-        /// Where to go next: the two places this character can be looked up, and the one thing you
-        /// can do about them.
+        /// The three places this character can be read, as favicons in the card's top corner.
         ///
-        /// On the card rather than behind a kebab in its corner. The card is now a column of its
-        /// own with room for a row of buttons, and a menu that has to be found is the wrong shape
-        /// for three destinations that are the point of looking someone up.
+        /// Right-aligned on the heading's own line, so they cost no vertical space at all. Drawn
+        /// after the heading and positioned absolutely rather than laid out with it, because the
+        /// heading is drawn into the draw list rather than as a widget and there is nothing for
+        /// SameLine to hang off.
+        ///
+        /// Reporting a player is deliberately NOT here. It was the third button when these were
+        /// buttons, which put a destructive action in a row of harmless links; it lives on the
+        /// party row's context menu, where it sits with the other things you do *about* somebody.
         /// </summary>
-        private void DrawProfileActions(CharacterIdentity who)
+        private void DrawProfileSiteLinks(CharacterIdentity who, float rowY, float right)
         {
-            float width = ImGui.GetContentRegionAvail().X - CardPad;
-            if (width <= 0f)
-                return;
-
-            // Side by side, one row. Stacked full-width buttons made a column of white slabs with
-            // a red one at the bottom, which gave reporting somebody the same weight as opening a
-            // web page. The two lookups take the accent; the report is the only red on the card.
+            const float iconSize = 20f;
             const float gap = 6f;
-            float buttonW = (width - gap * 2f) / 3f;
-            var size = new Vector2(buttonW, ButtonHeight);
+
+            // Right to left, so the rightmost is the last drawn and the row grows leftwards from
+            // the card's edge whatever the icon size ends up being.
+            var sites = new[] { LinkSite.FfLogs, LinkSite.Tomestone, LinkSite.Lodestone };
 
             string? region = Worlds?.GetFfLogsRegion(who.World);
+            Vector2 restore = ImGui.GetCursorScreenPos();
 
-            if (region == null) ImGui.BeginDisabled();
-            if (DrawPrimaryButton($"FFLogs##links{who.Key}", size) && region != null)
-                Dalamud.Utility.Util.OpenLink(CharacterLinks.FfLogs(who.Name, who.World, region));
-            if (region == null) ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                PaddedTooltip(region == null
-                    ? "No FFLogs region known for this world."
-                    : "Open this character on FFLogs.");
+            // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs. Takes the right
+            // edge and moves it left by whatever it used, so the site icons follow on without
+            // either row having to know the other's width.
+            DrawAdminCardActions(who, rowY, ref right);
 
-            ImGui.SameLine(0, gap);
-            if (DrawPrimaryButton($"Tomestone##links{who.Key}", size))
-                Dalamud.Utility.Util.OpenLink(CharacterLinks.Tomestone(who.Name, who.World));
-            if (ImGui.IsItemHovered())
-                PaddedTooltip("Open this character on Tomestone.");
-
-            ImGui.SameLine(0, gap);
-
-            // Reporting yourself is not a thing, so on your own card the third button is the other
-            // place a character can be read rather than a control that cannot be used.
-            if (IsSelf(who))
+            for (int i = 0; i < sites.Length; i++)
             {
-                if (DrawPrimaryButton($"Lodestone##links{who.Key}", size))
-                    Dalamud.Utility.Util.OpenLink(CharacterLinks.LodestoneSearch(who.Name, who.World));
-                if (ImGui.IsItemHovered())
-                    PaddedTooltip("Open this character on the Lodestone.");
+                var site = sites[i];
+                float x = right - (i + 1) * iconSize - i * gap;
+
+                // FFLogs addresses a character by region, and we have no way to guess one for a
+                // world we don't know. The icon is left out entirely rather than shown dead: a
+                // control that cannot work is worse than one that isn't there.
+                if (site == LinkSite.FfLogs && region == null)
+                    continue;
+
+                ImGui.SetCursorScreenPos(new Vector2(x, rowY - 2f));
+
+                string tooltip = $"Open this character on {SiteName(site)}.";
+
+                if (DrawSiteLink(site, who.Key, iconSize, tooltip))
+                {
+                    Dalamud.Utility.Util.OpenLink(site switch
+                    {
+                        LinkSite.FfLogs => CharacterLinks.FfLogs(who.Name, who.World, region!),
+                        LinkSite.Tomestone => CharacterLinks.Tomestone(who.Name, who.World),
+                        _ => CharacterLinks.LodestoneSearch(who.Name, who.World),
+                    });
+                }
             }
-            else
-            {
-                if (DrawDestructiveButton($"Report##links{who.Key}", size))
-                    OpenReportDialog(who);
-                if (ImGui.IsItemHovered())
-                    PaddedTooltip("Report this player to the plugin author.");
-            }
+
+            ImGui.SetCursorScreenPos(restore);
         }
 
         /// <summary>

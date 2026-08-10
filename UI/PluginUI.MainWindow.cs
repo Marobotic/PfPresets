@@ -164,10 +164,22 @@ namespace PfPresets
         /// </summary>
         private void DrawActiveTab()
         {
+            // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+            bool extraHandled = false;
+            DrawAdminTabBody(ref extraHandled);
+            if (extraHandled)
+                return;
+
 #if PFP_RATINGS
             if (activeTab == MainTab.Ratings && config.RatingsEnabled)
             {
                 DrawRatingsTab();
+                return;
+            }
+
+            if (activeTab == MainTab.Achievements && config.RatingsEnabled)
+            {
+                DrawAchievementsTab();
                 return;
             }
 

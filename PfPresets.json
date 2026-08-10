@@ -2,7 +2,7 @@
   "Author": "Mayo Botic, Ultranova Violet",
   "Name": "PF Analysis",
   "InternalName": "PfPresets",
-  "AssemblyVersion": "3.3.6.0",
+  "AssemblyVersion": "3.4.0.0",
   "Description": "Manage your Party Finder recruitment and see who you are playing with. Save duty, objective, role and condition setups as presets and apply any of them in one click; watch your listing and party as it fills; and look up party members' progression and community ratings.",
   "Punchline": "Run your Party Finder: presets, party progression, and player lookups.",
   "Changelog": "A listing you're viewing shows the leader's community score beside their name, so you see it before joining rather than after. Auto-translate phrases in listing comments now read as the phrase, and a preset saved from such a listing posts it back exactly as it was. The comment counter counts bytes, which is what the game's limit actually measures. Profile cards lead with the job icon, and Recent players shows the community score on its own instead of a second arrow beside it. Blacklisting from the player menu has been removed - the game only permitted it in narrow circumstances, so use the game's own Contact List instead.",

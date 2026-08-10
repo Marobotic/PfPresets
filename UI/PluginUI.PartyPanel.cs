@@ -685,10 +685,10 @@ namespace PfPresets
         /// <summary>
         /// The fetch control, and whatever the last fetch had to say.
         ///
-        /// A button rather than an automatic call on party change. This is the one request the
-        /// plugin makes that ends with someone else's character name at a third party, so it is
-        /// something a person does deliberately - and it happens to be the cheap option for the
-        /// API budget too.
+        /// A button rather than an automatic call on party change. This and the profile card's
+        /// clears button are the only requests the plugin makes that end with someone else's
+        /// character name at a third party, so both are things a person does deliberately - and it
+        /// happens to be the cheap option for the API budget too.
         /// </summary>
         /// <summary>
         /// Whether the recruitment card is drawing the progress action this frame.

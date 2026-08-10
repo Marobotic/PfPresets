@@ -2,9 +2,9 @@
     <PropertyGroup>
         <AssemblyName>PfPresets</AssemblyName>
         <RootNamespace>PfPresets</RootNamespace>
-        <Version>3.3.6.0</Version>
-        <FileVersion>3.3.6.0</FileVersion>
-        <AssemblyVersion>3.3.6.0</AssemblyVersion>
+        <Version>3.4.0.0</Version>
+        <FileVersion>3.4.0.0</FileVersion>
+        <AssemblyVersion>3.4.0.0</AssemblyVersion>
         <TargetFramework>net10.0-windows</TargetFramework>
         <Platforms>x64</Platforms>
         <Nullable>enable</Nullable>
@@ -63,6 +63,21 @@
 
   <ItemGroup>
     <PackageReference Include="DalamudPackager" Version="11.0.0" />
+
+    <!--
+      Pure-managed crypto, referenced ONLY when the moderator files are present.
+
+      .NET's own ECDsa and RSA go through Windows CNG (bcrypt/ncrypt). Under Wine those are
+      partially implemented and ECDSA key generation is not: it fails with 0x80090029,
+      NTE_NOT_SUPPORTED, before a single byte reaches the network. That makes the framework's
+      asymmetric crypto unusable on Linux, which is where half the moderators are.
+
+      BouncyCastle is managed end to end with no P/Invoke, so it behaves identically under Wine and
+      on Windows. The Condition keeps it out of the released plugin entirely - thirty thousand
+      people should not be downloading a crypto library for a feature two of them can use.
+    -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0"
+                      Condition="Exists('$(MSBuildProjectDirectory)/Core/AdminAccess.cs')" />
     <Reference Include="Dalamud">
       <HintPath>$(appdata)\XIVLauncher\addon\Hooks\dev\Dalamud.dll</HintPath>
       <Private>false</Private>
@@ -97,6 +112,23 @@
          game fonts, neither of which is this, and the number is the one place the plugin sets
          type large enough for the face to matter. -->
     <EmbeddedResource Include="Data\Fonts\Roboto.ttf" />
+
+    <!-- The three sites the profile card links out to, as their own marks. Embedded rather than
+         fetched at runtime: the plugin makes no requests on its own account, and a card that
+         quietly called three websites every time it opened would contradict the one thing this
+         feature promises. 32px PNGs, about five kilobytes together. -->
+    <EmbeddedResource Include="Data\Icons\lodestone.png" />
+    <EmbeddedResource Include="Data\Icons\tomestone.png" />
+    <EmbeddedResource Include="Data\Icons\fflogs.png" />
+
+    <!-- The Ultimate totems, one per fight, on the pills in a profile card's clears. A wildcard so
+         an eighth Ultimate is a matter of dropping a file in named after its slug. -->
+    <EmbeddedResource Include="Data\Icons\totems\*.png" />
+
+    <!-- Fight art for the achievements feed, one per fight, named after the roster's slug. A
+         wildcard for the same reason as the totems: a fight added next patch needs a file dropped
+         in and nothing else, and a fight with no file falls back to its section glyph. -->
+    <EmbeddedResource Include="Data\Icons\bosses\*.jpg" />
   </ItemGroup>
 
   <ItemGroup>

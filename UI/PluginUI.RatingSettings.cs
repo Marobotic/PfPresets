@@ -58,6 +58,9 @@ namespace PfPresets
                     DrawAboutSettings();
                 }
 
+                // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+                DrawAdminSettings();
+
                 ImGui.Unindent(12);
             }
             finally
@@ -149,7 +152,22 @@ namespace PfPresets
 
             DrawSetting("Show ratings on your party", () => config.PartyRatingsEnabled,
                 v => config.PartyRatingsEnabled = v,
-                "Shows each party member's rating and prog point beside their name.", last: true);
+                "Shows each party member's rating and prog point beside their name.");
+
+            // Wording as the author wrote it. Left alone deliberately - it is the sentence people
+            // will read when deciding whether to be in the feed, and it says what it does.
+            DrawSetting("Broadcast my ultimate and savage achievements",
+                () => config.BroadcastAchievements,
+                v =>
+                {
+                    config.BroadcastAchievements = v;
+
+                    // Tells the server too, which is what hides clears that are already up. Turning
+                    // this off and leaving last week's posts on the feed would not be honest.
+                    Ratings?.PushBroadcastSetting(v);
+                },
+                "This options allows other raiders to celebrate your clears, turn this off and "
+                + "your clears won't be broadcasted anymore.", last: true);
 
             ImGui.Unindent(SectionInset);
         }
@@ -164,7 +182,6 @@ namespace PfPresets
                 v => config.AnalyticsMode = AnalyticsModeInfo.FromIndex(v),
                 i => AnalyticsModeInfo.Explain(AnalyticsModeInfo.FromIndex(i)));
 
-            DrawClearData();
 
             ImGui.Unindent(SectionInset);
         }
@@ -420,40 +437,19 @@ namespace PfPresets
             }
         }
 
-        // ── Destructive ───────────────────────────────────────────
+        // The "Clear local data" button used to live here, and it was the worst hole in the
+        // whole rating system.
+        //
+        // It forgot your local history AND called DELETE /me/ledger, which erased your cooldown
+        // rows on the server. The cooldown is what stops you rating the same person twice, and the
+        // repeat-vote discount is computed from the vote_count on those very rows - so clearing
+        // them did not just let you vote again, it made every repeat count at FULL weight. Vote,
+        // click, vote, click. No script, no Tor, no skill: a supported button in the settings that
+        // handed anybody an unlimited supply of full-weight votes against one person.
+        //
+        // The endpoint is gone too. A button removed from one build is still an endpoint anybody
+        // can call, and it took a claimed name - so it could be used on somebody else's ledger.
 
-        /// <summary>Deletes everything the plugin holds about other people, plus the server-side
-        /// cooldown ledger. One button and one question, through the shared dialog.</summary>
-        private void DrawClearData()
-        {
-            using (UiBodyFont.Push())
-                ImGui.TextColored(Ink, "Clear local data");
-            SameLineHelpDot("cleardata",
-                "Forgets everyone you have met and rated, and clears your rating cooldowns on the "
-                + "server. Presets are not touched.");
-
-            ImGui.Dummy(new Vector2(0, 8));
-
-            if (!DrawDestructiveButton("Clear local data##ClearData", new Vector2(180, ButtonHeight)))
-            {
-                ImGui.Dummy(new Vector2(0, 12));
-                return;
-            }
-
-            ImGui.Dummy(new Vector2(0, 12));
-
-            AskConfirm("Clear local data", "Forget everyone you've met and rated?", "Clear it",
-                () =>
-                {
-                    Encounters?.Clear();
-                    History?.Clear();
-                    Players?.Clear();
-                    config.LocalCooldowns.Clear();
-                    config.Save();
-                    _ = Ratings?.ForgetServerHistoryAsync();
-                },
-                detail: "Also clears your rating cooldowns on the server.");
-        }
     }
 }
 #endif

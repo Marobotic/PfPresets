@@ -47,13 +47,29 @@ namespace PfPresets
             };
 
             if (config.RatingsEnabled)
+            {
                 tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
+
+                // Marked beta in the label rather than in a banner inside the tab. The word belongs
+                // where somebody decides whether to click, not where they find out afterwards.
+                tabs.Add(("Achievements (beta)", FontAwesomeIcon.Trophy, MainTab.Achievements));
+            }
 
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
 
+            // Optional components may append their own. Both layouts read this one list, so a tab
+            // added here appears in the rail and in the narrow strip together, sized to fit,
+            // without either of them knowing what it is.
+            AddExtraTabs(tabs);
+
             // Turning ratings off while looking at them would otherwise leave the window on a tab
-            // that is no longer in the list.
-            if (activeTab == MainTab.Ratings && !config.RatingsEnabled)
+            // that is no longer in the list. The same applies to any extra that has just been
+            // switched off: land on something that exists rather than on a blank body.
+            if ((activeTab == MainTab.Ratings || activeTab == MainTab.Achievements)
+                && !config.RatingsEnabled)
+                activeTab = MainTab.Presets;
+
+            if (!tabs.Exists(t => t.Item3 == activeTab))
                 activeTab = MainTab.Presets;
 
             return tabs;
@@ -199,6 +215,10 @@ namespace PfPresets
             ImGui.SetCursorScreenPos(new Vector2(p.X + mark + 10f, p.Y + 15f));
             using (UiLabelFont.Push())
                 ImGui.TextColored(Faint, VersionLabel.ToUpperInvariant());
+
+                // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+                if (ImGui.IsItemClicked())
+                    OnVersionLabelClicked();
 
             ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + mark));
         }

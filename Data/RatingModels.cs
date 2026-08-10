@@ -127,6 +127,15 @@ namespace PfPresets
         /// <summary>When the duty that prompted this rating finished. Context for abuse review;
         /// the server stores only the day, never this precise value.</summary>
         public DateTime MetAt { get; set; }
+
+        /// <summary>
+        /// Sealed proof that this vote came out of a duty both players were in.
+        ///
+        /// The server refuses a vote without it. Built by a component that is not in this
+        /// repository, so a vote cannot be mimicked by reading the source - though the checks that
+        /// actually stop abuse are the server's, and hold whether or not the format is known.
+        /// </summary>
+        public string Evidence { get; set; } = string.Empty;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -421,6 +430,16 @@ namespace PfPresets
         /// <summary>True when this player has opted out. The UI shows nothing and disables
         /// rating them.</summary>
         public bool OptedOut { get; set; }
+
+        /// <summary>
+        /// True when this player has been banned for abusing the rating system.
+        ///
+        /// Reported separately from <see cref="OptedOut"/> even though a ban sets both server-side.
+        /// The two are identical in the data and opposite in meaning - one asked not to be rated,
+        /// the other was stopped - and showing "they've opted out" for a banned account would do
+        /// its subject a favour they have not earned.
+        /// </summary>
+        public bool Banned { get; set; }
 
         /// <summary>When the local voter may next rate this player, or null if they may now.
         /// Folded into the lookup so the UI can disable the button without a second call.</summary>

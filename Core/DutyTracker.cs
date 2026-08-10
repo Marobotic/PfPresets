@@ -126,6 +126,21 @@ namespace PfPresets
 
         private void OnDutyCompleted(IDutyStateEventArgs args) => Finish(cleared: true);
 
+        /// <summary>The local player's current job, or 0 if they cannot be read - which happens on
+        /// a zone change racing the duty's end.</summary>
+        private uint LocalJob()
+        {
+            try
+            {
+                var player = pfAutomation.PlayerState;
+                return player.IsLoaded ? player.ClassJob.RowId : 0u;
+            }
+            catch (Exception)
+            {
+                return 0u;
+            }
+        }
+
         /// <summary>
         /// Commits the duty if it's worth remembering, and clears the in-progress state either way.
         ///
@@ -155,6 +170,7 @@ namespace PfPresets
 
                 active.CompletedUtc = DateTime.UtcNow;
                 active.Cleared = cleared;
+                active.LocalJobId = LocalJob();
 
                 if (active.Members.Count > 0 && IsTrackingEnabled())
                 {

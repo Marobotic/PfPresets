@@ -71,6 +71,15 @@ namespace PfPresets
         /// long enough to count. Context only; it doesn't affect who can be rated.</summary>
         public bool Cleared { get; set; }
 
+        /// <summary>
+        /// What the local player was on, captured when the duty ends.
+        ///
+        /// Read at the end rather than at the start because that is the job somebody will say they
+        /// cleared it on, and swapping mid-lockout is normal. 0 when it could not be read - the
+        /// feed simply draws no job icon rather than guessing.
+        /// </summary>
+        public uint LocalJobId { get; set; }
+
         /// <summary>Everyone seen in the party over the duty's lifetime, excluding the local
         /// player. Late joiners are added as they appear, so a replacement mid-run is still
         /// rateable.</summary>
