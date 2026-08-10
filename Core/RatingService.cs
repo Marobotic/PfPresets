@@ -752,11 +752,22 @@ namespace PfPresets
                             Invalidate(next.Target);
                             break;
 
-                        // Still over the line, or unreachable. Keep it and try later.
+                        // Still over the line, or unreachable. Keep it - and, when the server said
+                        // how long, wait that long rather than asking again in twenty seconds. A
+                        // daily limit answered every twenty seconds is thousands of requests to be
+                        // told the same thing, and the plugin was doing it to its own server.
                         case ApiStatus.RateLimited:
+                            votes.HoldUntil(next, DateTime.UtcNow
+                                + (result.RetryAfter ?? TimeSpan.FromMinutes(15)));
+                            break;
+
                         case ApiStatus.Offline:
                         case ApiStatus.NoSession:
                         case ApiStatus.ServerError:
+                            // No Retry-After to go on, and these do pass on their own. A minute is
+                            // long enough that an outage is not hammered and short enough that
+                            // nobody notices the wait.
+                            votes.HoldUntil(next, DateTime.UtcNow + TimeSpan.FromMinutes(1));
                             break;
 
                         // Refused for a reason resending cannot change.

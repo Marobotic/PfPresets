@@ -29,6 +29,16 @@ namespace PfPresets
 
         /// <summary>Failed sends, so one permanently bad vote can't block the queue forever.</summary>
         public int Attempts { get; set; }
+
+        /// <summary>
+        /// Not worth sending again before this. Set from the server's own Retry-After.
+        ///
+        /// Without it the flush loop re-sent the head of the queue every twenty seconds forever,
+        /// which for a vote refused by a daily limit is about four thousand pointless requests a
+        /// day - per stuck vote, per install. On 2026-08-10 that was 9,474 of the API's 9,682
+        /// refusals: the plugin was comfortably the largest source of load on its own server.
+        /// </summary>
+        public DateTime? NotBeforeUtc { get; set; }
     }
 
     /// <summary>
@@ -112,16 +122,44 @@ namespace PfPresets
             return vote;
         }
 
-        /// <summary>The next vote to try, or null when the queue is empty or the hour is spent.</summary>
+        /// <summary>
+        /// The next vote worth trying, or null when the queue is empty, the hour is spent, or
+        /// everything in it is waiting out a refusal.
+        ///
+        /// Skips past anything holding a Retry-After rather than stopping at it: one vote the
+        /// server will not take until tomorrow must not block the ones behind it, which is what
+        /// returning `pending[0]` unconditionally did.
+        /// </summary>
         public QueuedVote? Next()
         {
             if (!CanSendNow())
                 return null;
 
+            var now = DateTime.UtcNow;
+
             lock (gate)
             {
-                return pending.Count > 0 ? pending[0] : null;
+                foreach (var vote in pending)
+                {
+                    if (vote.NotBeforeUtc == null || vote.NotBeforeUtc <= now)
+                        return vote;
+                }
+
+                return null;
             }
+        }
+
+        /// <summary>Holds a vote back until the server says it is worth trying again.</summary>
+        public void HoldUntil(QueuedVote vote, DateTime whenUtc)
+        {
+            lock (gate)
+            {
+                var found = pending.Find(v => v.VoteId == vote.VoteId);
+                if (found != null)
+                    found.NotBeforeUtc = whenUtc;
+            }
+
+            Save();
         }
 
         /// <summary>Drops a vote the server accepted, and counts it against the hour.</summary>
