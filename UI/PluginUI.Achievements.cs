@@ -139,19 +139,14 @@ namespace PfPresets
         /// </summary>
         private void DrawFeedHeader(RatingService ratings, float width)
         {
-            Vector2 start = ImGui.GetCursorScreenPos();
+            // Room above, so the heading is not welded to the tab strip.
+            ImGui.Dummy(new Vector2(0, FeedMargin));
 
-            using (UiLabelFont.Push())
-                ImGui.TextColored(Accent, "RECENT CLEARS");
-
-            ImGui.Dummy(new Vector2(0, 6));
-
-            var dl = ImGui.GetWindowDrawList();
-            float y = ImGui.GetCursorScreenPos().Y;
-            dl.AddRectFilled(new Vector2(start.X, y), new Vector2(start.X + width, y + 2f),
-                ImGui.ColorConvertFloat4ToU32(RuleStrong));
-
-            ImGui.Dummy(new Vector2(0, 10));
+            // The plugin's own section heading - a rule, then tracked caps in the heading face -
+            // rather than the one this tab grew for itself. "RECENT CLEARS" was drawn small, purple
+            // and untracked while every other heading in the window was large, dim and spaced, and
+            // the tab read as though it had been bolted on by somebody else.
+            DrawListHeading("Recent clears");
         }
 
         /// <summary>
@@ -233,7 +228,6 @@ namespace PfPresets
             // Unformatted: this is the server's own wording, and ImGui's Text* overloads treat
             // their argument as a format string. A stray percent sign in a message somebody edits
             // months from now should be a stray percent sign, not a crash.
-            ImGui.Dummy(new Vector2(0, 4));
             ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
             ImGui.PushStyleColor(ImGuiCol.Text, Faint);
             ImGui.TextUnformatted(note);
