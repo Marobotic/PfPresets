@@ -22,18 +22,24 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
-        /// <summary>How wide a post is, whatever the window is. Narrow windows get the width they
-        /// have; nothing is ever wider than this.</summary>
-        private const float FeedColumnWidth = 524f;
+        /// <summary>
+        /// Breathing room between the feed and the window's own edge.
+        ///
+        /// The cards take the full width inside it. There was a fixed 524px column for a while,
+        /// borrowed from how the web does this, and in a window that is already a narrow panel it
+        /// just left two dead gutters and a card too cramped for its own timestamp.
+        /// </summary>
+        private const float FeedMargin = 14f;
 
-        /// <summary>Breathing room between the column and the window's own edge.</summary>
-        private const float FeedMargin = 12f;
-
-        private const float FeedCardPad = 12f;
+        private const float FeedCardPad = 14f;
         private const float FeedGap = 10f;
         private const float FeedIconSize = 44f;
         private const float FeedJobIconSize = 18f;
-        private const float FeedActionHeight = 32f;
+        private const float FeedActionHeight = 34f;
+
+        /// <summary>Gap between the text column and the chip stack on the right, so a long fight
+        /// name stops rather than running under a timestamp.</summary>
+        private const float FeedRightGutter = 16f;
 
         /// <summary>
         /// The fight's own art, by the roster's slug.
@@ -45,23 +51,37 @@ namespace PfPresets
         private float feedScrollY;
         private bool feedScrollToTop;
 
-        private IDalamudTextureWrap? FightArt(string slug)
+        /// <summary>
+        /// The fight's own art.
+        ///
+        /// Tried by the roster's slug first and by the short label second, because the two only
+        /// agree for Ultimates. A savage fight's slug is whatever the catalogue calls the boss -
+        /// the current tier's last floor is `lindwurm-ii` - so keying on the slug alone left every
+        /// tier clear drawing the section's book glyph instead of its art.
+        ///
+        /// Slug first so a file CAN be exact when it matters: next tier's last floor is still
+        /// labelled M4S but is a different boss, and dropping in a file named after its slug
+        /// overrides the label's generic one without touching any code.
+        /// </summary>
+        private IDalamudTextureWrap? FightArt(string slug, string label)
+            => ArtNamed(slug) ?? ArtNamed(label);
+
+        private IDalamudTextureWrap? ArtNamed(string name)
         {
-            // Validated before it is used to name a resource, because the slug arrives from the
-            // server and the texture cache never forgets a key it has been asked for. Without this,
-            // a server sending ten thousand distinct slugs would grow two dictionaries in this
-            // process forever - each miss is cached as "no such image" and never retried. The rule
-            // is the shape a roster slug actually has, so nothing legitimate is turned away.
-            if (string.IsNullOrWhiteSpace(slug) || slug.Length > 32)
+            // Validated before it is used to name a resource, because this arrives from the server
+            // and the texture cache never forgets a key it has been asked for. Without this, a
+            // server sending ten thousand distinct names would grow two dictionaries in this
+            // process forever - each miss is cached as "no such image" and never retried.
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 32)
                 return null;
 
-            foreach (char c in slug)
+            foreach (char c in name)
             {
                 if (!char.IsAsciiLetterOrDigit(c) && c != '-')
                     return null;
             }
 
-            return EmbeddedTexture($"PfPresets.Data.Icons.bosses.{slug}.jpg");
+            return EmbeddedTexture($"PfPresets.Data.Icons.bosses.{name.ToLowerInvariant()}.jpg");
         }
 
         private void DrawAchievementsTab()
@@ -73,17 +93,9 @@ namespace PfPresets
             ratings.EnsureFeedLoaded();
 
             float avail = ImGui.GetContentRegionAvail().X;
+            float width = Math.Max(160f, avail - FeedMargin * 2f);
 
-            // The column never touches the window edge. Without the margin the cards butted
-            // straight up against the frame on a narrow window, which read as a rendering fault
-            // rather than as a layout.
-            float width = Math.Min(FeedColumnWidth, avail - FeedMargin * 2f);
-            if (width < 200f)
-                width = Math.Max(120f, avail - FeedMargin * 2f);
-
-            float indent = Math.Max(FeedMargin, (avail - width) * 0.5f);
-
-            ImGui.Indent(indent);
+            ImGui.Indent(FeedMargin);
 
             DrawFeedHeader(ratings, width);
             DrawNewPostsPill(ratings, width);
@@ -112,9 +124,16 @@ namespace PfPresets
                         feedScrollToTop = false;
                     }
 
+                    // Measured HERE, not outside, because this is the number that knows whether a
+                    // scrollbar is taking a slice out of the right-hand side. Measuring outside is
+                    // what put every card's timestamp underneath the bar - "Today 12:3" and then
+                    // nothing. Card height does not depend on width, so the scrollbar's appearance
+                    // cannot feed back into the layout and make it oscillate.
+                    float cardWidth = ImGui.GetContentRegionAvail().X;
+
                     for (int i = 0; i < posts.Count; i++)
                     {
-                        DrawAchievementCard(posts[i], width);
+                        DrawAchievementCard(posts[i], cardWidth);
 
                         if (i < posts.Count - 1)
                             ImGui.Dummy(new Vector2(0, FeedGap));
@@ -126,7 +145,7 @@ namespace PfPresets
                 }
             }
 
-            ImGui.Unindent(indent);
+            ImGui.Unindent(FeedMargin);
         }
 
         /// <summary>
@@ -137,16 +156,34 @@ namespace PfPresets
         /// presses refresh on a feed unless it has already failed them. What replaces it appears
         /// only when there is something to press it for: see DrawNewPostsPill.
         /// </summary>
+        /// <summary>
+        /// The one line above the feed: the plugin's own section heading, at the feed's own width.
+        ///
+        /// Drawn here rather than through DrawListHeading only because that one rules to the
+        /// content region's edge, and the feed keeps a margin the content region does not know
+        /// about - so the line ran a margin's width past the cards under it. Same face, same
+        /// tracking, same rule; just told where to stop.
+        /// </summary>
         private void DrawFeedHeader(RatingService ratings, float width)
         {
-            // Room above, so the heading is not welded to the tab strip.
             ImGui.Dummy(new Vector2(0, FeedMargin));
 
-            // The plugin's own section heading - a rule, then tracked caps in the heading face -
-            // rather than the one this tab grew for itself. "RECENT CLEARS" was drawn small, purple
-            // and untracked while every other heading in the window was large, dim and spaced, and
-            // the tab read as though it had been bolted on by somebody else.
-            DrawListHeading("Recent clears");
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 p = ImGui.GetCursorScreenPos();
+
+            dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + 2f),
+                ImGui.ColorConvertFloat4ToU32(RuleStrong));
+
+            ImGui.Dummy(new Vector2(0, 10));
+
+            using (UiHeadingFont.Push())
+            {
+                Vector2 at = ImGui.GetCursorScreenPos();
+                float used = DrawTrackedCaps(dl, at, "Recent clears", Dim);
+                ImGui.Dummy(new Vector2(used, ImGui.GetTextLineHeight()));
+            }
+
+            ImGui.Dummy(new Vector2(0, 10));
         }
 
         /// <summary>
@@ -222,7 +259,8 @@ namespace PfPresets
         {
             string note = ratings.FeedNote
                 ?? (ratings.FeedEverLoaded
-                    ? "No clears yet. Yours will show up here."
+                    ? "No clears yet. Ultimate and savage tier clears turn up here as people get "
+                      + "them - yours and everybody else's."
                     : "Loading...");
 
             // Unformatted: this is the server's own wording, and ImGui's Text* overloads treat
@@ -252,7 +290,7 @@ namespace PfPresets
             using (UiRowNameFont.Push())
                 lines = ImGui.GetTextLineHeight();
             using (UiBodyFont.Push())
-                lines += ImGui.GetTextLineHeight() + 3f;
+                lines += ImGui.GetTextLineHeight() + 4f;
 
             float bodyHeight = Math.Max(FeedIconSize, lines) + FeedCardPad * 2f;
             float height = bodyHeight + FeedActionHeight + 1f;
@@ -296,7 +334,7 @@ namespace PfPresets
 
             dl.AddRectFilled(artMin, artMax, ImGui.ColorConvertFloat4ToU32(Field));
 
-            var art = FightArt(post.FightSlug);
+            var art = FightArt(post.FightSlug, post.FightLabel);
             if (art != null)
             {
                 dl.AddImage(art.Handle, artMin, artMax);
@@ -347,22 +385,22 @@ namespace PfPresets
             // ── The right edge: the kind, and when ──
             float rightEdge = min.X + width - FeedCardPad;
 
-            float chipHeight = smallH + 7f;
-            float stackHeight = chipHeight + 5f + smallH;
+            float chipHeight = smallH + 8f;
+            float stackHeight = chipHeight + 6f + smallH;
             float stackTop = centreY - stackHeight * 0.5f;
 
             float chipWidth = DrawKindChip(post, rightEdge, stackTop, chipHeight);
 
             using (UiLabelFont.Push())
-                dl.AddText(new Vector2(rightEdge - whenW, stackTop + chipHeight + 5f),
+                dl.AddText(new Vector2(rightEdge - whenW, stackTop + chipHeight + 6f),
                     ImGui.ColorConvertFloat4ToU32(Faint), when);
 
             // ── The two text lines ──
             float textX = artMax.X + FeedCardPad;
-            float textRight = rightEdge - Math.Max(chipWidth, whenW) - 14f;
+            float textRight = rightEdge - Math.Max(chipWidth, whenW) - FeedRightGutter;
             float textWidth = Math.Max(60f, textRight - textX);
 
-            float lineGap = 3f;
+            float lineGap = 4f;
             float topY = centreY - (nameH + lineGap + fightH) * 0.5f;
 
             // Line one: who, on what. The job belongs beside the person - it is a fact about them
@@ -461,7 +499,7 @@ namespace PfPresets
             float heartWidth = FeedActionButton(
                 post, "heart", origin,
                 FontAwesomeIcon.Heart,
-                post.Hearts > 0 ? post.Hearts.ToString() : string.Empty,
+                post.Hearts.ToString(),
                 post.Hearted ? Accent : Faint,
                 out bool heartClicked,
                 enabled: !mine);
@@ -499,7 +537,8 @@ namespace PfPresets
                 glyphWidth = ImGui.CalcTextSize(icon.ToIconString()).X;
 
             float labelWidth = string.IsNullOrEmpty(label) ? 0f : ImGui.CalcTextSize(label).X;
-            float width = 12f + glyphWidth + (labelWidth > 0 ? 7f + labelWidth : 0f) + 12f;
+            float width = FeedCardPad + glyphWidth + (labelWidth > 0 ? 8f + labelWidth : 0f)
+                + FeedCardPad;
 
             ImGui.SetCursorScreenPos(origin);
             ImGui.InvisibleButton($"##feed{id}{post.Id}", new Vector2(width, FeedActionHeight));
@@ -522,14 +561,15 @@ namespace PfPresets
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
             {
                 Vector2 gs = ImGui.CalcTextSize(icon.ToIconString());
-                dl.AddText(new Vector2(origin.X + 12f, centreY - gs.Y * 0.5f),
+                dl.AddText(new Vector2(origin.X + FeedCardPad, centreY - gs.Y * 0.5f),
                     drawColour, icon.ToIconString());
             }
 
             if (labelWidth > 0)
             {
                 Vector2 ls = ImGui.CalcTextSize(label);
-                dl.AddText(new Vector2(origin.X + 12f + glyphWidth + 7f, centreY - ls.Y * 0.5f),
+                dl.AddText(new Vector2(origin.X + FeedCardPad + glyphWidth + 8f,
+                        centreY - ls.Y * 0.5f),
                     drawColour, label);
             }
 
