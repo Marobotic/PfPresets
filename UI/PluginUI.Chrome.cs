@@ -50,9 +50,10 @@ namespace PfPresets
             {
                 tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
 
-                // Marked beta in the label rather than in a banner inside the tab. The word belongs
-                // where somebody decides whether to click, not where they find out afterwards.
-                tabs.Add(("Achievements (beta)", FontAwesomeIcon.Trophy, MainTab.Achievements));
+                // "Achievements", with beta drawn as a chip beside it rather than baked into the
+                // label - see BetaChipWidth. The word belongs where somebody decides whether to
+                // click, but it should not be the reason the whole row runs out of room.
+                tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
             }
 
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
@@ -275,12 +276,20 @@ namespace PfPresets
                     ImGui.ColorConvertFloat4ToU32(active ? Accent : color), glyph);
             }
 
+            float labelEnd;
             using (UiBodyFont.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(label);
                 dl.AddText(new Vector2(p.X + 42f, p.Y + (rowHeight - ts.Y) * 0.5f),
                     ImGui.ColorConvertFloat4ToU32(color), label);
+                labelEnd = p.X + 42f + ts.X;
             }
+
+            // The beta mark, when the row has room for it. Drawn rather than written into the
+            // label so the word cannot be what decides whether the navigation fits.
+            if (tab == MainTab.Achievements
+                && labelEnd + 6f + BetaChipWidth() <= p.X + width - 8f)
+                DrawBetaChip(dl, new Vector2(labelEnd + 6f, p.Y), rowHeight, active ? 1f : 0.7f);
         }
 #endif
 

@@ -26,6 +26,9 @@ namespace PfPresets
         /// have; nothing is ever wider than this.</summary>
         private const float FeedColumnWidth = 524f;
 
+        /// <summary>Breathing room between the column and the window's own edge.</summary>
+        private const float FeedMargin = 12f;
+
         private const float FeedCardPad = 12f;
         private const float FeedGap = 10f;
         private const float FeedIconSize = 44f;
@@ -39,6 +42,9 @@ namespace PfPresets
         /// next patch draws a crown in a frame until an image is dropped in - which needs no code
         /// change, only a file named after the slug.
         /// </summary>
+        private float feedScrollY;
+        private bool feedScrollToTop;
+
         private IDalamudTextureWrap? FightArt(string slug)
         {
             // Validated before it is used to name a resource, because the slug arrives from the
@@ -67,15 +73,25 @@ namespace PfPresets
             ratings.EnsureFeedLoaded();
 
             float avail = ImGui.GetContentRegionAvail().X;
-            float width = Math.Min(FeedColumnWidth, avail);
 
-            // Centred, with whatever is left over split either side.
-            float indent = Math.Max(0f, (avail - width) * 0.5f);
+            // The column never touches the window edge. Without the margin the cards butted
+            // straight up against the frame on a narrow window, which read as a rendering fault
+            // rather than as a layout.
+            float width = Math.Min(FeedColumnWidth, avail - FeedMargin * 2f);
+            if (width < 200f)
+                width = Math.Max(120f, avail - FeedMargin * 2f);
 
-            if (indent > 0f)
-                ImGui.Indent(indent);
+            float indent = Math.Max(FeedMargin, (avail - width) * 0.5f);
+
+            ImGui.Indent(indent);
 
             DrawFeedHeader(ratings, width);
+            DrawNewPostsPill(ratings, width);
+
+            // Already at the top: nothing to lose your place in, so newer posts just appear. The
+            // pill is for somebody who has scrolled away.
+            if (ratings.HasNewPosts && feedScrollY <= 2f)
+                ratings.ApplyNewPosts();
 
             var posts = ratings.Feed();
 
@@ -85,13 +101,23 @@ namespace PfPresets
             }
             else
             {
-                ImGui.BeginChild("##FeedScroll", new Vector2(width, -1), false);
+                ImGui.BeginChild("##FeedScroll", new Vector2(width, -FeedMargin), false);
                 try
                 {
-                    foreach (var post in posts)
+                    feedScrollY = ImGui.GetScrollY();
+
+                    if (feedScrollToTop)
                     {
-                        DrawAchievementCard(post, width);
-                        ImGui.Dummy(new Vector2(0, FeedGap));
+                        ImGui.SetScrollY(0f);
+                        feedScrollToTop = false;
+                    }
+
+                    for (int i = 0; i < posts.Count; i++)
+                    {
+                        DrawAchievementCard(posts[i], width);
+
+                        if (i < posts.Count - 1)
+                            ImGui.Dummy(new Vector2(0, FeedGap));
                     }
                 }
                 finally
@@ -100,10 +126,17 @@ namespace PfPresets
                 }
             }
 
-            if (indent > 0f)
-                ImGui.Unindent(indent);
+            ImGui.Unindent(indent);
         }
 
+        /// <summary>
+        /// The one line above the feed.
+        ///
+        /// No refresh button. The feed refreshes itself, and a button that says "Refresh" parked
+        /// permanently in the corner is a piece of plumbing showing through the floor - nobody
+        /// presses refresh on a feed unless it has already failed them. What replaces it appears
+        /// only when there is something to press it for: see DrawNewPostsPill.
+        /// </summary>
         private void DrawFeedHeader(RatingService ratings, float width)
         {
             Vector2 start = ImGui.GetCursorScreenPos();
@@ -111,22 +144,83 @@ namespace PfPresets
             using (UiLabelFont.Push())
                 ImGui.TextColored(Accent, "RECENT CLEARS");
 
-            // The refresh sits at the right edge of the column, on the same line.
-            float refreshWidth = 74f;
-            ImGui.SameLine(width - refreshWidth);
-
-            if (DrawSecondaryButton(ratings.FeedEverLoaded ? "Refresh" : "...",
-                    new Vector2(refreshWidth, 22f)))
-                ratings.RefreshFeed();
-
-            ImGui.Dummy(new Vector2(0, 4));
+            ImGui.Dummy(new Vector2(0, 6));
 
             var dl = ImGui.GetWindowDrawList();
             float y = ImGui.GetCursorScreenPos().Y;
             dl.AddRectFilled(new Vector2(start.X, y), new Vector2(start.X + width, y + 2f),
                 ImGui.ColorConvertFloat4ToU32(RuleStrong));
 
-            ImGui.Dummy(new Vector2(0, 8));
+            ImGui.Dummy(new Vector2(0, 10));
+        }
+
+        /// <summary>
+        /// Newer posts, waiting.
+        ///
+        /// The poll does not replace the list under somebody who is reading it. When it finds
+        /// something new it holds it and this appears - press it and the feed takes the newer
+        /// posts and goes back to the top, and the pill is gone until the next time. That is the
+        /// only refresh control in the tab and it exists only while it has a reason to.
+        /// </summary>
+        private void DrawNewPostsPill(RatingService ratings, float width)
+        {
+            if (!ratings.HasNewPosts)
+                return;
+
+            var dl = ImGui.GetWindowDrawList();
+
+            const string label = "New clears";
+            const float height = 26f;
+
+            float glyph;
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                glyph = ImGui.CalcTextSize(FontAwesomeIcon.ArrowUp.ToIconString()).X;
+
+            float text;
+            using (UiCaptionFont.Push())
+                text = ImGui.CalcTextSize(label).X;
+
+            float pillWidth = 14f + glyph + 7f + text + 14f;
+
+            // In the gap between the rule and the list rather than floating over it. Overlapping
+            // a scrolling child means fighting it for the pointer, and the twenty pixels the list
+            // moves down are worth rather less than a button that reliably takes a click.
+            Vector2 origin = ImGui.GetCursorScreenPos();
+            float x = origin.X + (width - pillWidth) * 0.5f;
+
+            ImGui.SetCursorScreenPos(new Vector2(x, origin.Y));
+            ImGui.InvisibleButton("##feedNewPosts", new Vector2(pillWidth, height));
+
+            bool hovered = ImGui.IsItemHovered();
+            if (ImGui.IsItemClicked())
+            {
+                ratings.ApplyNewPosts();
+                feedScrollToTop = true;
+            }
+
+            var min = new Vector2(x, origin.Y);
+            var max = new Vector2(x + pillWidth, origin.Y + height);
+
+            dl.AddRectFilled(min, max,
+                ImGui.ColorConvertFloat4ToU32(hovered ? AccentHover : Accent));
+
+            uint ink = ImGui.ColorConvertFloat4ToU32(OnAccent);
+            float midY = origin.Y + height * 0.5f;
+
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                string arrow = FontAwesomeIcon.ArrowUp.ToIconString();
+                Vector2 gs = ImGui.CalcTextSize(arrow);
+                dl.AddText(new Vector2(x + 14f, midY - gs.Y * 0.5f), ink, arrow);
+            }
+
+            using (UiCaptionFont.Push())
+            {
+                Vector2 ts = ImGui.CalcTextSize(label);
+                dl.AddText(new Vector2(x + 14f + glyph + 7f, midY - ts.Y * 0.5f), ink, label);
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + height + 10f));
         }
 
         private void DrawFeedEmpty(RatingService ratings, float width)
@@ -139,6 +233,7 @@ namespace PfPresets
             // Unformatted: this is the server's own wording, and ImGui's Text* overloads treat
             // their argument as a format string. A stray percent sign in a message somebody edits
             // months from now should be a stray percent sign, not a crash.
+            ImGui.Dummy(new Vector2(0, 4));
             ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
             ImGui.PushStyleColor(ImGuiCol.Text, Faint);
             ImGui.TextUnformatted(note);
@@ -159,8 +254,13 @@ namespace PfPresets
             var dl = ImGui.GetWindowDrawList();
             Vector2 origin = ImGui.GetCursorScreenPos();
 
-            float bodyHeight = Math.Max(FeedIconSize, ImGui.GetTextLineHeight() * 2 + 10f)
-                + FeedCardPad * 2;
+            float lines;
+            using (UiRowNameFont.Push())
+                lines = ImGui.GetTextLineHeight();
+            using (UiBodyFont.Push())
+                lines += ImGui.GetTextLineHeight() + 3f;
+
+            float bodyHeight = Math.Max(FeedIconSize, lines) + FeedCardPad * 2f;
             float height = bodyHeight + FeedActionHeight + 1f;
 
             var min = origin;
@@ -224,28 +324,52 @@ namespace PfPresets
 
             dl.AddRect(artMin, artMax, ImGui.ColorConvertFloat4ToU32(BorderControl), 0f, 0, 1f);
 
-            // ── The right edge: the kind, and when ──
-            float rightEdge = min.X + width - FeedCardPad;
-            float lineH = ImGui.GetTextLineHeight();
+            // ── Measure both lines before drawing either ──
+            //
+            // Three faces, three jobs: the person at 15, the fight at 13, the world and the clock
+            // at 11. All of it measured in its own face first, because a string measured in one
+            // font and drawn in another is how text ends up running through the thing beside it.
+            float nameH, fightH, smallH;
+            float nameW, worldW, whenW;
 
             string when = LocalClearTime(post.ClearedAt);
-            float whenWidth = ImGui.CalcTextSize(when).X;
 
-            float chipHeight = lineH + 6f;
-            float stackHeight = chipHeight + 4f + lineH;
+            using (UiRowNameFont.Push())
+            {
+                nameH = ImGui.GetTextLineHeight();
+                nameW = ImGui.CalcTextSize(post.Name).X;
+            }
+
+            using (UiBodyFont.Push())
+                fightH = ImGui.GetTextLineHeight();
+
+            using (UiLabelFont.Push())
+            {
+                smallH = ImGui.GetTextLineHeight();
+                worldW = ImGui.CalcTextSize(post.World).X;
+                whenW = ImGui.CalcTextSize(when).X;
+            }
+
+            // ── The right edge: the kind, and when ──
+            float rightEdge = min.X + width - FeedCardPad;
+
+            float chipHeight = smallH + 7f;
+            float stackHeight = chipHeight + 5f + smallH;
             float stackTop = centreY - stackHeight * 0.5f;
 
             float chipWidth = DrawKindChip(post, rightEdge, stackTop, chipHeight);
 
-            dl.AddText(new Vector2(rightEdge - whenWidth, stackTop + chipHeight + 4f),
-                ImGui.ColorConvertFloat4ToU32(Faint), when);
+            using (UiLabelFont.Push())
+                dl.AddText(new Vector2(rightEdge - whenW, stackTop + chipHeight + 5f),
+                    ImGui.ColorConvertFloat4ToU32(Faint), when);
 
             // ── The two text lines ──
             float textX = artMax.X + FeedCardPad;
-            float textRight = rightEdge - Math.Max(chipWidth, whenWidth) - 12f;
+            float textRight = rightEdge - Math.Max(chipWidth, whenW) - 14f;
             float textWidth = Math.Max(60f, textRight - textX);
 
-            float topY = centreY - (lineH * 2 + 4f) * 0.5f;
+            float lineGap = 3f;
+            float topY = centreY - (nameH + lineGap + fightH) * 0.5f;
 
             // Line one: who, on what. The job belongs beside the person - it is a fact about them
             // that evening, not about the fight, and every party list in the game reads that way.
@@ -253,26 +377,33 @@ namespace PfPresets
 
             if (post.Job > 0 && TryGetIconHandle(IconJobBase + post.Job, out var jobHandle))
             {
-                float jobY = topY + (lineH - FeedJobIconSize) * 0.5f;
+                float jobY = topY + (nameH - FeedJobIconSize) * 0.5f;
                 dl.AddImage(jobHandle, new Vector2(textX, jobY),
                     new Vector2(textX + FeedJobIconSize, jobY + FeedJobIconSize));
 
                 nameX += FeedJobIconSize + 7f;
             }
 
-            float nameRoom = textWidth - (nameX - textX) - ImGui.CalcTextSize(post.World).X - 10f;
-            string name = Truncate(post.Name, nameRoom);
-            dl.AddText(new Vector2(nameX, topY), ImGui.ColorConvertFloat4ToU32(Ink), name);
+            float nameRoom = textWidth - (nameX - textX) - worldW - 10f;
 
-            float worldX = nameX + ImGui.CalcTextSize(name).X + 8f;
-            dl.AddText(new Vector2(worldX, topY), ImGui.ColorConvertFloat4ToU32(Faint), post.World);
+            using (UiRowNameFont.Push())
+            {
+                string name = Truncate(post.Name, nameRoom);
+                dl.AddText(new Vector2(nameX, topY), ImGui.ColorConvertFloat4ToU32(Ink), name);
+                nameW = ImGui.CalcTextSize(name).X;
+            }
+
+            using (UiLabelFont.Push())
+                dl.AddText(new Vector2(nameX + nameW + 8f, topY + (nameH - smallH) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(Faint), post.World);
 
             // Line two: the fight, by the name people say out loud rather than its initials.
-            float secondY = topY + lineH + 4f;
-
-            string title = Truncate(post.Title, textWidth);
-            dl.AddText(new Vector2(textX, secondY),
-                ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? Ink : Dim), title);
+            using (UiBodyFont.Push())
+            {
+                string title = Truncate(post.Title, textWidth);
+                dl.AddText(new Vector2(textX, topY + nameH + lineGap),
+                    ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? Ink : Dim), title);
+            }
         }
 
         /// <summary>The kind chip, right-aligned. Returns its width so the text column knows where

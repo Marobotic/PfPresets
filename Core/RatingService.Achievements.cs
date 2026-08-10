@@ -26,10 +26,25 @@ namespace PfPresets
         private static readonly TimeSpan FeedPollAfter = TimeSpan.FromMinutes(2);
 
         private readonly List<AchievementPost> feed = new();
+
+        /// <summary>
+        /// Newer posts the poll has fetched but not shown.
+        ///
+        /// A feed that rewrites itself under somebody mid-read is a feed that loses their place,
+        /// so the poll parks what it finds here and the tab offers it. Empty whenever what is on
+        /// screen is current, which is nearly always.
+        /// </summary>
+        private readonly List<AchievementPost> incoming = new();
+
         private readonly object feedLock = new();
 
         private DateTime feedReadAt = DateTime.MinValue;
         private int feedInFlight;
+
+        /// <summary>Set when the change came from this client - their own clear, their own share,
+        /// their own opt-out. Offering somebody a pill to see a thing they just did themselves
+        /// would be absurd, so the next read lands straight on screen.</summary>
+        private volatile bool applyNextRead;
 
         private volatile string? feedNote;
         private DateTime feedNoteUntil = DateTime.MinValue;
@@ -45,6 +60,27 @@ namespace PfPresets
         /// <summary>Something to say instead of posts, or null. Expires on its own.</summary>
         public string? FeedNote =>
             DateTime.UtcNow <= feedNoteUntil ? feedNote : null;
+
+        /// <summary>Whether the poll is holding something newer than what is on screen.</summary>
+        public bool HasNewPosts
+        {
+            get { lock (feedLock) return incoming.Count > 0; }
+        }
+
+        /// <summary>Shows what the poll has been holding. The tab scrolls itself back to the top
+        /// afterwards - the whole point is that something above you has changed.</summary>
+        public void ApplyNewPosts()
+        {
+            lock (feedLock)
+            {
+                if (incoming.Count == 0)
+                    return;
+
+                feed.Clear();
+                feed.AddRange(incoming);
+                incoming.Clear();
+            }
+        }
 
         /// <summary>A snapshot for the frame. Copied under the lock because the poll writes from a
         /// worker thread while the UI reads.</summary>
@@ -101,10 +137,30 @@ namespace PfPresets
                         return;
                     }
 
+                    var posts = result.Value.Posts;
+
                     lock (feedLock)
                     {
-                        feed.Clear();
-                        feed.AddRange(result.Value.Posts);
+                        // Nothing on screen yet, or the same top post: apply it. Anything else is
+                        // held, because replacing a list somebody is reading loses their place and
+                        // moves the thing they were about to press.
+                        bool nothingShown = feed.Count == 0;
+                        bool sameTop = !nothingShown && posts.Count > 0
+                            && string.Equals(posts[0].Id, feed[0].Id, StringComparison.Ordinal);
+
+                        if (nothingShown || sameTop || applyNextRead)
+                        {
+                            feed.Clear();
+                            feed.AddRange(posts);
+                            incoming.Clear();
+                        }
+                        else
+                        {
+                            incoming.Clear();
+                            incoming.AddRange(posts);
+                        }
+
+                        applyNextRead = false;
                     }
 
                     FeedEverLoaded = true;
@@ -186,6 +242,7 @@ namespace PfPresets
                         // A share moves the post to the top, so the order on screen is now wrong.
                         // Re-read rather than shuffle the local copy: the server decides the order
                         // and this is the one action that changes it.
+                        applyNextRead = true;
                         feedReadAt = DateTime.MinValue;
                     }
                 }
@@ -243,6 +300,7 @@ namespace PfPresets
                         log.Debug($"[Ratings] Achievement posted: {result.Value.Fight} ({result.Value.Kind})");
 
                         // Their own clear should be at the top the next time they look.
+                        applyNextRead = true;
                         feedReadAt = DateTime.MinValue;
                     }
                 }
@@ -285,6 +343,7 @@ namespace PfPresets
                     await api.SetBroadcastAsync(me, broadcast).ConfigureAwait(false);
 
                     // What is on the feed has changed, whichever way it went.
+                    applyNextRead = true;
                     feedReadAt = DateTime.MinValue;
                 }
                 catch (Exception ex)

@@ -98,31 +98,145 @@ namespace PfPresets
             // is exactly the layout depending on how wide the window happened to be.
             var tabs = TabList().ToArray();
 
-            float segWidth = (width - 16f) / tabs.Length;
+            const float stripPad = 8f;
+            float room = width - stripPad * 2f;
 
-            if (ChromeDiagnosticRequested) ReportChromeDiagnostic($"nav strip: {tabs.Length} tabs, seg={segWidth:F0} "
-                + $"at y={start.Y:F0}, winX={winX:F0}, width={width:F0}");
+            // ── How much of each tab actually fits ──
+            //
+            // The strip used to divide the width into equal segments and centre an icon and a
+            // label in each, measuring neither. At three tabs on a wide window that looked fine.
+            // At four - and at six with the moderator build's - every label ran straight through
+            // its neighbour, because "Achievements" is wider than a hundred-pixel segment and
+            // nothing was checking.
+            //
+            // So measure first, then choose how much to show. Labels for everything if they fit;
+            // otherwise a label on the tab you are actually on and icons for the rest, which is
+            // what a phone does and for the same reason; and icons alone when even that is too
+            // much. The hit areas are always the full cell, whichever tier is drawn.
+            var mode = FitNavLabels(tabs, room);
+
+            float[] widths = new float[tabs.Length];
+            float total = 0f;
+
+            for (int i = 0; i < tabs.Length; i++)
+            {
+                bool labelled = mode == NavFit.AllLabels
+                    || (mode == NavFit.ActiveLabelOnly && activeTab == tabs[i].Item3);
+
+                widths[i] = NavTabWidth(tabs[i].Item1, tabs[i].Item3, labelled);
+                total += widths[i];
+            }
+
+            // Whatever is left over is shared out between the tabs rather than added to the last
+            // one, so the row stays evenly spaced instead of bunching at the left.
+            float slack = Math.Max(0f, room - total) / tabs.Length;
+
             var dl = ImGui.GetWindowDrawList();
 
-            // A faint baseline under the whole strip, so the inactive tabs still read as a row
-            // rather than three loose labels floating in space.
             float baselineY = start.Y + NavStripHeight - 2f;
             dl.AddLine(new Vector2(winX, baselineY), new Vector2(winX + width, baselineY),
                 ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
 
+            if (ChromeDiagnosticRequested)
+                ReportChromeDiagnostic($"nav strip: {tabs.Length} tabs, mode={mode}, "
+                    + $"needed={total:F0} of {room:F0} at y={start.Y:F0}, width={width:F0}");
+
+            float x = winX + stripPad;
+
             for (int i = 0; i < tabs.Length; i++)
             {
                 var (label, icon, tab) = tabs[i];
-                var pos = new Vector2(winX + 8f + segWidth * i, start.Y);
-                var size = new Vector2(segWidth, NavStripHeight - 2f);
-                DrawNavTab(dl, label, icon, tab, pos, size, baselineY);
+
+                bool labelled = mode == NavFit.AllLabels
+                    || (mode == NavFit.ActiveLabelOnly && activeTab == tab);
+
+                float cell = widths[i] + slack;
+
+                DrawNavTab(dl, label, icon, tab,
+                    new Vector2(x, start.Y), new Vector2(cell, NavStripHeight - 2f),
+                    baselineY, labelled);
+
+                x += cell;
             }
 
-            ImGui.SetCursorScreenPos(new Vector2(winX + 8, start.Y + NavStripHeight + 2));
+            ImGui.SetCursorScreenPos(new Vector2(winX + stripPad, start.Y + NavStripHeight + 2));
+        }
+
+        /// <summary>How much of a tab the strip has room to show.</summary>
+        private enum NavFit
+        {
+            AllLabels,
+            ActiveLabelOnly,
+            IconsOnly,
+        }
+
+        private NavFit FitNavLabels((string, FontAwesomeIcon, MainTab)[] tabs, float room)
+        {
+            float all = 0f;
+            float activeOnly = 0f;
+            float icons = 0f;
+
+            foreach (var (label, _, tab) in tabs)
+            {
+                all += NavTabWidth(label, tab, withLabel: true);
+                activeOnly += NavTabWidth(label, tab, withLabel: activeTab == tab);
+                icons += NavTabWidth(label, tab, withLabel: false);
+            }
+
+            if (all <= room) return NavFit.AllLabels;
+            if (activeOnly <= room) return NavFit.ActiveLabelOnly;
+            return NavFit.IconsOnly;
+        }
+
+        /// <summary>What one tab needs, including the breathing room either side of it.</summary>
+        private float NavTabWidth(string label, MainTab tab, bool withLabel)
+        {
+            const float pad = 12f;
+            const float gap = 8f;
+
+            float glyph;
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                glyph = ImGui.CalcTextSize(FontAwesomeIcon.Star.ToIconString()).X;
+
+            if (!withLabel)
+                return glyph + pad * 2f;
+
+            float text = ImGui.CalcTextSize(label).X;
+            float beta = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
+
+            return glyph + gap + text + beta + pad * 2f;
+        }
+
+        /// <summary>
+        /// The word beta, as a chip rather than part of the label.
+        ///
+        /// It was "Achievements (beta)" for a day, which made the longest label in the strip forty
+        /// per cent longer than it needed to be and pushed the whole row into its icons-only tier
+        /// on any window narrow enough to have a strip at all. The word is a status, not a name.
+        /// </summary>
+        private float BetaChipWidth()
+        {
+            using (UiLabelFont.Push())
+                return ImGui.CalcTextSize("BETA").X + 8f;
+        }
+
+        private void DrawBetaChip(ImDrawListPtr dl, Vector2 pos, float height, float alpha)
+        {
+            using (UiLabelFont.Push())
+            {
+                Vector2 size = ImGui.CalcTextSize("BETA");
+                var min = new Vector2(pos.X, pos.Y + (height - size.Y - 4f) * 0.5f);
+                var max = new Vector2(min.X + size.X + 8f, min.Y + size.Y + 4f);
+
+                dl.AddRect(min, max,
+                    ImGui.ColorConvertFloat4ToU32(BorderControl with { W = alpha }), 0f, 0, 1f);
+                dl.AddText(new Vector2(min.X + 4f, min.Y + 2f),
+                    ImGui.ColorConvertFloat4ToU32(TextMuted with { W = alpha }), "BETA");
+            }
         }
 
         private void DrawNavTab(ImDrawListPtr dl, string label, FontAwesomeIcon icon, MainTab tab,
-            Vector2 pos, Vector2 size, float baselineY)
+            Vector2 pos, Vector2 size, float baselineY, bool withLabel)
         {
             bool active = activeTab == tab;
 
@@ -150,18 +264,66 @@ namespace PfPresets
             ImGui.PopStyleColor(3);
 
             var color = active ? TextPrimary : hovered ? TextSecondary : TextMuted;
-            DrawIconLabelCentered(icon, label, pos, size, color);
+
+            if (withLabel)
+            {
+                float betaRoom = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
+
+                DrawIconLabelCentered(icon, label,
+                    pos, new Vector2(size.X - betaRoom, size.Y), color);
+
+                if (betaRoom > 0f)
+                {
+                    // Placed against the label's own end rather than the cell's, so it travels with
+                    // the word instead of drifting off toward the next tab on a wide window.
+                    float glyph;
+                    using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                        glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
+
+                    float content = glyph + 8f + ImGui.CalcTextSize(label).X;
+                    float startX = pos.X + (size.X - betaRoom - content) * 0.5f;
+
+                    DrawBetaChip(dl, new Vector2(startX + content + 6f, pos.Y), size.Y,
+                        active ? 1f : 0.7f);
+                }
+            }
+            else
+            {
+                DrawIconCentered(icon, pos, size, color);
+
+                if (hovered)
+                    PaddedTooltip(tab == MainTab.Achievements ? $"{label} (beta)" : label);
+            }
 
             if (!active)
                 return;
 
-            // The lit underline. Inset so it reads as belonging to the label rather than running
-            // the full width of the cell.
-            const float inset = 14f;
+            // The lit underline, matched to what is actually drawn rather than to a fixed inset -
+            // a 14px inset on an icons-only cell left an underline wider than the icon above it.
+            float half = Math.Min(size.X * 0.5f - 6f, (withLabel ? size.X * 0.5f - 14f : 14f));
+            float mid = pos.X + size.X * 0.5f;
+
             dl.AddRectFilled(
-                new Vector2(pos.X + inset, baselineY - 1f),
-                new Vector2(pos.X + size.X - inset, baselineY + 1f),
+                new Vector2(mid - half, baselineY - 1f),
+                new Vector2(mid + half, baselineY + 1f),
                 ImGui.ColorConvertFloat4ToU32(AccentBlue), 1f);
+        }
+
+        /// <summary>An icon on its own, centred in a cell.</summary>
+        private void DrawIconCentered(FontAwesomeIcon icon, Vector2 rectMin, Vector2 rectSize,
+            Vector4 color)
+        {
+            var dl = ImGui.GetWindowDrawList();
+
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                string glyph = icon.ToIconString();
+                Vector2 size = ImGui.CalcTextSize(glyph);
+
+                dl.AddText(new Vector2(rectMin.X + (rectSize.X - size.X) * 0.5f,
+                                       rectMin.Y + (rectSize.Y - size.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(color), glyph);
+            }
         }
 
         // ══════════════════════════════════════════════════════════
