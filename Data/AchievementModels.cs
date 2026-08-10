@@ -81,9 +81,16 @@ namespace PfPresets
 
     internal sealed class AchievementFeedRequest
     {
-        /// <summary>Unix ms; asks for posts ranked before this one. 0 means the top of the
-        /// feed.</summary>
-        public long Before { get; set; }
+        /// <summary>
+        /// Unix ms; asks for posts ranked before this one. Null is the top of the feed.
+        ///
+        /// Nullable so that "the top" is an absent field rather than a zero. It was a plain long,
+        /// which serialises as 0, and the server read that as a real timestamp - the epoch - and
+        /// answered with everything older than 1970. Which is nothing. Every user saw an empty
+        /// feed while the table had posts in it, and every test passed, because the tests sent no
+        /// cursor at all.
+        /// </summary>
+        public long? Before { get; set; }
     }
 
     internal sealed class AchievementFeedResponse

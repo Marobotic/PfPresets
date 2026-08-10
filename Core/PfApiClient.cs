@@ -327,10 +327,13 @@ namespace PfPresets
         }
 
         /// <summary>The feed, newest first. Reaches our own table and nothing else.</summary>
-        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(long beforeUnixMs = 0)
+        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(long? beforeUnixMs = null)
             => await SendAsync<AchievementFeedResponse>(
                 HttpMethod.Post, "achievements/feed",
-                new AchievementFeedRequest { Before = beforeUnixMs }).ConfigureAwait(false);
+                new AchievementFeedRequest
+                {
+                    Before = beforeUnixMs > 0 ? beforeUnixMs : null,
+                }).ConfigureAwait(false);
 
         public async Task<ApiResult<AchievementReactResponse>> HeartAsync(string id)
             => await SendAsync<AchievementReactResponse>(
