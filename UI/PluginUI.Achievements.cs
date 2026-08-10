@@ -449,14 +449,24 @@ namespace PfPresets
 
             ImGui.SetCursorScreenPos(origin);
 
+            // You cannot heart your own clear, so the button does not offer to let you.
+            //
+            // The server has always refused it - sixteen different people is what verifies an
+            // identity, and without that rule the sixteen could be your own posts. But it refuses
+            // the way it refuses everything, by answering as though it worked, which meant the
+            // heart filled in, sat there, and quietly emptied on the next read. Every heart the
+            // feed received on its first day was somebody doing exactly this to their own clear.
+            bool mine = IsSelf(post.Identity);
+
             float heartWidth = FeedActionButton(
                 post, "heart", origin,
-                post.Hearted ? FontAwesomeIcon.Heart : FontAwesomeIcon.Heart,
+                FontAwesomeIcon.Heart,
                 post.Hearts > 0 ? post.Hearts.ToString() : string.Empty,
                 post.Hearted ? Accent : Faint,
-                out bool heartClicked);
+                out bool heartClicked,
+                enabled: !mine);
 
-            if (heartClicked && !post.Hearted)
+            if (heartClicked && !post.Hearted && !mine)
                 Ratings?.Heart(post);
 
             // The divider between the two.
@@ -479,7 +489,8 @@ namespace PfPresets
         /// <summary>One footer button. Returns its width so the next one can be placed after
         /// it.</summary>
         private float FeedActionButton(AchievementPost post, string id, Vector2 origin,
-            FontAwesomeIcon icon, string label, Vector4 colour, out bool clicked)
+            FontAwesomeIcon icon, string label, Vector4 colour, out bool clicked,
+            bool enabled = true)
         {
             var dl = ImGui.GetWindowDrawList();
 
@@ -493,8 +504,11 @@ namespace PfPresets
             ImGui.SetCursorScreenPos(origin);
             ImGui.InvisibleButton($"##feed{id}{post.Id}", new Vector2(width, FeedActionHeight));
 
-            bool hovered = ImGui.IsItemHovered();
-            clicked = ImGui.IsItemClicked();
+            bool hovered = enabled && ImGui.IsItemHovered();
+            clicked = enabled && ImGui.IsItemClicked();
+
+            if (!enabled)
+                colour = colour with { W = colour.W * 0.45f };
 
             if (hovered)
             {
