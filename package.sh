@@ -1,60 +1,45 @@
 #!/usr/bin/env bash
-# package.sh - build the zip that goes to users, and prove it is safe before it does.
+# package.sh - build the zip that goes to users.
 #
 #   bash package.sh
 #
-# WHY THIS EXISTS RATHER THAN "build.sh and zip bin/Release".
+# WHAT IS IN THE BUILD AND WHY IT IS NOT IN THE REPOSITORY.
 #
-# The dev build on this machine is not the build users get, and the difference is not cosmetic.
-# Two sets of files live here that are not in the repository:
+# Two sets of files live on this machine and are gitignored:
 #
-#   Core/Admin*.cs, UI/PluginUI.Admin*.cs   moderator tools. Present here, so they compile in.
-#   Core/VoteEvidence.cs                    what proves a vote came out of a real duty.
+#   Core/VoteEvidence.cs                    what proves a vote came out of a real duty
+#   Core/Admin*.cs, UI/PluginUI.Admin*.cs   the moderator tools
 #
-# The second MUST ship - without it the plugin builds a vote with no evidence and the server
-# refuses every one of them, so a release missing it is a release where nobody can vote. The first
-# MUST NOT. It is guarded by a server-issued key and a challenge, so shipping it would not hand
-# anybody moderator powers, but thirty thousand people should not be carrying code that can ban
-# players; the safest version of that code is the one that was never in the download.
+# BOTH SHIP. That is a deliberate decision, taken on 2026-08-10 once the moderation authority had
+# moved server-side: the client half is a panel and a key, and every action it can take is checked
+# against a server-issued enrolment and a signed challenge before anything happens. A copy of the
+# panel with no enrolment is a window that returns 403.
 #
-# The hooks are partial methods (see UI/PluginUI.AdminHooks.cs), so simply moving the files aside
-# erases them and every call to them. This script does that, builds, checks the result actually
-# came out clean, and puts them back whatever happens.
+# What is still worth keeping out of the repository is the SOURCE. Reading it tells somebody the
+# shape of the enrolment, the wording of the challenge, and which endpoints exist; getting the same
+# from the assembly means decompiling it first. That is the same trade the evidence key is under,
+# and it is the only one on offer - a symmetric secret shipped to thirty thousand people has never
+# been a secret from anybody willing to work for it.
+#
+# So this script does not hold anything back. It builds, checks that what came out is what we meant
+# to ship, and packages it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-HELD="$(mktemp -d)"
 OUT="$SCRIPT_DIR/repo/latest.zip"
 
-# Restore the held-back files however this exits - including a failed build or a Ctrl-C. Leaving
-# somebody's moderator files in a temp directory would be a poor way to end an afternoon.
-restore() {
-  shopt -s nullglob
-  for f in "$HELD"/*; do
-    mv "$f" "$SCRIPT_DIR/$(basename "$f" | tr '@' '/')"
-  done
-  rm -rf "$HELD"
-}
-trap restore EXIT
-
-echo "== holding back the moderator build =="
-shopt -s nullglob
-for f in Core/Admin*.cs UI/PluginUI.Admin*.cs; do
-  # PluginUI.AdminHooks.cs is the DECLARATIONS and has to stay - it is what the ordinary build
-  # compiles to nothing. Removing it is a build error, not a smaller binary.
-  [ "$f" = "UI/PluginUI.AdminHooks.cs" ] && continue
-  echo "   $f"
-  mv "$f" "$HELD/$(echo "$f" | tr '/' '@')"
+for required in Core/VoteEvidence.cs Core/AdminAccess.cs UI/PluginUI.AdminPanel.cs; do
+  if [ ! -f "$required" ]; then
+    echo "!! $required is missing." >&2
+    echo "   These files are gitignored and exist only on the machines that hold a key." >&2
+    echo "   A build without VoteEvidence.cs ships a plugin that cannot vote; one without the" >&2
+    echo "   admin files ships without the moderator panel. Neither is what a release is." >&2
+    exit 1
+  fi
 done
 
-if [ ! -f Core/VoteEvidence.cs ]; then
-  echo "!! Core/VoteEvidence.cs is missing. A build without it ships a plugin that cannot vote." >&2
-  exit 1
-fi
-
-echo
 echo "== building =="
 bash build.sh >/dev/null
 
@@ -64,39 +49,26 @@ DLL="$SCRIPT_DIR/bin/Release/PfPresets.dll"
 echo
 echo "== checking what came out =="
 
-# Look for strings only the moderator build contains. In Python because .NET writes its string
-# literals as UTF-16 and grep does not find them - the first version of this check used grep, found
-# nothing, and said so confidently about a DLL that did contain them.
-#
-# Crude on purpose: it does not depend on the build having done what it was told, only on what came
-# out the other end.
+# Reads the binary rather than trusting the build. In Python because .NET writes string literals as
+# UTF-16, so grep finds nothing and will tell you a DLL is clean when it is not - which it did, once.
 python3 - "$DLL" <<'CHECK' || exit 1
 import sys, pathlib
 
 data = pathlib.Path(sys.argv[1]).read_bytes()
-leaked = []
 
-for needle in ("admin/enrol", "admin/leaderboard", "admin/challenge", "admin/ban", "BouncyCastle"):
-    for enc in ("utf-16-le", "latin-1"):
-        if needle.encode(enc) in data:
-            leaked.append(needle)
-            break
+def present(needle):
+    return any(needle.encode(enc) in data for enc in ("utf-16-le", "latin-1"))
 
-if leaked:
-    print("!! the moderator build leaked into this package: " + ", ".join(leaked), file=sys.stderr)
+missing = [n for n in ("admin/challenge", "admin/leaderboard", "achievements/feed", "clears")
+           if not present(n)]
+
+if missing:
+    print("!! this build is missing things a release needs: " + ", ".join(missing), file=sys.stderr)
+    print("   built without ratings, or without the admin files?", file=sys.stderr)
     raise SystemExit(1)
 
-# And the other way round: a release that cannot vote is worse than no release, and it would look
-# like a server fault rather than a packaging one.
-for needle in ("achievements/feed", "clears", "progress"):
-    if needle.encode("utf-16-le") in data:
-        break
-else:
-    print("!! this DLL has no API routes in it at all - built without ratings?", file=sys.stderr)
-    raise SystemExit(1)
+print("   ratings, achievements and the moderator panel are all present")
 CHECK
-
-echo "   no moderator strings found"
 
 echo
 echo "== packaging =="
@@ -109,31 +81,21 @@ PACKED="$SCRIPT_DIR/bin/Release/PfPresets/latest.zip"
 
 cp "$PACKED" "$OUT"
 
-# And check the ZIP, not just the DLL that went into it. This is the file people actually download,
-# and the packager decides what goes in it - including project references. Running this on the dev
-# build's zip today would have found BouncyCastle and the moderator assembly sitting in it, which is
-# the whole reason to look at the artifact rather than at the intent.
 python3 - "$OUT" <<'ZIPCHECK' || exit 1
 import sys, zipfile
 
-bad = []
 with zipfile.ZipFile(sys.argv[1]) as z:
     names = z.namelist()
 
-    for name in names:
-        if 'BouncyCastle' in name:
-            bad.append(name)
+# The moderator panel signs its challenges with Ed25519 through BouncyCastle, because .NET's own
+# ECDsa goes to Windows CNG and Wine does not implement it - a Linux user got 0x80090029 and a
+# perfectly mysterious "couldn't reach the server". Shipping the panel means shipping the library.
+if not any("BouncyCastle" in n for n in names):
+    print("!! no BouncyCastle in the zip - the moderator panel cannot sign without it", file=sys.stderr)
+    raise SystemExit(1)
 
-    for name in names:
-        if not name.endswith('.dll'):
-            continue
-        data = z.read(name)
-        for needle in ('admin/enrol', 'admin/leaderboard', 'admin/ban'):
-            if needle.encode('utf-16-le') in data or needle.encode('latin-1') in data:
-                bad.append(f"{name} contains {needle}")
-
-if bad:
-    print("!! this zip must not ship: " + "; ".join(bad), file=sys.stderr)
+if "PfPresets.dll" not in names:
+    print("!! no plugin in the zip", file=sys.stderr)
     raise SystemExit(1)
 
 print("   zip contents: " + ", ".join(names))
@@ -141,7 +103,7 @@ ZIPCHECK
 
 echo
 echo "== repo manifest =="
-python3 - "$SCRIPT_DIR" <<'PY'
+python3 - "$SCRIPT_DIR" <<'MANIFEST'
 import json, sys, pathlib, collections
 
 root = pathlib.Path(sys.argv[1])
@@ -163,12 +125,10 @@ for entry in repo:
     print(f"   PfPresets -> {entry['AssemblyVersion']}")
 
 repo_path.write_text(json.dumps(repo, indent=4) + "\n")
-PY
+MANIFEST
 
 echo
 echo "[OK] $OUT"
 unzip -l "$OUT" | tail -n +4 | head -n -2
 echo
 echo "     repo/repo.json updated to match PfPresets.json."
-echo "     The dev build in bin/Release is now the RELEASE build - no moderator tools."
-echo "     Run 'bash build.sh' before going back to testing so the dev plugin has them again."
