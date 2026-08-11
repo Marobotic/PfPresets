@@ -135,8 +135,24 @@ namespace PfPresets
             ImGui.Indent(SectionInset);
 
             // THIS TOGGLE IS AN OPT-OUT, not a local preference, and the wording says so because
-            // the consequence outlives the plugin: the server holds the flag, so uninstalling does
-            // not quietly put somebody back into a system they left.
+            // the consequence outlives the plugin: once approved the server holds the flag, so
+            // uninstalling does not quietly put somebody back into a system they left.
+            //
+            // It only appears while logged in. The request names the character it is for, and
+            // there is no character to name from the title screen - a toggle that files nothing is
+            // worse than one that is not there.
+            bool loggedIn = LocalIdentity?.Invoke() is { IsValid: true };
+
+            if (!loggedIn)
+            {
+                ImGui.TextColored(Dim, "Log in to a character to change this.");
+                ImGui.Dummy(new Vector2(0, 8));
+                DrawRuleHair(padAbove: 0f, padBelow: 10f);
+                DrawBroadcastSetting();
+                ImGui.Unindent(SectionInset);
+                return;
+            }
+
             DrawSetting("Enable ratings system", () => config.RatingsEnabled,
                 SetRatingsEnabled,
                 "Disabling this opts you out of the rating system: players cannot view your "
@@ -194,30 +210,41 @@ namespace PfPresets
         /// </summary>
         private void SetRatingsEnabled(bool enabled)
         {
+            // The local half happens now, unconditionally. Hiding the tab on your own machine is
+            // your business, and making somebody wait for a moderator before their own plugin stops
+            // showing them a feature would be absurd.
             config.RatingsEnabled = enabled;
-            ratingOptOutNote = string.Empty;
             ratingOptOutFailed = false;
+
+            if (enabled)
+            {
+                ratingOptOutNote = "Ratings are back on for you. If you had been opted out, ask to "
+                    + "be opted back in from the website.";
+                return;
+            }
 
             var service = Ratings;
             if (service == null)
+            {
+                ratingOptOutNote = string.Empty;
                 return;
+            }
 
-            ratingOptOutNote = enabled ? "Opting back in..." : "Opting out...";
+            ratingOptOutNote = "Filing the request...";
 
-            service.PushOptOut(!enabled, (error) =>
+            // And the half that affects everybody else is a request. Hiding a score from the rest
+            // of the world is not something a switch should do on its own say-so - see the queue in
+            // Mod log.
+            service.RequestOptOut((error) =>
             {
                 if (error.Length == 0)
                 {
                     ratingOptOutFailed = false;
-                    ratingOptOutNote = enabled
-                        ? "Opted back in. Your ratings are visible again."
-                        : "Opted out. Your ratings are hidden, and stay hidden until you turn this "
-                          + "back on.";
+                    ratingOptOutNote = "Request filed. Your ratings tab is hidden now; your score "
+                        + "stops being visible to others once it is approved.";
                     return;
                 }
 
-                // Put it back. The server is the record, and the checkbox must not disagree with it.
-                config.RatingsEnabled = !enabled;
                 ratingOptOutFailed = true;
                 ratingOptOutNote = error;
             });

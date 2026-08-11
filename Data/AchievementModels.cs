@@ -154,12 +154,18 @@ namespace PfPresets
     internal sealed class OptOutSelfResponse
     {
         public bool Ok { get; set; }
-        public bool OptedOut { get; set; }
+
+        /// <summary>The request was filed. Nothing has changed yet - a moderator decides.</summary>
+        public bool Requested { get; set; }
     }
 
     internal sealed class OptOutStateResponse
     {
+        /// <summary>Approved and in force. This is the only one that hides anything.</summary>
         public bool OptedOut { get; set; }
+
+        /// <summary>A request is filed and undecided.</summary>
+        public bool Pending { get; set; }
 
         /// <summary>False when the server has no session character to answer about - logged out,
         /// or a lookup that has not happened yet. The toggle waits rather than guessing.</summary>

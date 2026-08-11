@@ -338,17 +338,13 @@ namespace PfPresets
         // ── The opt-out ───────────────────────────────────────────
 
         /// <summary>
-        /// Opts this character in or out of the rating system, on the server.
+        /// Files a request to be opted out, for the character currently logged in.
         ///
-        /// The server is the record, not the config file, and that is the whole promise: the flag
-        /// survives a reinstall, so uninstalling the plugin does not quietly put somebody back into
-        /// a system they left.
-        ///
-        /// Reports back rather than firing and forgetting. The server can refuse - a machine that
-        /// has not been signing in as this character long enough is the usual reason - and a
-        /// checkbox that says yes while the server says no is worse than one that fails out loud.
+        /// The local toggle hides the tab straight away - that part is the user's own machine and
+        /// theirs to decide. What needs deciding is the server side: hiding a score from everybody
+        /// else, which is what a moderator approves.
         /// </summary>
-        public void PushOptOut(bool optOut, Action<string> done)
+        public void RequestOptOut(Action<string> done)
         {
             var me = api.LocalIdentity;
             if (me == null || !me.IsValid)
@@ -358,11 +354,11 @@ namespace PfPresets
             }
 
             string evidence = string.Empty;
-            BuildSettingEvidence(optOut ? "optout" : "optin", ref evidence);
+            BuildSettingEvidence("optout", ref evidence);
 
             if (string.IsNullOrEmpty(evidence))
             {
-                done("This build can't change that setting.");
+                done("This build can't file that request.");
                 return;
             }
 
@@ -370,24 +366,18 @@ namespace PfPresets
             {
                 try
                 {
-                    var result = await api.SetOptedOutAsync(optOut, evidence).ConfigureAwait(false);
+                    var result = await api.RequestOptOutAsync(me, evidence).ConfigureAwait(false);
 
-                    if (result.IsOk)
-                    {
-                        // What is on the feed and what a card shows have both changed.
-                        Invalidate(me);
-                        done(string.Empty);
-                        return;
-                    }
-
-                    done(!string.IsNullOrWhiteSpace(result.Message)
-                        ? result.Message
-                        : "Couldn't reach the server. Nothing was changed.");
+                    done(result.IsOk
+                        ? string.Empty
+                        : (!string.IsNullOrWhiteSpace(result.Message)
+                            ? result.Message
+                            : "Couldn't reach the server. Try again in a moment."));
                 }
                 catch (Exception ex)
                 {
-                    log.Debug($"[Ratings] Opt-out failed: {ex.Message}");
-                    done("Couldn't reach the server. Nothing was changed.");
+                    log.Debug($"[Ratings] Opt-out request failed: {ex.Message}");
+                    done("Couldn't reach the server. Try again in a moment.");
                 }
             });
         }
@@ -409,12 +399,14 @@ namespace PfPresets
                     if (!result.IsOk || result.Value?.Known != true)
                         return;
 
-                    bool shouldBeEnabled = !result.Value.OptedOut;
-
-                    if (config.RatingsEnabled != shouldBeEnabled)
+                    // ONE DIRECTION ONLY. An approved opt-out turns the local setting off, because
+                    // that is the promise: it survives a reinstall. The reverse must never happen -
+                    // somebody whose request is still pending has already decided, and having the
+                    // plugin switch itself back on underneath them would be the plugin arguing.
+                    if (result.Value.OptedOut && config.RatingsEnabled)
                     {
-                        log.Debug($"[Ratings] Server says opted out = {result.Value.OptedOut}; following it.");
-                        config.RatingsEnabled = shouldBeEnabled;
+                        log.Debug("[Ratings] Server says this character is opted out; following it.");
+                        config.RatingsEnabled = false;
                     }
                 }
                 catch (Exception ex)

@@ -366,19 +366,25 @@ namespace PfPresets
         // ── The rating opt-out ────────────────────────────────────
 
         /// <summary>
-        /// Opts this character in or out of the rating system.
+        /// Files a request to be opted out of the rating system.
+        ///
+        /// A request, not a change - a person decides, the same as one filed from the website. What
+        /// this adds over the web form is that the character comes from the session it is logged
+        /// into rather than from a link anybody can paste.
         ///
         /// The sealed statement is not optional: without it the server refuses, which is correct -
-        /// a settings change with nothing behind it is a settings change anybody can make about
-        /// anybody.
+        /// a request with nothing behind it is one anybody can file about anybody.
         /// </summary>
-        public async Task<ApiResult<OptOutSelfResponse>> SetOptedOutAsync(bool optOut, string evidence)
+        public async Task<ApiResult<OptOutSelfResponse>> RequestOptOutAsync(
+            CharacterIdentity who, string evidence)
         {
-            if (string.IsNullOrEmpty(evidence))
+            if (string.IsNullOrEmpty(evidence) || !who.IsValid)
                 return ApiResult<OptOutSelfResponse>.Fail(ApiStatus.BadRequest);
 
             return await SendAsync<OptOutSelfResponse>(
-                HttpMethod.Post, "optout/self", new { optOut, evidence }).ConfigureAwait(false);
+                HttpMethod.Post, "optout/self",
+                new { character = new CharacterRef { Name = who.Name, World = who.World }, evidence })
+                .ConfigureAwait(false);
         }
 
         /// <summary>What the toggle should be showing, according to the server. Read at login, so
