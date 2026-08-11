@@ -90,8 +90,10 @@ namespace PfPresets
 
         private void DrawAchievementsTab()
         {
+            // Not gated on the rating system. The feed is its own feature and its own setting -
+            // see the note in TabList.
             var ratings = Ratings;
-            if (!config.RatingsEnabled || ratings == null)
+            if (ratings == null)
                 return;
 
             ratings.EnsureFeedLoaded();

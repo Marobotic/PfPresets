@@ -177,7 +177,7 @@ namespace PfPresets
                 return;
             }
 
-            if (activeTab == MainTab.Achievements && config.RatingsEnabled)
+            if (activeTab == MainTab.Achievements)
             {
                 DrawAchievementsTab();
                 return;

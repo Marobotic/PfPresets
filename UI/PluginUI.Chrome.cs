@@ -47,14 +47,19 @@ namespace PfPresets
             };
 
             if (config.RatingsEnabled)
-            {
                 tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
 
-                // "Achievements", with beta drawn as a chip beside it rather than baked into the
-                // label - see BetaChipWidth. The word belongs where somebody decides whether to
-                // click, but it should not be the reason the whole row runs out of room.
-                tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
-            }
+            // ACHIEVEMENTS IS NOT PART OF THE RATING SYSTEM and does not come and go with it.
+            //
+            // It was inside the same branch, so opting out of ratings took the feed away too -
+            // which is the plugin deciding that somebody who wants nothing to do with being scored
+            // also wants nothing to do with seeing an Ultimate clear. They are separate settings
+            // and separate features; the only thing they share is a server.
+            //
+            // "Achievements", with beta drawn as a chip beside it rather than baked into the label
+            // - see BetaChipWidth. The word belongs where somebody decides whether to click, but it
+            // should not be the reason the whole row runs out of room.
+            tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
 
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
 
@@ -66,8 +71,7 @@ namespace PfPresets
             // Turning ratings off while looking at them would otherwise leave the window on a tab
             // that is no longer in the list. The same applies to any extra that has just been
             // switched off: land on something that exists rather than on a blank body.
-            if ((activeTab == MainTab.Ratings || activeTab == MainTab.Achievements)
-                && !config.RatingsEnabled)
+            if (activeTab == MainTab.Ratings && !config.RatingsEnabled)
                 activeTab = MainTab.Presets;
 
             if (!tabs.Exists(t => t.Item3 == activeTab))

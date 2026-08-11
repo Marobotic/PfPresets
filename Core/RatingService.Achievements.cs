@@ -102,9 +102,8 @@ namespace PfPresets
         /// </summary>
         public void EnsureFeedLoaded()
         {
-            if (!config.RatingsEnabled)
-                return;
-
+            // Deliberately not checking RatingsEnabled. Reading the feed is not rating anybody, and
+            // somebody opted out of the rating system has not asked to stop seeing clears.
             if (DateTime.UtcNow - feedReadAt < FeedPollAfter)
                 return;
 
