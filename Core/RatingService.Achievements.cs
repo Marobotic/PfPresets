@@ -273,11 +273,23 @@ namespace PfPresets
         /// </summary>
         public void PostAchievement(DutyEncounter encounter)
         {
-            if (!config.RatingsEnabled || !config.BroadcastAchievements)
+            if (!config.RatingsEnabled)
                 return;
 
-            if (encounter == null || !encounter.Cleared)
+            if (encounter == null)
                 return;
+
+            // WIPES ARE REPORTED TOO, and the broadcast setting does not stop it.
+            //
+            // This call does two jobs. It offers a clear to the feed - which the setting governs,
+            // and which the server checks again on its own side - and it files the duty as proof
+            // that these people were in a room together, which is what a vote is checked against.
+            //
+            // A prog night that ends in a wipe is the night people most want to rate each other
+            // after, and it produced no record at all while this returned early. Somebody who turns
+            // off broadcasting is asking not to be celebrated, not asking to lose the thing that
+            // stops strangers voting on them - so neither the clear flag nor that setting is
+            // checked here. Both are the server's business, and it checks them.
 
             string evidence = string.Empty;
             BuildClearEvidence(encounter, ref evidence);
