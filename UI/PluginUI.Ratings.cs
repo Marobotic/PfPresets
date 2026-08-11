@@ -33,7 +33,7 @@ namespace PfPresets
     ///
     /// Voting lives here and in the post-duty prompt, nowhere else. Contacts is a record of who you
     /// met; the lookup can show you anyone's score but can rate nobody, because you may only vote
-    /// on someone you actually finished a duty with in the last 24 hours.
+    /// on someone you actually finished a duty with in the last hour.
     /// </summary>
     public partial class PluginUI
     {

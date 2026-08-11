@@ -45,10 +45,19 @@ namespace PfPresets
 
         /// <summary>
         /// How long after meeting someone you may still vote on them. Past this the encounter stays
-        /// in Contacts as a record of who you played with, but the vote is gone: an opinion formed
-        /// about a run yesterday is worth something, one dredged up a week later much less.
+        /// in Contacts as a record of who you played with, but the vote is gone.
+        ///
+        /// ONE HOUR, down from twenty-four on 2026-08-10, and this number has to match the server's
+        /// - it enforces the same window and refuses anything older. A client offering a button the
+        /// server will decline is worse than one that offers nothing: the vote appears to be cast
+        /// and quietly is not.
+        ///
+        /// The long window turned out to be for nobody. The prompt appears when you leave the
+        /// instance and is answered or dismissed there; almost nothing arrived hours later. What it
+        /// did do was give a forged duty a full day of plausible slots to date itself into, which
+        /// is how three downvotes landed on somebody who had not entered a duty all day.
         /// </summary>
-        public static readonly TimeSpan VotingWindow = TimeSpan.FromHours(24);
+        public static readonly TimeSpan VotingWindow = TimeSpan.FromHours(1);
 
         private static readonly JsonSerializerSettings Settings = new()
         {

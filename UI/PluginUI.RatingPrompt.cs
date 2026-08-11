@@ -20,7 +20,7 @@ namespace PfPresets
     /// window on screen mid-cutscene would be the most annoying possible timing.
     ///
     /// Skipping is permanent for that duty. It never reappears for the same run; the people in it
-    /// stay in the Ratings tab for 24 hours if you change your mind.
+    /// stay in the Ratings tab for an hour if you change your mind.
     ///
     /// Not a modal: nothing dims, nothing takes focus, nothing blocks input, and it never appears
     /// while you're back inside content.

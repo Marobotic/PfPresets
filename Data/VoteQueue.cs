@@ -139,6 +139,16 @@ namespace PfPresets
 
             lock (gate)
             {
+                // Anything past the voting window is dead and the server will say so. Dropped here
+                // rather than sent: a vote queued during an outage and delivered two hours later is
+                // refused for being stale, which reads as a fault and is really just arithmetic.
+                int expired = pending.RemoveAll(v => now - v.QueuedUtc > EncounterStore.VotingWindow);
+                if (expired > 0)
+                {
+                    log.Debug($"[Ratings] Dropped {expired} vote(s) past the {EncounterStore.VotingWindow.TotalMinutes:0}m window.");
+                    Save();
+                }
+
                 foreach (var vote in pending)
                 {
                     if (vote.NotBeforeUtc == null || vote.NotBeforeUtc <= now)
