@@ -41,6 +41,10 @@ namespace PfPresets
         private DateTime feedReadAt = DateTime.MinValue;
         private int feedInFlight;
 
+        /// <summary>Which page is on screen, and how many there are.</summary>
+        public int FeedPage { get; private set; }
+        public int FeedPages { get; private set; } = 1;
+
         /// <summary>Set when the change came from this client - their own clear, their own share,
         /// their own opt-out. Offering somebody a pill to see a thing they just did themselves
         /// would be absurd, so the next read lands straight on screen.</summary>
@@ -109,6 +113,28 @@ namespace PfPresets
 
         /// <summary>Asks for the top of the feed now. The tab's own refresh, and what the poll
         /// calls.</summary>
+        /// <summary>Moves to a page and reads it. Out of range is ignored rather than clamped -
+        /// the buttons already know the bounds and a silent correction would hide a bug.</summary>
+        public void ShowFeedPage(int page)
+        {
+            if (page < 0 || page >= FeedPages || page == FeedPage)
+                return;
+
+            FeedPage = page;
+            feedScrollWanted = true;
+            RefreshFeed();
+        }
+
+        /// <summary>Set when a page change wants the list back at the top.</summary>
+        private bool feedScrollWanted;
+
+        public bool TakeFeedScrollRequest()
+        {
+            if (!feedScrollWanted) return false;
+            feedScrollWanted = false;
+            return true;
+        }
+
         public void RefreshFeed()
         {
             if (Interlocked.CompareExchange(ref feedInFlight, 1, 0) != 0)
@@ -120,7 +146,7 @@ namespace PfPresets
             {
                 try
                 {
-                    var result = await api.GetFeedAsync().ConfigureAwait(false);
+                    var result = await api.GetFeedAsync(FeedPage).ConfigureAwait(false);
 
                     if (!result.IsOk || result.Value == null)
                     {
@@ -138,13 +164,24 @@ namespace PfPresets
                     }
 
                     var posts = result.Value.Posts;
+                    FeedPages = Math.Max(1, result.Value.Pages);
+
+                    // A page that has emptied out from under you - somebody opted out, a post was
+                    // removed - lands you on the last one that still exists rather than on nothing.
+                    if (posts.Count == 0 && FeedPage > 0 && FeedPage >= FeedPages)
+                    {
+                        FeedPage = FeedPages - 1;
+                        feedReadAt = DateTime.MinValue;
+                    }
 
                     lock (feedLock)
                     {
                         // Nothing on screen yet, or the same top post: apply it. Anything else is
                         // held, because replacing a list somebody is reading loses their place and
                         // moves the thing they were about to press.
-                        bool nothingShown = feed.Count == 0;
+                        // Only page one can be "current"; the pages behind it do not move under
+                        // somebody reading them.
+                        bool nothingShown = feed.Count == 0 || FeedPage > 0;
                         bool sameTop = !nothingShown && posts.Count > 0
                             && string.Equals(posts[0].Id, feed[0].Id, StringComparison.Ordinal);
 

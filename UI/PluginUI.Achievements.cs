@@ -37,6 +37,10 @@ namespace PfPresets
         private const float FeedJobIconSize = 18f;
         private const float FeedActionHeight = 34f;
 
+        /// <summary>The pager's row, reserved out of the list's height when there is more than one
+        /// page.</summary>
+        private const float FeedPagerHeight = 44f;
+
         /// <summary>Gap between the text column and the chip stack on the right, so a long fight
         /// name stops rather than running under a timestamp.</summary>
         private const float FeedRightGutter = 16f;
@@ -113,12 +117,15 @@ namespace PfPresets
             }
             else
             {
-                ImGui.BeginChild("##FeedScroll", new Vector2(width, -FeedMargin), false);
+                bool paged = ratings.FeedPages > 1;
+                float listBottom = paged ? -(FeedPagerHeight + FeedMargin) : -FeedMargin;
+
+                ImGui.BeginChild("##FeedScroll", new Vector2(width, listBottom), false);
                 try
                 {
                     feedScrollY = ImGui.GetScrollY();
 
-                    if (feedScrollToTop)
+                    if (feedScrollToTop || ratings.TakeFeedScrollRequest())
                     {
                         ImGui.SetScrollY(0f);
                         feedScrollToTop = false;
@@ -143,9 +150,98 @@ namespace PfPresets
                 {
                     ImGui.EndChild();
                 }
+
+                if (paged)
+                    DrawFeedPager(ratings, width);
             }
 
             ImGui.Unindent(FeedMargin);
+        }
+
+        /// <summary>
+        /// Page numbers, under the list.
+        ///
+        /// Drawn in the same language as everything else here - flat, ruled, zero rounding, the
+        /// current page filled with the accent - rather than as a row of ImGui buttons, which would
+        /// be the one place in this tab with chrome nobody else has.
+        ///
+        /// Only appears when there is a second page. A pager showing "1" is a control that has
+        /// never had anything to do.
+        /// </summary>
+        private void DrawFeedPager(RatingService ratings, float width)
+        {
+            var dl = ImGui.GetWindowDrawList();
+
+            ImGui.Dummy(new Vector2(0, 4));
+            Vector2 origin = ImGui.GetCursorScreenPos();
+
+            dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + 1f),
+                ImGui.ColorConvertFloat4ToU32(RuleHair));
+
+            ImGui.Dummy(new Vector2(0, 9));
+
+            int pages = ratings.FeedPages;
+            int current = ratings.FeedPage;
+
+            // A window of pages around the current one, so a feed with forty pages does not draw
+            // forty buttons.
+            int from = Math.Max(0, Math.Min(current - 2, pages - 5));
+            int to = Math.Min(pages - 1, Math.Max(current + 2, 4));
+
+            float cell = 30f;
+            float gap = 4f;
+            int shown = to - from + 1;
+            float total = (cell + gap) * (shown + 2) - gap;
+
+            float x = ImGui.GetCursorScreenPos().X + Math.Max(0f, (width - total) * 0.5f);
+            float y = ImGui.GetCursorScreenPos().Y;
+
+            x += DrawPagerCell(dl, x, y, cell, "<", current > 0, false,
+                () => ratings.ShowFeedPage(current - 1)) + gap;
+
+            for (int p = from; p <= to; p++)
+            {
+                int target = p;
+                x += DrawPagerCell(dl, x, y, cell, (p + 1).ToString(), true, p == current,
+                    () => ratings.ShowFeedPage(target)) + gap;
+            }
+
+            DrawPagerCell(dl, x, y, cell, ">", current < pages - 1, false,
+                () => ratings.ShowFeedPage(current + 1));
+
+            ImGui.Dummy(new Vector2(width, cell));
+        }
+
+        /// <summary>One square in the pager. Returns its width so the row can be laid out by
+        /// walking it.</summary>
+        private float DrawPagerCell(ImDrawListPtr dl, float x, float y, float size, string label,
+            bool enabled, bool active, Action onClick)
+        {
+            var min = new Vector2(x, y);
+            var max = new Vector2(x + size, y + size);
+
+            ImGui.SetCursorScreenPos(min);
+            ImGui.InvisibleButton($"##page{label}{x:F0}", new Vector2(size, size));
+
+            bool hovered = enabled && ImGui.IsItemHovered();
+            if (enabled && ImGui.IsItemClicked())
+                onClick();
+
+            if (active)
+                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent));
+            else if (hovered)
+                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised));
+
+            dl.AddRect(min, max,
+                ImGui.ColorConvertFloat4ToU32(active ? Accent : RuleStrong), 0f, 0, 1f);
+
+            var colour = active ? OnAccent : enabled ? (hovered ? Ink : Dim) : Faint;
+
+            Vector2 text = ImGui.CalcTextSize(label);
+            dl.AddText(new Vector2(min.X + (size - text.X) * 0.5f, min.Y + (size - text.Y) * 0.5f),
+                ImGui.ColorConvertFloat4ToU32(colour), label);
+
+            return size;
         }
 
         /// <summary>

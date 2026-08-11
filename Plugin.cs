@@ -141,6 +141,7 @@ namespace PfPresets
 #if PFP_RATINGS
             this.ui.Ratings = this.ratingService;
             this.ui.Worlds = this.worldHelper;
+            this.ratingService.RegionOf = this.worldHelper.GetFfLogsRegion;
             this.ui.Encounters = this.encounterStore;
             this.ui.History = this.ratingHistory;
             this.ui.Players = this.playerHistory;

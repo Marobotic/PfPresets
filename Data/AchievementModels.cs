@@ -81,6 +81,10 @@ namespace PfPresets
 
     internal sealed class AchievementFeedRequest
     {
+        /// <summary>Which page, zero-based. Pages rather than a cursor: the feed is short enough to
+        /// number, and somebody who wants page four wants page four.</summary>
+        public int Page { get; set; }
+
         /// <summary>
         /// Unix ms; asks for posts ranked before this one. Null is the top of the feed.
         ///
@@ -96,6 +100,15 @@ namespace PfPresets
     internal sealed class AchievementFeedResponse
     {
         public List<AchievementPost> Posts { get; set; } = new();
+
+        public int Page { get; set; }
+
+        /// <summary>How many pages there are. Counted by the server rather than guessed from
+        /// whether the last page came back full - which is wrong exactly when the total is a
+        /// multiple of the page size.</summary>
+        public int Pages { get; set; } = 1;
+
+        public int Total { get; set; }
     }
 
     /// <summary>A clear being offered to the feed. The sealed payload is the whole of it - the

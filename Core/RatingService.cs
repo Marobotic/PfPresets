@@ -143,6 +143,15 @@ namespace PfPresets
         /// the last rating seen. Survives a reload, unlike the in-memory caches here.</summary>
         private readonly PlayerHistory players;
 
+        /// <summary>
+        /// Turns a world name into the FFLogs region slug, or null.
+        ///
+        /// Set by Plugin after construction, because the world table loads from game data and this
+        /// service is built before it. Needed on the clear path: the server decides first-clear
+        /// from FFLogs and has no world table of its own to work the region out from.
+        /// </summary>
+        internal Func<string, string?>? RegionOf { get; set; }
+
         private readonly ConcurrentDictionary<string, CacheEntry> cache = new();
 
         /// <summary>Keys queued or in flight, so the same name can't be requested twice over.</summary>
