@@ -755,9 +755,16 @@ namespace PfPresets
         {
             ImGui.AlignTextToFramePadding();
 
-            // A hidden player draws nothing here - the same blank as somebody nobody has rated. The
-            // column still reserves its width, so the rows above and below stay aligned and the gap
-            // says nothing.
+            // Two words rather than a blank, because a blank in this column already means "no score
+            // yet" and a reader cannot tell a person who opted out from a lookup still in flight.
+            if (IsOptedOut(rating))
+            {
+                DrawOptedOutColumn(who, column);
+                return;
+            }
+
+            // Banned draws nothing at all - the same blank as somebody nobody has rated. The column
+            // still reserves its width, so the rows above and below stay aligned.
             if (IsHidden(rating))
             {
                 ImGui.Dummy(new Vector2(column, 0));

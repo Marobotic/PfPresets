@@ -427,21 +427,31 @@ namespace PfPresets
         /// <summary>True when too few ratings exist to show a score.</summary>
         public bool Gated { get; set; }
 
-        /// <summary>True when this player has opted out. Kept because the server still sends it and
-        /// older builds read it; <see cref="Hidden"/> is the flag to check.</summary>
+        /// <summary>
+        /// True when this player chose to leave the community features.
+        ///
+        /// SAID OUT LOUD, unlike a ban. An opt-out is a decision somebody made and can undo: the
+        /// plugin shows "this player has opted out" in place of their score, and everything -
+        /// score, votes, clears, their place in the feed - comes back the moment they opt back in.
+        /// Nothing about them is deleted while they are out, only moved out of reach.
+        ///
+        /// Never true for a banned character, even though a ban sets the same column server-side.
+        /// See the note in the lookup route: announcing a banned player as having opted out would
+        /// be a favour they have not earned, and announcing them as banned is a punishment nobody
+        /// decided on.
+        /// </summary>
         public bool OptedOut { get; set; }
 
         /// <summary>
         /// True when this player is not part of the community half at all - opted out, or banned.
         ///
-        /// ONE FLAG FOR BOTH, and that is the whole design. It used to be two, so that a card could
-        /// warn about a ban and stay quiet about an opt-out. It says nothing about either now: a
-        /// hidden player has no profile, no score and no row anywhere, and the plugin behaves as
-        /// though the name were not in the system.
+        /// What everything that OFFERS something reads, because both states refuse it identically:
+        /// no votes in either direction, no profile, no score. What everything that SAYS something
+        /// reads is <see cref="OptedOut"/>, which is true for only one of the two.
         ///
-        /// Two flags would also be a test. Anything that tells a ban from an opt-out makes the
-        /// lookup box a way of checking whether a character is banned, and a flag in the response is
-        /// readable in a decompiled client no matter what the client chooses to draw.
+        /// So a banned character is `Hidden` without being `OptedOut`, and the plugin draws exactly
+        /// what it draws for a name nobody has ever rated. That is the whole of what a ban looks
+        /// like from outside: nothing.
         /// </summary>
         public bool Hidden { get; set; }
 

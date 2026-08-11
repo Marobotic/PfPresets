@@ -810,6 +810,14 @@ namespace PfPresets
             // in your party - dropping the row would leave a full group showing seven of eight and
             // read as the plugin losing track of somebody. What they lose is the score, the profile
             // and the vote, which is everything the community half is.
+            //
+            // Opted out says so; banned says nothing, and reads as a party member nobody has rated.
+            if (IsOptedOut(rating))
+            {
+                DrawOptedOutColumn(identity, RatingChipWidth);
+                return;
+            }
+
             if (IsHidden(rating))
             {
                 ImGui.Dummy(new Vector2(RatingChipWidth, 0));

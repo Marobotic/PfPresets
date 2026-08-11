@@ -41,6 +41,65 @@ namespace PfPresets
         private IFontHandle LabelFont => Font(ref labelFont, 11f);
 
         /// <summary>
+        /// An opted-out player's card: who they are, and the one sentence.
+        ///
+        /// Drawn as a real card - the same panel, the same identity block - rather than as a bare
+        /// line, because there IS somebody here and the plugin knows who. What is missing is
+        /// everything the community half would have said about them, and that absence is the point.
+        /// </summary>
+        private void DrawProfileOptedOut(CharacterIdentity who, bool showBack)
+        {
+            ImGui.Dummy(new Vector2(0, 8));
+
+            if (showBack)
+            {
+                var backSize = new Vector2(110, ButtonHeight);
+                Vector2 backPos = ImGui.GetCursorScreenPos();
+                if (DrawPrimaryButton("##ClearSearchOptedOut", backSize))
+                    CloseProfile();
+                DrawIconLabelLeft(FontAwesomeIcon.ArrowLeft, "Back", backPos, backSize, OnAccent);
+                ImGui.Dummy(new Vector2(0, 8));
+            }
+
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 cardMin = ImGui.GetCursorScreenPos();
+            float cardWidth = ImGui.GetContentRegionAvail().X;
+
+            dl.ChannelsSplit(2);
+            dl.ChannelsSetCurrent(1);
+
+            ImGui.BeginGroup();
+            try
+            {
+                ImGui.Dummy(new Vector2(cardWidth, CardPad));
+                ImGui.Indent(CardPad);
+
+                DrawProfileIdentity(who);
+
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - CardPad);
+                ImGui.TextColored(Dim, OptedOutNotice);
+                ImGui.PopTextWrapPos();
+
+                ImGui.Unindent(CardPad);
+                ImGui.Dummy(new Vector2(cardWidth, CardPad));
+            }
+            finally
+            {
+                ImGui.EndGroup();
+            }
+
+            float cardHeight = ImGui.GetItemRectSize().Y;
+
+            dl.ChannelsSetCurrent(0);
+            var cardMax = new Vector2(cardMin.X + cardWidth, cardMin.Y + cardHeight);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+            dl.ChannelsMerge();
+
+            ImGui.Dummy(new Vector2(0, 8));
+        }
+
+        /// <summary>
         /// What stands in for a hidden player's card: a line saying there is nothing, and Back.
         ///
         /// WORDED FOR A NAME THAT ISN'T THERE, not for a person who is. "No record for X" is what
@@ -68,22 +127,58 @@ namespace PfPresets
             ImGui.Dummy(new Vector2(0, 8));
         }
 
+        /// <summary>What an opted-out player reads as, in the one place the sentence is written.</summary>
+        internal const string OptedOutNotice = "This player has opted out.";
+
+        /// <summary>The same thing in a score column, where there is room for two words.</summary>
+        internal const string OptedOutShort = "Opted out";
+
         /// <summary>
-        /// Whether this player is hidden from the community half entirely: banned, or opted out.
+        /// Whether this player takes part at all: false for anyone opted out, and for anyone banned.
         ///
-        /// HIDDEN MEANS ABSENT, NOT LABELLED. This started as a "Banned" banner with a sentence
-        /// under it, on the reasoning that a ban should warn people. It should not: a banned player
-        /// and a player who opted out are both simply not part of this, and the plugin says nothing
-        /// about either. No card, no score, no row in any list, no entry in a menu.
+        /// EVERYTHING THAT OFFERS SOMETHING READS THIS. Both states refuse a vote, a profile and a
+        /// score identically, so the code that decides whether to draw a control asks one question.
         ///
-        /// The two are one state on purpose, and the server sends one field for them - anything
-        /// that tells them apart is a way of testing whether somebody is banned, which is the thing
-        /// hiding them is for.
-        ///
-        /// Null reads as visible: a rating that has not arrived yet is not evidence of anything,
-        /// and blanking a row while its lookup is in flight would make every stranger flicker.
+        /// Null reads as visible: a rating that has not arrived yet is not evidence of anything, and
+        /// blanking a row while its lookup is in flight would make every stranger flicker.
         /// </summary>
         private static bool IsHidden(PlayerRating? rating) => rating?.Hidden == true;
+
+        /// <summary>
+        /// Whether this player is hidden BY THEIR OWN CHOICE, which is the half that gets said.
+        ///
+        /// EVERYTHING THAT SAYS SOMETHING READS THIS instead. An opt-out is a decision, is reported
+        /// as one, and is reversible - so "this player has opted out" is both true and useful.
+        ///
+        /// A ban is hidden without being opted out, and reads as a name nobody has rated: no card,
+        /// no notice, nothing. Saying "banned" would be a punishment nobody decided on, and saying
+        /// "opted out" would be a favour they have not earned.
+        /// </summary>
+        private static bool IsOptedOut(PlayerRating? rating) => rating?.OptedOut == true;
+
+        /// <summary>
+        /// "Opted out", right-aligned into a score column, in the muted grey the plugin uses for
+        /// facts about the absence of data rather than about a person.
+        /// </summary>
+        /// <param name="column">The fixed width the score column occupies, so the label ends where
+        /// the numbers on the rows above and below it end.</param>
+        private void DrawOptedOutColumn(CharacterIdentity who, float column)
+        {
+            using (UiHelpFont.Push())
+            {
+                float used = ImGui.CalcTextSize(OptedOutShort).X;
+                if (used < column)
+                {
+                    ImGui.Dummy(new Vector2(column - used, 0));
+                    ImGui.SameLine(0, 0);
+                }
+
+                ImGui.TextColored(Faint, OptedOutShort);
+            }
+
+            if (ImGui.IsItemHovered())
+                PaddedTooltip($"{who}\n\n{OptedOutNotice}");
+        }
 
         private void DisposeProfileFonts()
         {
@@ -130,13 +225,21 @@ namespace PfPresets
 
             var rating = Ratings?.Get(who);
 
-            // A HIDDEN PLAYER HAS NO CARD. Not a blank one, not one with a notice on it - none.
-            // Banned or opted out, they are not part of the community half, and a card that exists
-            // to say they have no card is still a page about them.
+            // Neither of these gets the ordinary card, and they do not get the same substitute.
             //
-            // Drawn as the empty state the search box uses for a name nobody has heard of, so the
-            // two are indistinguishable. That is the point: a distinct message here would make this
-            // window a way of testing whether a character is banned.
+            // Opted out is a decision, so it is reported as one: their name and the sentence, and
+            // nothing else - no score, no counts, no clears, no links. It is not deletion and does
+            // not read as any; opting back in restores every one of those.
+            //
+            // Banned is not reported at all. It falls through to the empty state a name nobody has
+            // heard of gets, because a distinct message would turn this window into a way of
+            // testing who is banned.
+            if (IsOptedOut(rating))
+            {
+                DrawProfileOptedOut(who, showBack);
+                return;
+            }
+
             if (IsHidden(rating))
             {
                 DrawProfileUnavailable(who, showBack);
