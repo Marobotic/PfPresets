@@ -426,11 +426,23 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Asks the server what this character's opt-out setting actually is.
+        /// The toggle's real state, which is the server's, not the config file's.
         ///
-        /// Called after a session is established, because the config file is not the record - a
-        /// fresh install of the plugin has RatingsEnabled true by default, and somebody who opted
-        /// out last month must not find themselves quietly back in.
+        /// THE TOGGLE IS AN ENROLMENT STATUS. Three server answers, two positions:
+        ///
+        ///   opted out            off
+        ///   request pending      off
+        ///   neither (default)    on
+        ///
+        /// Pending reads as off because that is what the person asked for. Their request has been
+        /// filed and not yet read; showing them a switch that says they are still in - and a tab
+        /// full of ratings - until a moderator gets to it would be the plugin disagreeing with
+        /// something they already decided.
+        ///
+        /// Authoritative in BOTH directions now. A fresh install defaults to on, so somebody who
+        /// opted out last month must not find themselves quietly back in; and equally, once they
+        /// are opted back in the switch has to follow, or it would sit off forever with nothing to
+        /// explain why.
         /// </summary>
         public void SyncOptOutSetting()
         {
@@ -442,14 +454,14 @@ namespace PfPresets
                     if (!result.IsOk || result.Value?.Known != true)
                         return;
 
-                    // ONE DIRECTION ONLY. An approved opt-out turns the local setting off, because
-                    // that is the promise: it survives a reinstall. The reverse must never happen -
-                    // somebody whose request is still pending has already decided, and having the
-                    // plugin switch itself back on underneath them would be the plugin arguing.
-                    if (result.Value.OptedOut && config.RatingsEnabled)
+                    bool shouldBeOn = !result.Value.OptedOut && !result.Value.Pending;
+
+                    if (config.RatingsEnabled != shouldBeOn)
                     {
-                        log.Debug("[Ratings] Server says this character is opted out; following it.");
-                        config.RatingsEnabled = false;
+                        log.Debug($"[Ratings] Server says opted out = {result.Value.OptedOut}, "
+                            + $"pending = {result.Value.Pending}; setting the toggle to {shouldBeOn}.");
+
+                        config.RatingsEnabled = shouldBeOn;
                     }
                 }
                 catch (Exception ex)
@@ -457,6 +469,23 @@ namespace PfPresets
                     log.Debug($"[Ratings] Couldn't read the opt-out setting: {ex.Message}");
                 }
             });
+        }
+
+        /// <summary>How often the settings tab re-reads the enrolment status while it is open. A
+        /// moderator's decision lands within a minute of somebody looking, without the tab asking
+        /// on every frame it is drawn.</summary>
+        private static readonly TimeSpan OptOutSyncAfter = TimeSpan.FromMinutes(1);
+
+        private DateTime optOutSyncedAt = DateTime.MinValue;
+
+        /// <summary>Re-reads the enrolment status if it is time to. Safe to call every frame.</summary>
+        public void EnsureOptOutSynced()
+        {
+            if (DateTime.UtcNow - optOutSyncedAt < OptOutSyncAfter)
+                return;
+
+            optOutSyncedAt = DateTime.UtcNow;
+            SyncOptOutSetting();
         }
 
         /// <summary>

@@ -141,6 +141,10 @@ namespace PfPresets
             // It only appears while logged in. The request names the character it is for, and
             // there is no character to name from the title screen - a toggle that files nothing is
             // worse than one that is not there.
+            // Kept current while the tab is open, so a decision on somebody's request shows up
+            // without them relogging. Throttled inside; safe from a draw call.
+            Ratings?.EnsureOptOutSynced();
+
             bool loggedIn = LocalIdentity?.Invoke() is { IsValid: true };
 
             if (!loggedIn)
