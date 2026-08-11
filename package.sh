@@ -59,15 +59,30 @@ data = pathlib.Path(sys.argv[1]).read_bytes()
 def present(needle):
     return any(needle.encode(enc) in data for enc in ("utf-16-le", "latin-1"))
 
-missing = [n for n in ("admin/challenge", "admin/leaderboard", "achievements/feed", "clears")
+# `admin/screen` rather than `admin/leaderboard`: the leaderboard and the action log are described
+# by the server now and the plugin has no name for either. See src/screens.js - the whole point is
+# that a released DLL no longer says what moderation can do, so this check has to name the two
+# generic endpoints that remain instead of the surface that used to leak.
+missing = [n for n in ("admin/challenge", "admin/screen", "admin/do", "achievements/feed", "clears")
            if not present(n)]
+
+# And the reverse: the converted surface must NOT come back. A build that still carries these is one
+# where the old panel was resurrected or the deletion was reverted, which is exactly the regression
+# this change exists to prevent, and it would ship unnoticed.
+leaked = [n for n in ("admin/leaderboard", "admin/audit", "##modrows", "##auditrows") if present(n)]
+
+if leaked:
+    print("!! this build leaks the moderation surface again: " + ", ".join(leaked), file=sys.stderr)
+    print("   the leaderboard and action log are server-described - see src/screens.js", file=sys.stderr)
+    raise SystemExit(1)
 
 if missing:
     print("!! this build is missing things a release needs: " + ", ".join(missing), file=sys.stderr)
     print("   built without ratings, or without the admin files?", file=sys.stderr)
     raise SystemExit(1)
 
-print("   ratings, achievements and the moderator panel are all present")
+print("   ratings, achievements and the moderator panel are present, and the")
+print("   moderation surface is not in the binary")
 CHECK
 
 echo
