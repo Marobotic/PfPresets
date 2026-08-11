@@ -46,20 +46,24 @@ namespace PfPresets
                 ("Recruit", FontAwesomeIcon.Users, MainTab.Presets),
             };
 
-            if (config.RatingsEnabled)
-                tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
-
-            // ACHIEVEMENTS IS NOT PART OF THE RATING SYSTEM and does not come and go with it.
+            // BOTH OR NEITHER. Opting out is opting out of the community half of the plugin, and
+            // the feed is the community half - it is built out of other people's duties, and taking
+            // part in it means posting your own and hearting theirs.
             //
-            // It was inside the same branch, so opting out of ratings took the feed away too -
-            // which is the plugin deciding that somebody who wants nothing to do with being scored
-            // also wants nothing to do with seeing an Ultimate clear. They are separate settings
-            // and separate features; the only thing they share is a server.
+            // This tab was briefly ungated on the reasoning that reading a feed is not rating
+            // anybody, which is true and beside the point: somebody who has opted out is not
+            // sending us their clears, so the feed they would be shown is one they can only watch.
+            // Opting out leaves the presets, which is the part of this plugin that involves nobody
+            // else, and nothing else.
             //
             // "Achievements", with beta drawn as a chip beside it rather than baked into the label
             // - see BetaChipWidth. The word belongs where somebody decides whether to click, but it
             // should not be the reason the whole row runs out of room.
-            tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
+            if (config.CommunityEnabled)
+            {
+                tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
+                tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
+            }
 
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
 
@@ -68,10 +72,11 @@ namespace PfPresets
             // without either of them knowing what it is.
             AddExtraTabs(tabs);
 
-            // Turning ratings off while looking at them would otherwise leave the window on a tab
+            // Opting out while looking at one of them would otherwise leave the window on a tab
             // that is no longer in the list. The same applies to any extra that has just been
             // switched off: land on something that exists rather than on a blank body.
-            if (activeTab == MainTab.Ratings && !config.RatingsEnabled)
+            if (!config.CommunityEnabled
+                && (activeTab == MainTab.Ratings || activeTab == MainTab.Achievements))
                 activeTab = MainTab.Presets;
 
             if (!tabs.Exists(t => t.Item3 == activeTab))

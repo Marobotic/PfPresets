@@ -102,8 +102,13 @@ namespace PfPresets
         /// </summary>
         public void EnsureFeedLoaded()
         {
-            // Deliberately not checking RatingsEnabled. Reading the feed is not rating anybody, and
-            // somebody opted out of the rating system has not asked to stop seeing clears.
+            // Nothing is asked for while opted out. The tab is gone in that state so this should
+            // not be reachable, but the poll is the thing that would keep talking to the server
+            // after somebody asked us to stop - so it checks for itself rather than trusting that
+            // every caller has already been removed.
+            if (!config.CommunityEnabled)
+                return;
+
             if (DateTime.UtcNow - feedReadAt < FeedPollAfter)
                 return;
 
@@ -309,6 +314,14 @@ namespace PfPresets
         /// </summary>
         public void PostAchievement(DutyEncounter encounter)
         {
+            // NOTHING LEAVES THE MACHINE WHILE OPTED OUT, and this is the call that would break
+            // that promise: it sends a duty, its length, and the name and world of everybody who
+            // was in it. Checked first and on its own, ahead of the two settings below, because
+            // those two are preferences about what to do with the data and this one is about
+            // whether we are allowed to have it.
+            if (!config.CommunityEnabled)
+                return;
+
             // EITHER system wants this call. Ratings wants the duty on record so a vote can be
             // checked against it; the feed wants the clear. They are separate settings and turning
             // one off must not silently disable the other.

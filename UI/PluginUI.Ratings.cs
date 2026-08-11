@@ -346,7 +346,7 @@ namespace PfPresets
         /// </summary>
         private void DrawRatingsTab()
         {
-            if (!config.RatingsEnabled)
+            if (!config.CommunityEnabled)
             {
                 DrawRatingsDisabledNotice();
                 return;
@@ -755,6 +755,14 @@ namespace PfPresets
         {
             ImGui.AlignTextToFramePadding();
 
+            // Ahead of the score, because a ban is not a low score - it is the sentinel standing in
+            // for one, and rendering it as a figure puts "999999" in a two-digit column.
+            if (rating?.Banned == true)
+            {
+                DrawBannedChip(who, column);
+                return;
+            }
+
             if (rating is { Gated: false, OptedOut: false } && rating.Count > 0)
             {
                 bool up = rating.Score >= 0;
@@ -930,7 +938,15 @@ namespace PfPresets
             ImGui.Dummy(new Vector2(0, 10));
             ImGui.PopTextWrapPos();
 
-            if (DrawPrimaryButton("Turn on community ratings", new Vector2(260, ButtonHeight)))
+            // No button while the stats slider is below Full - that setting opts you out, and a
+            // button here would set a flag the other setting immediately overrules. The Settings
+            // tab is where both of them live, so that is where this points.
+            if (config.AnalyticsMode != AnalyticsMode.Full)
+            {
+                ImGui.TextColored(TextSecondary,
+                    "Taking part needs \"Anonymous usage stats\" set to Full, under Settings.");
+            }
+            else if (DrawPrimaryButton("Turn on community ratings", new Vector2(260, ButtonHeight)))
             {
                 config.RatingsEnabled = true;
                 config.Save();

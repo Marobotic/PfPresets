@@ -797,7 +797,7 @@ namespace PfPresets
             // Nothing at all when the system is off. The chip was still being drawn on party rows
             // inside the recruitment card, so disabling ratings hid the tab but left scores on
             // screen - which is the one place someone turning it off would look first.
-            if (!config.RatingsEnabled || !config.PartyRatingsEnabled)
+            if (!config.CommunityEnabled || !config.PartyRatingsEnabled)
             {
                 ImGui.Dummy(new Vector2(RatingChipWidth, 0));
                 return;
@@ -805,6 +805,14 @@ namespace PfPresets
 
             var rating = Ratings?.Get(identity);
             ImGui.AlignTextToFramePadding();
+
+            // The word, not the sentinel - see DrawBannedChip. On a party row this is also the one
+            // place it matters most: it is the moment somebody decides whether to stay in the group.
+            if (rating?.Banned == true)
+            {
+                DrawBannedChip(identity, RatingChipWidth);
+                return;
+            }
 
             if (rating is { Gated: false, OptedOut: false } && rating.Count > 0)
             {

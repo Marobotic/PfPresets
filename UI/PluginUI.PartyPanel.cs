@@ -101,7 +101,7 @@ namespace PfPresets
         /// </summary>
         private void DrawPartyPanel(RecruitmentSnapshot snap)
         {
-            if (!config.RatingsEnabled || !config.PartyRatingsEnabled)
+            if (!config.CommunityEnabled || !config.PartyRatingsEnabled)
                 return;
 
             // The card already shows these people; drawing them again here was the duplication.
@@ -536,7 +536,7 @@ namespace PfPresets
         /// normal install because the client falls back to its built-in endpoint - so requiring it
         /// hid this control from everyone who hadn't hand-edited their config, which is everyone.
         /// </summary>
-        private bool ShowsProgressRow() => config.RatingsEnabled && Ratings != null;
+        private bool ShowsProgressRow() => config.CommunityEnabled && Ratings != null;
 
         /// <summary>
         /// Whether this duty is worth asking a progression provider about.

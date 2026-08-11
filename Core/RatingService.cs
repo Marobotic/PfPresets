@@ -291,7 +291,7 @@ namespace PfPresets
         /// </summary>
         public bool Refresh(CharacterIdentity who)
         {
-            if (!who.IsValid || !config.RatingsEnabled)
+            if (!who.IsValid || !config.CommunityEnabled)
                 return false;
 
             var now = DateTime.UtcNow;
@@ -332,7 +332,7 @@ namespace PfPresets
                 {
                     await Task.Delay(PumpInterval, cancel.Token).ConfigureAwait(false);
 
-                    if (!config.RatingsEnabled || pending.IsEmpty)
+                    if (!config.CommunityEnabled || pending.IsEmpty)
                         continue;
 
                     var batch = TakeBatch(Math.Max(1, Policy.BatchMax));

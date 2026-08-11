@@ -27,6 +27,15 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.4.2", "August 2026", new[]
+            {
+                "Whether a clear is your first is now decided by FFLogs rather than by whether we happened to have seen you clear it before. A tier reclear is no longer announced as a tier clear, and an Ultimate you have been running for years no longer reads as a first clear the week you install this.",
+                "Clears already in the feed have been re-checked against FFLogs and corrected.",
+                "A banned player's profile says so, instead of showing a score of -999999.",
+                "Opting out now opts you out of everything: no ratings, no achievements feed, and nothing about your duties is sent. Your presets are untouched and keep working exactly as before.",
+                "\"Anonymous usage stats\" set below Full opts you out too, since taking part means sending something. It is on Full by default.",
+            }),
+
             new("3.4.0", "August 2026", new[]
             {
                 "Profile cards now show clears: every Ultimate, the current savage tier, and every Extreme and Unreal of the expansion, with the best parse on each.",

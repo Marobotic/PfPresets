@@ -171,7 +171,7 @@ namespace PfPresets
                 return;
 
 #if PFP_RATINGS
-            if (activeTab == MainTab.Ratings && config.RatingsEnabled)
+            if (activeTab == MainTab.Ratings && config.CommunityEnabled)
             {
                 DrawRatingsTab();
                 return;

@@ -157,11 +157,33 @@ namespace PfPresets
                 return;
             }
 
+            // LOCKED OFF BELOW FULL, and said out loud rather than left as a switch that springs
+            // back. Anonymous usage stats below Full opts you out (see Configuration.CommunityEnabled),
+            // so a live toggle here would be offering something the other setting has already
+            // decided - press it and watch it refuse, with the reason two sections away.
+            if (config.AnalyticsMode != AnalyticsMode.Full)
+            {
+                using (UiBodyFont.Push())
+                    ImGui.TextColored(Dim, "Ratings system: off");
+                SameLineHelpDot("ratingslocked",
+                    "Taking part needs \"Anonymous usage stats\" set to Full - see the Data "
+                    + "section. Below that, this install sends nothing and you are opted out of "
+                    + "ratings and achievements.");
+
+                ImGui.Dummy(new Vector2(0, 8));
+                DrawRuleHair(padBelow: 8f);
+                DrawBroadcastSetting();
+
+                ImGui.Unindent(SectionInset);
+                return;
+            }
+
             DrawSetting("Enable ratings system", () => config.RatingsEnabled,
                 SetRatingsEnabled,
-                "Disabling this opts you out of the rating system: players cannot view your "
-                + "ratings, or rate you. It stays opted out even after uninstalling the plugin, "
-                + "until you enable this option again.",
+                "Disabling this opts you out of the rating system and the achievements feed: "
+                + "players cannot view your ratings, or rate you, and nothing about your duties is "
+                + "sent. It stays opted out even after uninstalling the plugin, until you enable "
+                + "this option again.",
                 last: !config.RatingsEnabled);
 
             if (ratingOptOutNote.Length > 0)
@@ -274,6 +296,87 @@ namespace PfPresets
                 + "your clears won't be broadcasted anymore.", last: true);
         }
 
+        private string analyticsOptOutNote = string.Empty;
+        private bool analyticsOptOutFailed;
+
+        /// <summary>The value a slider held when its handle was picked up. One field for all of
+        /// them: ImGui has one active item, so two sliders cannot be mid-drag at once.</summary>
+        private object? sliderGrabbedValue;
+
+        /// <summary>
+        /// The opt-out that rides along with dropping the stats slider below Full.
+        ///
+        /// ONE SETTING, ONE CONSEQUENCE. Anything below Full means this install takes part in
+        /// nothing, and taking part in nothing has a server half - the enrolment - or it is a
+        /// promise that ends at the config file. Somebody who turns the stats off and uninstalls
+        /// would otherwise still be rateable by everybody else, which is precisely the thing the
+        /// rating toggle exists to prevent.
+        ///
+        /// It is filed the same way and through the same route as the toggle's own opt-out, so it
+        /// lands in the queue a moderator already reads, and the note underneath says what
+        /// happened.
+        ///
+        /// ON RELEASE, NOT ON EVERY STOP THE HANDLE CROSSES. The slider snaps continuously while
+        /// dragged, so a drag from Full to Off passes through Basic and a drag that ends up back
+        /// where it started passes through everything - and each crossing would otherwise file a
+        /// moderator request for a setting the person never actually chose. What is compared is
+        /// where the handle was picked up against where it was put down.
+        ///
+        /// ONLY EVER IN ONE DIRECTION. Dragging back up unlocks the ratings toggle and leaves it
+        /// off: opting somebody back INTO a system they left, on the strength of a settings change
+        /// they made about something else, would be the plugin choosing for them.
+        /// </summary>
+        private void CommitAnalyticsMode(AnalyticsMode was)
+        {
+            var mode = config.AnalyticsMode;
+            if (mode == was)
+                return;
+
+            if (mode == AnalyticsMode.Full)
+            {
+                analyticsOptOutFailed = false;
+                analyticsOptOutNote = config.RatingsEnabled
+                    ? string.Empty
+                    : "Still opted out. Turn \"Enable ratings system\" back on in the Ratings "
+                      + "section to take part again.";
+                return;
+            }
+
+            if (was != AnalyticsMode.Full || !config.RatingsEnabled)
+                return;
+
+            config.RatingsEnabled = false;
+            config.Save();
+
+            analyticsOptOutFailed = false;
+            analyticsOptOutNote = "Filing the opt-out request...";
+
+            var service = Ratings;
+            if (service == null)
+            {
+                analyticsOptOutNote = string.Empty;
+                return;
+            }
+
+            service.RequestOptOut(true, (error) =>
+            {
+                if (error.Length == 0)
+                {
+                    analyticsOptOutFailed = false;
+                    analyticsOptOutNote = "Opted out. Ratings and achievements are hidden now; your "
+                        + "score stops being visible to others once the request is approved.";
+                    return;
+                }
+
+                // The server is the record and the plugin must not claim otherwise - but the local
+                // half stays off regardless. Somebody who moved this slider has said what they
+                // want, and continuing to send their duties while a request fails to file would be
+                // the one outcome nobody asked for.
+                analyticsOptOutFailed = true;
+                analyticsOptOutNote = error;
+            });
+        }
+
         private void DrawDataSettings()
         {
             DrawSectionLabel("Data");
@@ -282,8 +385,16 @@ namespace PfPresets
             DrawSliderSetting("Anonymous usage stats", AnalyticsModeInfo.Labels,
                 () => AnalyticsModeInfo.IndexOf(config.AnalyticsMode),
                 v => config.AnalyticsMode = AnalyticsModeInfo.FromIndex(v),
-                i => AnalyticsModeInfo.Explain(AnalyticsModeInfo.FromIndex(i)));
+                i => AnalyticsModeInfo.Explain(AnalyticsModeInfo.FromIndex(i)),
+                grabbed: () => config.AnalyticsMode,
+                released: CommitAnalyticsMode);
 
+            if (analyticsOptOutNote.Length > 0)
+            {
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(analyticsOptOutFailed ? Negative : Faint, analyticsOptOutNote);
+                ImGui.Dummy(new Vector2(0, 6));
+            }
 
             ImGui.Unindent(SectionInset);
         }
@@ -398,8 +509,13 @@ namespace PfPresets
         /// go. Dragging across three stops otherwise writes the file once per crossing, and the
         /// in-memory value is what the rest of the plugin reads anyway.
         /// </summary>
-        private void DrawSliderSetting(string label, string[] stops, Func<int> get, Action<int> set,
-            Func<int, string> explain)
+        /// <param name="grabbed">Read once, the frame the handle is picked up, and handed back to
+        /// <paramref name="released"/> when it is put down. For a setting whose change has a
+        /// consequence beyond the config file: the stops crossed mid-drag are not choices, so a
+        /// caller needs the two ends of the gesture rather than every value in between.</param>
+        /// <param name="released">Called once when the handle is let go, after the save.</param>
+        private void DrawSliderSetting<T>(string label, string[] stops, Func<int> get, Action<int> set,
+            Func<int, string> explain, Func<T>? grabbed = null, Action<T>? released = null)
         {
             if (stops.Length < 2)
                 return;
@@ -430,6 +546,11 @@ namespace PfPresets
             bool active = ImGui.IsItemActive();
             bool hot = active || ImGui.IsItemHovered();
 
+            // Where the handle was picked up, kept for the release below. Boxed into a field shared
+            // by every slider, which is safe because only one control can be active at a time.
+            if (ImGui.IsItemActivated() && grabbed != null)
+                sliderGrabbedValue = grabbed();
+
             // Inset by half a handle at both ends so the handle stays inside the control when it
             // sits on the first or last stop.
             float trackY = origin.Y + height * 0.5f;
@@ -450,7 +571,14 @@ namespace PfPresets
             }
 
             if (ImGui.IsItemDeactivated())
+            {
                 config.Save();
+
+                if (released != null && sliderGrabbedValue is T before)
+                    released(before);
+
+                sliderGrabbedValue = null;
+            }
 
             var dl = ImGui.GetWindowDrawList();
             float handleX = left + step * value;

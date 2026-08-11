@@ -307,7 +307,7 @@ namespace PfPresets
             }
         }
 
-        private bool IsTrackingEnabled() => config.RatingsEnabled && config.TrackEncounters;
+        private bool IsTrackingEnabled() => config.CommunityEnabled && config.TrackEncounters;
 
         public void Dispose()
         {

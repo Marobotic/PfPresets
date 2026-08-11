@@ -71,7 +71,7 @@ namespace PfPresets
         /// </summary>
         internal void OnEncounterCompleted(DutyEncounter encounter)
         {
-            if (!config.RatingsEnabled || !config.PostDutyPromptEnabled)
+            if (!config.CommunityEnabled || !config.PostDutyPromptEnabled)
                 return;
 
             if (encounter.Dismissed)
@@ -97,7 +97,7 @@ namespace PfPresets
             var encounter = promptEncounter;
 
             // Turned off mid-flight - drop it.
-            if (!config.RatingsEnabled || !config.PostDutyPromptEnabled)
+            if (!config.CommunityEnabled || !config.PostDutyPromptEnabled)
             {
                 promptEncounter = null;
                 return;

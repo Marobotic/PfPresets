@@ -90,10 +90,10 @@ namespace PfPresets
 
         private void DrawAchievementsTab()
         {
-            // Not gated on the rating system. The feed is its own feature and its own setting -
-            // see the note in TabList.
+            // Gated with the rest of the community half - see the note in TabList. The tab is not
+            // in the list at all while opted out, so this is the belt to that braces.
             var ratings = Ratings;
-            if (ratings == null)
+            if (ratings == null || !config.CommunityEnabled)
                 return;
 
             ratings.EnsureFeedLoaded();

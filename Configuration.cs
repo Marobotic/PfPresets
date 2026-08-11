@@ -276,6 +276,26 @@ namespace PfPresets
         /// </summary>
         public bool RatingsEnabled { get; set; } = true;
 
+        /// <summary>
+        /// Whether this install takes part in the community side of the plugin at all: ratings,
+        /// the achievements feed, hearts, votes, and anything sent to the server about a duty.
+        ///
+        /// TWO SWITCHES, ONE ANSWER, and that is deliberate. Opting out and refusing to send
+        /// anonymous usage stats were separate settings that meant the same thing to anybody who
+        /// read them: I do not want to be part of this. Honouring the first and quietly ignoring
+        /// the second - still posting their clears, still counting their votes, still showing them
+        /// a feed built out of everybody's duties - was the plugin deciding it knew better.
+        ///
+        /// So the stats slider is the floor. Anything below Full opts you out, and opting out is
+        /// total: what is left is the presets, which is the part of this plugin that involves
+        /// nobody else. See <see cref="AnalyticsMode"/> and PluginUI.RatingSettings.
+        ///
+        /// Read everywhere the old code read RatingsEnabled. The raw flag survives for the one
+        /// thing it is: the local half of the server-side enrolment, written by the settings toggle
+        /// and by whatever the server says the enrolment is.
+        /// </summary>
+        public bool CommunityEnabled => RatingsEnabled && AnalyticsMode == AnalyticsMode.Full;
+
         /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
         public bool PostDutyPromptEnabled { get; set; } = true;
 
