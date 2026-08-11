@@ -211,17 +211,10 @@ namespace PfPresets
         private void SetRatingsEnabled(bool enabled)
         {
             // The local half happens now, unconditionally. Hiding the tab on your own machine is
-            // your business, and making somebody wait for a moderator before their own plugin stops
+            // your business, and making somebody wait on a moderator before their own plugin stops
             // showing them a feature would be absurd.
             config.RatingsEnabled = enabled;
             ratingOptOutFailed = false;
-
-            if (enabled)
-            {
-                ratingOptOutNote = "Ratings are back on for you. If you had been opted out, ask to "
-                    + "be opted back in from the website.";
-                return;
-            }
 
             var service = Ratings;
             if (service == null)
@@ -230,21 +223,23 @@ namespace PfPresets
                 return;
             }
 
-            ratingOptOutNote = "Filing the request...";
+            ratingOptOutNote = enabled ? "Opting back in..." : "Filing the request...";
 
-            // And the half that affects everybody else is a request. Hiding a score from the rest
-            // of the world is not something a switch should do on its own say-so - see the queue in
-            // Mod log.
-            service.RequestOptOut((error) =>
+            service.RequestOptOut(!enabled, (error) =>
             {
                 if (error.Length == 0)
                 {
                     ratingOptOutFailed = false;
-                    ratingOptOutNote = "Request filed. Your ratings tab is hidden now; your score "
-                        + "stops being visible to others once it is approved.";
+                    ratingOptOutNote = enabled
+                        ? "Opted back in. Your ratings are visible again, and any request you had "
+                          + "waiting has been withdrawn."
+                        : "Request filed. Your ratings tab is hidden now; your score stops being "
+                          + "visible to others once it is approved.";
                     return;
                 }
 
+                // Put it back. The server is the record, and the checkbox must not disagree with it.
+                config.RatingsEnabled = !enabled;
                 ratingOptOutFailed = true;
                 ratingOptOutNote = error;
             });

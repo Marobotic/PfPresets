@@ -375,13 +375,15 @@ namespace PfPresets
         // ── The opt-out ───────────────────────────────────────────
 
         /// <summary>
-        /// Files a request to be opted out, for the character currently logged in.
+        /// Changes this character's standing in the rating system.
         ///
-        /// The local toggle hides the tab straight away - that part is the user's own machine and
-        /// theirs to decide. What needs deciding is the server side: hiding a score from everybody
-        /// else, which is what a moderator approves.
+        /// The two directions are not symmetric, and deliberately. Opting OUT is a request: hiding
+        /// somebody's score is a thing done to the rest of the service, and the queue is where that
+        /// gets read. Opting back IN takes effect at once - it only affects the person asking, they
+        /// are holding the character in-game while they ask, and making somebody wait on a
+        /// moderator to rejoin a system they left would be a poor way to treat a change of mind.
         /// </summary>
-        public void RequestOptOut(Action<string> done)
+        public void RequestOptOut(bool optOut, Action<string> done)
         {
             var me = api.LocalIdentity;
             if (me == null || !me.IsValid)
@@ -391,11 +393,11 @@ namespace PfPresets
             }
 
             string evidence = string.Empty;
-            BuildSettingEvidence("optout", ref evidence);
+            BuildSettingEvidence(optOut ? "optout" : "optin", ref evidence);
 
             if (string.IsNullOrEmpty(evidence))
             {
-                done("This build can't file that request.");
+                done("This build can't change that setting.");
                 return;
             }
 
@@ -403,7 +405,11 @@ namespace PfPresets
             {
                 try
                 {
-                    var result = await api.RequestOptOutAsync(me, evidence).ConfigureAwait(false);
+                    var result = await api.RequestOptOutAsync(me, optOut, evidence)
+                        .ConfigureAwait(false);
+
+                    if (result.IsOk)
+                        Invalidate(me);
 
                     done(result.IsOk
                         ? string.Empty

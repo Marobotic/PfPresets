@@ -373,15 +373,19 @@ namespace PfPresets
         /// a request with nothing behind it is one anybody can file about anybody.
         /// </summary>
         public async Task<ApiResult<OptOutSelfResponse>> RequestOptOutAsync(
-            CharacterIdentity who, string evidence)
+            CharacterIdentity who, bool optOut, string evidence)
         {
             if (string.IsNullOrEmpty(evidence) || !who.IsValid)
                 return ApiResult<OptOutSelfResponse>.Fail(ApiStatus.BadRequest);
 
             return await SendAsync<OptOutSelfResponse>(
                 HttpMethod.Post, "optout/self",
-                new { character = new CharacterRef { Name = who.Name, World = who.World }, evidence })
-                .ConfigureAwait(false);
+                new
+                {
+                    character = new CharacterRef { Name = who.Name, World = who.World },
+                    optOut,
+                    evidence,
+                }).ConfigureAwait(false);
         }
 
         /// <summary>What the toggle should be showing, according to the server. Read at login, so
