@@ -127,6 +127,11 @@ namespace PfPresets
 
             // A character switch must not carry the previous character's session over.
             clientState.Login += this.ratingApi.OnCharacterChanged;
+
+            // The server holds the opt-out, not the config file - that is the whole promise made to
+            // somebody who turns ratings off, since a fresh install defaults to on. Asked once per
+            // login, after the session has had a moment to establish.
+            clientState.Login += this.SyncOptOutOnLogin;
             clientState.Logout += OnLogoutResetSession;
 #endif
 
@@ -363,6 +368,22 @@ namespace PfPresets
 #endif
 
         /// <summary>Moderator tooling, present only on the machines that hold a key.</summary>
+        /// <summary>
+        /// Reads the opt-out setting back from the server after a login.
+        ///
+        /// Delayed a few seconds because the session is established lazily and asking before there
+        /// is one gets an honest "no character to answer about". Nothing depends on it being
+        /// prompt: it corrects a local flag, and the server is the one that decides anything.
+        /// </summary>
+        private void SyncOptOutOnLogin()
+        {
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
+                this.ratingService.SyncOptOutSetting();
+            });
+        }
+
         partial void InitAdmin(IPluginLog log);
         partial void DisposeAdmin();
 
@@ -385,6 +406,7 @@ namespace PfPresets
             this.clientState.Login -= this.ratingApi.OnCharacterChanged;
             this.clientState.Logout -= OnLogoutResetSession;
             this.dutyTracker.EncounterCompleted -= this.ui.OnEncounterCompleted;
+            clientState.Login -= this.SyncOptOutOnLogin;
             this.dutyTracker.EncounterCompleted -= this.playerHistory.RecordEncounter;
             this.dutyTracker.EncounterCompleted -= this.ratingService.PostAchievement;
             this.dutyTracker.Dispose();

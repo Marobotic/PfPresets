@@ -508,6 +508,10 @@ namespace PfPresets
         /// </summary>
         partial void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence);
 
+        /// <summary>Seals a statement about this character's own settings. Erased, with every call
+        /// to it, in a build without the evidence component.</summary>
+        partial void BuildSettingEvidence(string kind, ref string evidence);
+
         /// <summary>Whether the local player has finished a duty with this character. Rating is
         /// only ever offered for people this returns true for.</summary>
         public bool HasMet(CharacterIdentity who) => encounters.HasMet(who);

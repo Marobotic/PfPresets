@@ -363,7 +363,32 @@ namespace PfPresets
                 }).ConfigureAwait(false);
         }
 
-        /// <summary>Job and level for a profile view. Answered from the server's own cache after
+        // ── The rating opt-out ────────────────────────────────────
+
+        /// <summary>
+        /// Opts this character in or out of the rating system.
+        ///
+        /// The sealed statement is not optional: without it the server refuses, which is correct -
+        /// a settings change with nothing behind it is a settings change anybody can make about
+        /// anybody.
+        /// </summary>
+        public async Task<ApiResult<OptOutSelfResponse>> SetOptedOutAsync(bool optOut, string evidence)
+        {
+            if (string.IsNullOrEmpty(evidence))
+                return ApiResult<OptOutSelfResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<OptOutSelfResponse>(
+                HttpMethod.Post, "optout/self", new { optOut, evidence }).ConfigureAwait(false);
+        }
+
+        /// <summary>What the toggle should be showing, according to the server. Read at login, so
+        /// the setting survives a reinstall - which is the whole promise made to somebody who opts
+        /// out.</summary>
+        public async Task<ApiResult<OptOutStateResponse>> GetOptedOutAsync()
+            => await SendAsync<OptOutStateResponse>(
+                HttpMethod.Post, "optout/state", new { }).ConfigureAwait(false);
+
+                /// <summary>Job and level for a profile view. Answered from the server's own cache after
         /// the first lookup, so this is cheap to call and rarely reaches a third party.</summary>
         public async Task<ApiResult<CharacterInfo>> GetCharacterAsync(CharacterIdentity who)
         {

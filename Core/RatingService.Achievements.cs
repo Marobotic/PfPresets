@@ -273,7 +273,10 @@ namespace PfPresets
         /// </summary>
         public void PostAchievement(DutyEncounter encounter)
         {
-            if (!config.RatingsEnabled)
+            // EITHER system wants this call. Ratings wants the duty on record so a vote can be
+            // checked against it; the feed wants the clear. They are separate settings and turning
+            // one off must not silently disable the other.
+            if (!config.RatingsEnabled && !config.BroadcastAchievements)
                 return;
 
             if (encounter == null)
@@ -333,6 +336,93 @@ namespace PfPresets
         partial void BuildClearEvidence(DutyEncounter encounter, ref string evidence);
 
         // ── The opt-out ───────────────────────────────────────────
+
+        /// <summary>
+        /// Opts this character in or out of the rating system, on the server.
+        ///
+        /// The server is the record, not the config file, and that is the whole promise: the flag
+        /// survives a reinstall, so uninstalling the plugin does not quietly put somebody back into
+        /// a system they left.
+        ///
+        /// Reports back rather than firing and forgetting. The server can refuse - a machine that
+        /// has not been signing in as this character long enough is the usual reason - and a
+        /// checkbox that says yes while the server says no is worse than one that fails out loud.
+        /// </summary>
+        public void PushOptOut(bool optOut, Action<string> done)
+        {
+            var me = api.LocalIdentity;
+            if (me == null || !me.IsValid)
+            {
+                done("Log in to a character first.");
+                return;
+            }
+
+            string evidence = string.Empty;
+            BuildSettingEvidence(optOut ? "optout" : "optin", ref evidence);
+
+            if (string.IsNullOrEmpty(evidence))
+            {
+                done("This build can't change that setting.");
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.SetOptedOutAsync(optOut, evidence).ConfigureAwait(false);
+
+                    if (result.IsOk)
+                    {
+                        // What is on the feed and what a card shows have both changed.
+                        Invalidate(me);
+                        done(string.Empty);
+                        return;
+                    }
+
+                    done(!string.IsNullOrWhiteSpace(result.Message)
+                        ? result.Message
+                        : "Couldn't reach the server. Nothing was changed.");
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Opt-out failed: {ex.Message}");
+                    done("Couldn't reach the server. Nothing was changed.");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Asks the server what this character's opt-out setting actually is.
+        ///
+        /// Called after a session is established, because the config file is not the record - a
+        /// fresh install of the plugin has RatingsEnabled true by default, and somebody who opted
+        /// out last month must not find themselves quietly back in.
+        /// </summary>
+        public void SyncOptOutSetting()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.GetOptedOutAsync().ConfigureAwait(false);
+                    if (!result.IsOk || result.Value?.Known != true)
+                        return;
+
+                    bool shouldBeEnabled = !result.Value.OptedOut;
+
+                    if (config.RatingsEnabled != shouldBeEnabled)
+                    {
+                        log.Debug($"[Ratings] Server says opted out = {result.Value.OptedOut}; following it.");
+                        config.RatingsEnabled = shouldBeEnabled;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Couldn't read the opt-out setting: {ex.Message}");
+                }
+            });
+        }
 
         /// <summary>
         /// Tells the server whether this character's clears may be broadcast.

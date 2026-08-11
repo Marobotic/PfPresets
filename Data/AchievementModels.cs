@@ -149,6 +149,23 @@ namespace PfPresets
         public bool Broadcast { get; set; }
     }
 
+    /// <summary>Named for the setting rather than the queue: OptOutResponse is already the
+    /// moderator's list of requests, and these two are not the same thing.</summary>
+    internal sealed class OptOutSelfResponse
+    {
+        public bool Ok { get; set; }
+        public bool OptedOut { get; set; }
+    }
+
+    internal sealed class OptOutStateResponse
+    {
+        public bool OptedOut { get; set; }
+
+        /// <summary>False when the server has no session character to answer about - logged out,
+        /// or a lookup that has not happened yet. The toggle waits rather than guessing.</summary>
+        public bool Known { get; set; }
+    }
+
     internal sealed class CharacterRef
     {
         public string Name { get; set; } = string.Empty;

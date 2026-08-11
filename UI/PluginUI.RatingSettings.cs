@@ -134,14 +134,33 @@ namespace PfPresets
             DrawSectionLabel("Ratings");
             ImGui.Indent(SectionInset);
 
+            // THIS TOGGLE IS AN OPT-OUT, not a local preference, and the wording says so because
+            // the consequence outlives the plugin: the server holds the flag, so uninstalling does
+            // not quietly put somebody back into a system they left.
             DrawSetting("Enable ratings system", () => config.RatingsEnabled,
-                v => config.RatingsEnabled = v,
-                "Rate players you finish duties with and look anyone up. Off removes the Ratings "
-                + "tab and every score; presets are unaffected.",
+                SetRatingsEnabled,
+                "Disabling this opts you out of the rating system: players cannot view your "
+                + "ratings, or rate you. It stays opted out even after uninstalling the plugin, "
+                + "until you enable this option again.",
                 last: !config.RatingsEnabled);
+
+            if (ratingOptOutNote.Length > 0)
+            {
+                ImGui.Indent(SectionInset);
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(ratingOptOutFailed ? Negative : Faint, ratingOptOutNote);
+                ImGui.Unindent(SectionInset);
+                ImGui.Dummy(new Vector2(0, 6));
+            }
 
             if (!config.RatingsEnabled)
             {
+                // Broadcasting is a different system and does not go with it - somebody who wants
+                // nothing to do with ratings may still want their Ultimate clear celebrated, and
+                // burying that setting behind this one would decide for them.
+                DrawRuleHair(padAbove: 10f, padBelow: 10f);
+                DrawBroadcastSetting();
+
                 ImGui.Unindent(SectionInset);
                 return;
             }
@@ -154,6 +173,65 @@ namespace PfPresets
                 v => config.PartyRatingsEnabled = v,
                 "Shows each party member's rating and prog point beside their name.");
 
+            DrawBroadcastSetting();
+
+            ImGui.Unindent(SectionInset);
+        }
+
+        // ── The opt-out ───────────────────────────────────────────
+
+        private string ratingOptOutNote = string.Empty;
+        private bool ratingOptOutFailed;
+
+        /// <summary>
+        /// Turning ratings off opts this character out, on the server.
+        ///
+        /// The local flag moves first so the UI answers immediately, and the server is told
+        /// straight after. If it refuses - a machine that has not been signing in as this character
+        /// long enough, most likely - the flag goes back and it says why. A toggle that reports
+        /// success while the server holds the opposite view is worse than one that fails out loud,
+        /// because the thing it is promising is that the opt-out survives a reinstall.
+        /// </summary>
+        private void SetRatingsEnabled(bool enabled)
+        {
+            config.RatingsEnabled = enabled;
+            ratingOptOutNote = string.Empty;
+            ratingOptOutFailed = false;
+
+            var service = Ratings;
+            if (service == null)
+                return;
+
+            ratingOptOutNote = enabled ? "Opting back in..." : "Opting out...";
+
+            service.PushOptOut(!enabled, (error) =>
+            {
+                if (error.Length == 0)
+                {
+                    ratingOptOutFailed = false;
+                    ratingOptOutNote = enabled
+                        ? "Opted back in. Your ratings are visible again."
+                        : "Opted out. Your ratings are hidden, and stay hidden until you turn this "
+                          + "back on.";
+                    return;
+                }
+
+                // Put it back. The server is the record, and the checkbox must not disagree with it.
+                config.RatingsEnabled = !enabled;
+                ratingOptOutFailed = true;
+                ratingOptOutNote = error;
+            });
+        }
+
+        /// <summary>
+        /// The achievements feed, which is its own system.
+        ///
+        /// Drawn from both branches deliberately: it is not part of the rating system and does not
+        /// disappear with it. Somebody who wants nothing to do with ratings may still want their
+        /// Ultimate clear celebrated, and hiding this behind that would be deciding for them.
+        /// </summary>
+        private void DrawBroadcastSetting()
+        {
             // Wording as the author wrote it. Left alone deliberately - it is the sentence people
             // will read when deciding whether to be in the feed, and it says what it does.
             DrawSetting("Broadcast my ultimate and savage achievements",
@@ -168,8 +246,6 @@ namespace PfPresets
                 },
                 "This options allows other raiders to celebrate your clears, turn this off and "
                 + "your clears won't be broadcasted anymore.", last: true);
-
-            ImGui.Unindent(SectionInset);
         }
 
         private void DrawDataSettings()
