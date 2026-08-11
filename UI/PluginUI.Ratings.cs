@@ -755,11 +755,12 @@ namespace PfPresets
         {
             ImGui.AlignTextToFramePadding();
 
-            // Ahead of the score, because a ban is not a low score - it is the sentinel standing in
-            // for one, and rendering it as a figure puts "999999" in a two-digit column.
-            if (rating?.Banned == true)
+            // A hidden player draws nothing here - the same blank as somebody nobody has rated. The
+            // column still reserves its width, so the rows above and below stay aligned and the gap
+            // says nothing.
+            if (IsHidden(rating))
             {
-                DrawBannedChip(who, column);
+                ImGui.Dummy(new Vector2(column, 0));
                 return;
             }
 

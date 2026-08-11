@@ -495,11 +495,12 @@ namespace PfPresets
                 if (LocalCooldownUntil(c.Identity) != null)
                     continue;
 
-                // A banned player is dropped before the list is built rather than shown and
-                // refused. The server rejects the vote either way, but offering somebody a button
-                // that always fails is worse than not offering it: nothing about the refusal would
-                // tell the voter why, and "the plugin is broken" is the reasonable conclusion.
-                if (IsBanned(c.Identity))
+                // A hidden player - banned, or opted out - is dropped before the list is built
+                // rather than shown and refused. The server rejects the vote either way, but
+                // offering somebody a button that always fails is worse than not offering it:
+                // nothing about the refusal would tell the voter why, and "the plugin is broken" is
+                // the reasonable conclusion.
+                if (IsHidden(c.Identity))
                     continue;
 
                 result.Add(c);
@@ -534,17 +535,20 @@ namespace PfPresets
                 return false;
 
             var cached = Get(who);
-            return cached?.OptedOut != true && cached?.Banned != true;
+            return cached?.Hidden != true && cached?.OptedOut != true;
         }
 
         /// <summary>
-        /// Whether this character has been banned from the rating system.
+        /// Whether this character is hidden from the community half: banned, or opted out.
         ///
-        /// Answered from whatever the last lookup said, so an unknown player reads as not banned -
-        /// the server is the authority and refuses their votes regardless. This exists to keep them
-        /// out of lists, not to enforce anything.
+        /// One question, not two, because the plugin does the same thing for both and must not be
+        /// able to tell them apart - see PlayerRating.Hidden.
+        ///
+        /// Answered from whatever the last lookup said, so an unknown player reads as visible - the
+        /// server is the authority and refuses their votes regardless. This exists to keep them out
+        /// of lists, not to enforce anything.
         /// </summary>
-        public bool IsBanned(CharacterIdentity who) => Get(who)?.Banned == true;
+        public bool IsHidden(CharacterIdentity who) => Get(who)?.Hidden == true;
 
         /// <summary>
         /// Records that a rating just happened, stamped from our own clock.

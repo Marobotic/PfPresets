@@ -41,43 +41,49 @@ namespace PfPresets
         private IFontHandle LabelFont => Font(ref labelFont, 11f);
 
         /// <summary>
-        /// What a banned character reads as, in the one place it is written.
+        /// What stands in for a hidden player's card: a line saying there is nothing, and Back.
         ///
-        /// One sentence, used verbatim on the profile and in the tooltip of every compact score
-        /// chip, because a ban explained one way on the card and another way on a party row is a
-        /// ban the reader has to reconcile. It says what happened and why, and nothing else - the
-        /// specific rule and the moderator who decided are not the player's business.
+        /// WORDED FOR A NAME THAT ISN'T THERE, not for a person who is. "No record for X" is what
+        /// somebody sees after a typo, and that is deliberate - it has to be the same sentence, or
+        /// the difference between the two becomes the test that tells you somebody is banned.
         /// </summary>
-        internal const string BannedNotice =
-            "This player is banned for violating the community rules.";
-
-        /// <summary>
-        /// The word in place of the number, wherever a score is drawn small: a party row, a recent
-        /// player, a listing leader.
-        ///
-        /// The compact chips had the same hole the card did, and worse - a caret and "999999" in a
-        /// column sized for two digits, which either overflows the column or gets clipped to
-        /// something meaningless like "9999". There is no version of the sentinel that reads
-        /// correctly at this size, so none is drawn.
-        /// </summary>
-        /// <param name="column">The fixed width the score column occupies, so the word ends where
-        /// the numbers on the rows above and below it end. Zero for a chip that is not in a column.</param>
-        private void DrawBannedChip(CharacterIdentity who, float column = 0f)
+        private void DrawProfileUnavailable(CharacterIdentity who, bool showBack)
         {
-            const string word = "Banned";
+            ImGui.Dummy(new Vector2(0, 8));
 
-            float used = ImGui.CalcTextSize(word).X;
-            if (used < column)
+            if (showBack)
             {
-                ImGui.Dummy(new Vector2(column - used, 0));
-                ImGui.SameLine(0, 0);
+                var backSize = new Vector2(110, ButtonHeight);
+                Vector2 backPos = ImGui.GetCursorScreenPos();
+                if (DrawPrimaryButton("##ClearSearchHidden", backSize))
+                    CloseProfile();
+                DrawIconLabelLeft(FontAwesomeIcon.ArrowLeft, "Back", backPos, backSize, OnAccent);
+                ImGui.Dummy(new Vector2(0, 12));
             }
 
-            ImGui.TextColored(Negative, word);
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - CardPad);
+            ImGui.TextColored(Dim, $"No community record for {who.Name}.");
+            ImGui.PopTextWrapPos();
 
-            if (ImGui.IsItemHovered())
-                PaddedTooltip($"{who}\n\n{BannedNotice}");
+            ImGui.Dummy(new Vector2(0, 8));
         }
+
+        /// <summary>
+        /// Whether this player is hidden from the community half entirely: banned, or opted out.
+        ///
+        /// HIDDEN MEANS ABSENT, NOT LABELLED. This started as a "Banned" banner with a sentence
+        /// under it, on the reasoning that a ban should warn people. It should not: a banned player
+        /// and a player who opted out are both simply not part of this, and the plugin says nothing
+        /// about either. No card, no score, no row in any list, no entry in a menu.
+        ///
+        /// The two are one state on purpose, and the server sends one field for them - anything
+        /// that tells them apart is a way of testing whether somebody is banned, which is the thing
+        /// hiding them is for.
+        ///
+        /// Null reads as visible: a rating that has not arrived yet is not evidence of anything,
+        /// and blanking a row while its lookup is in flight would make every stranger flicker.
+        /// </summary>
+        private static bool IsHidden(PlayerRating? rating) => rating?.Hidden == true;
 
         private void DisposeProfileFonts()
         {
@@ -123,6 +129,19 @@ namespace PfPresets
                 Ratings?.Refresh(who);
 
             var rating = Ratings?.Get(who);
+
+            // A HIDDEN PLAYER HAS NO CARD. Not a blank one, not one with a notice on it - none.
+            // Banned or opted out, they are not part of the community half, and a card that exists
+            // to say they have no card is still a page about them.
+            //
+            // Drawn as the empty state the search box uses for a name nobody has heard of, so the
+            // two are indistinguishable. That is the point: a distinct message here would make this
+            // window a way of testing whether a character is banned.
+            if (IsHidden(rating))
+            {
+                DrawProfileUnavailable(who, showBack);
+                return;
+            }
 
             // What the server already knows about their clears, and nothing more. This is a read of
             // our own table - it costs a query on our box and never reaches Tomestone or FFLogs -
@@ -324,20 +343,6 @@ namespace PfPresets
         {
             // A BAN IS A WORD, NOT A NUMBER, and this is where that stopped being true.
             //
-            // Banning erases the score and writes a sentinel in its place - a million downvotes,
-            // chosen because nobody could reach it honestly and it would therefore be unambiguous
-            // to anybody who saw it. It was not. It arrived on the card through the ordinary score
-            // path and read as "-999999", which is a number so silly it looks like the plugin is
-            // broken rather than like a verdict, and it left the reader to work out what it meant.
-            //
-            // The card says the thing instead. The sentinel is still what the server stores, so
-            // nothing about the ban's enforcement changes - it just stops being the thing on screen.
-            if (rating?.Banned == true)
-            {
-                DrawProfileBanner();
-                return;
-            }
-
             bool rated = rating != null && !rating.OptedOut && rating.Count > 0;
             int score = rating?.Score ?? 0;
 
@@ -388,30 +393,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// What a banned character's card says where the score would be.
-        ///
-        /// Sized to the card rather than to the score font. "Banned" at fifty-four pixels is wider
-        /// than the column it sits in on a narrow window, and a heading that wraps mid-word is
-        /// worse than a smaller one that does not - the weight here comes from the rule and the
-        /// colour, not from the point size.
-        /// </summary>
-        private void DrawProfileBanner()
-        {
-            using (UiHeadingFont.Push())
-                ImGui.TextColored(Negative, "Banned");
-
-            ImGui.Dummy(new Vector2(0, 6));
-
-            // Wrapped to the card. The sentence is the whole explanation, so it must not be cut
-            // off, and it is the one line on this card somebody will read word for word.
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - CardPad);
-            ImGui.TextColored(Dim, BannedNotice);
-            ImGui.PopTextWrapPos();
-
-            ImGui.Dummy(new Vector2(0, 10));
-        }
-
-        /// <summary>
         /// The job, the way Tomestone lays it out: icon, then the level and job name on one line,
         /// vertically centred against the icon rather than hung off its baseline.
         ///
@@ -445,17 +426,12 @@ namespace PfPresets
 
         private void DrawProfileNumbers(CharacterIdentity who, PlayerRating? rating)
         {
-            // Nothing under the banner. The counts here would be the sentinel taken literally - a
-            // positive bar at zero percent and "0 up, 999999 down" - which is the number the banner
-            // exists to stop showing, printed twice more in smaller type.
-            if (rating?.Banned == true)
+            // A hidden player has no card at all - CloseProfile turns them away before this runs -
+            // so there is nothing to print here and nothing to explain. "They've opted out of
+            // ratings" used to live here and is gone with the rest of it: it named the state, and
+            // naming the state is what hiding them is meant to avoid.
+            if (IsHidden(rating))
                 return;
-
-            if (rating != null && rating.OptedOut)
-            {
-                ImGui.TextColored(Dim, "They've opted out of ratings.");
-                return;
-            }
 
             int up = rating?.Upvotes ?? 0;
             int down = rating?.Downvotes ?? 0;

@@ -806,11 +806,13 @@ namespace PfPresets
             var rating = Ratings?.Get(identity);
             ImGui.AlignTextToFramePadding();
 
-            // The word, not the sentinel - see DrawBannedChip. On a party row this is also the one
-            // place it matters most: it is the moment somebody decides whether to stay in the group.
-            if (rating?.Banned == true)
+            // THE ROW STAYS, THE CHIP GOES. A hidden player who is genuinely in your party is still
+            // in your party - dropping the row would leave a full group showing seven of eight and
+            // read as the plugin losing track of somebody. What they lose is the score, the profile
+            // and the vote, which is everything the community half is.
+            if (IsHidden(rating))
             {
-                DrawBannedChip(identity, RatingChipWidth);
+                ImGui.Dummy(new Vector2(RatingChipWidth, 0));
                 return;
             }
 

@@ -58,27 +58,22 @@ namespace PfPresets
             // one request, and the service caches and de-duplicates behind this.
             var rating = Ratings.Get(identity);
 
-            // A ban is its own state and takes precedence over the score, which for a banned leader
-            // is the million-downvote sentinel - see DrawBannedChip. Beside a listing it is the
-            // most useful thing this overlay has ever had to say, so it is shown rather than
-            // suppressed with the rest of the withheld scores below.
-            bool banned = rating?.Banned == true;
-            bool hasScore = !banned && rating is { Gated: false, OptedOut: false } && rating.Count > 0;
+            // A hidden leader gets no overlay at all - not even the loading dots, which would
+            // themselves say "the plugin knows something about this name" and then never resolve.
+            bool hasScore = !IsHidden(rating) && rating is { Gated: false, OptedOut: false }
+                && rating.Count > 0;
             bool loading = rating == null && Ratings.IsLoading(identity);
 
             // Nothing for the many people nobody has voted on, and nothing for a score being
             // withheld. An empty space next to a name says "no opinion recorded", which is true;
             // a dash or a zero next to a name says something about the person, which would not be.
-            if (!banned && !hasScore && !loading)
+            if (!hasScore && !loading)
                 return;
 
             const string dots = "···";
-            const string bannedWord = "Banned";
             int shown = hasScore ? Math.Abs(rating!.Score) : 0;
 
-            float contentW = banned ? ImGui.CalcTextSize(bannedWord).X
-                : hasScore ? ArrowCountWidth(shown)
-                : ImGui.CalcTextSize(dots).X;
+            float contentW = hasScore ? ArrowCountWidth(shown) : ImGui.CalcTextSize(dots).X;
             float height = MathF.Max(nameSize.Y, ImGui.GetTextLineHeightWithSpacing());
 
             var size = new Vector2(contentW + LeaderRatingPadX * 2f, height);
@@ -109,15 +104,7 @@ namespace PfPresets
             {
                 if (ImGui.Begin("##PfPresetsListingLeaderRating", flags))
                 {
-                    if (banned)
-                    {
-                        ImGui.AlignTextToFramePadding();
-                        ImGui.TextColored(Negative, bannedWord);
-
-                        if (ImGui.IsItemHovered())
-                            PaddedTooltip($"{identity}\n\n{BannedNotice}");
-                    }
-                    else if (hasScore)
+                    if (hasScore)
                     {
                         DrawArrowCount(
                             rating!.Score >= 0 ? FontAwesomeIcon.CaretUp : FontAwesomeIcon.CaretDown,

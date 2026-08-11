@@ -427,26 +427,31 @@ namespace PfPresets
         /// <summary>True when too few ratings exist to show a score.</summary>
         public bool Gated { get; set; }
 
-        /// <summary>True when this player has opted out. The UI shows nothing and disables
-        /// rating them.</summary>
+        /// <summary>True when this player has opted out. Kept because the server still sends it and
+        /// older builds read it; <see cref="Hidden"/> is the flag to check.</summary>
         public bool OptedOut { get; set; }
 
         /// <summary>
-        /// True when this player has been banned for abusing the rating system.
+        /// True when this player is not part of the community half at all - opted out, or banned.
         ///
-        /// Reported separately from <see cref="OptedOut"/> even though a ban sets both server-side.
-        /// The two are identical in the data and opposite in meaning - one asked not to be rated,
-        /// the other was stopped - and showing "they've opted out" for a banned account would do
-        /// its subject a favour they have not earned.
+        /// ONE FLAG FOR BOTH, and that is the whole design. It used to be two, so that a card could
+        /// warn about a ban and stay quiet about an opt-out. It says nothing about either now: a
+        /// hidden player has no profile, no score and no row anywhere, and the plugin behaves as
+        /// though the name were not in the system.
+        ///
+        /// Two flags would also be a test. Anything that tells a ban from an opt-out makes the
+        /// lookup box a way of checking whether a character is banned, and a flag in the response is
+        /// readable in a decompiled client no matter what the client chooses to draw.
         /// </summary>
-        public bool Banned { get; set; }
+        public bool Hidden { get; set; }
 
         /// <summary>When the local voter may next rate this player, or null if they may now.
         /// Folded into the lookup so the UI can disable the button without a second call.</summary>
         public DateTime? YouCanRateAt { get; set; }
 
         [JsonIgnore]
-        public bool CanRateNow => !OptedOut && (YouCanRateAt == null || YouCanRateAt <= DateTime.UtcNow);
+        public bool CanRateNow =>
+            !Hidden && !OptedOut && (YouCanRateAt == null || YouCanRateAt <= DateTime.UtcNow);
     }
 
     internal sealed class BatchLookupResponse

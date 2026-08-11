@@ -31,7 +31,7 @@ namespace PfPresets
             {
                 "Whether a clear is your first is now decided by FFLogs rather than by whether we happened to have seen you clear it before. A tier reclear is no longer announced as a tier clear, and an Ultimate you have been running for years no longer reads as a first clear the week you install this.",
                 "Clears already in the feed have been re-checked against FFLogs and corrected.",
-                "A banned player's profile says so, instead of showing a score of -999999.",
+                "Players who have opted out, and players who have been banned, no longer appear in the plugin at all - no profile, no score, no row in any list. The old \"-999999\" score a ban used to show is gone.",
                 "Opting out now opts you out of everything: no ratings, no achievements feed, and nothing about your duties is sent. Your presets are untouched and keep working exactly as before.",
                 "\"Anonymous usage stats\" set below Full opts you out too, since taking part means sending something. It is on Full by default.",
             }),
