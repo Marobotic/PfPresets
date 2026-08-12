@@ -44,7 +44,14 @@ namespace PfPresets
         internal void OfferVoteNudge()
         {
             if (nudgeSpent || nudgeOpen) return;
+
+            // Said once, meant for good. Both of these outlive the session: the setting is on disk,
+            // and pollVoted is set from the server's own answer every time the poll is read, so a
+            // vote cast anywhere - here, the website, another machine on this connection - stops
+            // this asking forever rather than until the next restart.
+            if (config.VotePromptSilenced) return;
             if (pollVoted) return;
+
             if (poll is not { Open: true }) return;
 
             nudgeOpen = true;
@@ -109,12 +116,24 @@ namespace PfPresets
                     Dismiss();
                 }
 
-                ImGui.Dummy(new Vector2(0, 8));
+                ImGui.Dummy(new Vector2(0, 10));
 
-                // NOT A "REMIND ME LATER". There is no later - the window is spent either way, and
-                // an option that promises to come back would be a promise to interrupt again.
+                // NOT A "REMIND ME LATER". There is no later - this poll is asked once and then
+                // never again, and an option promising to come back would be a promise to
+                // interrupt. What this button adds is the harder promise: not for this poll, and
+                // not for any future one either.
+                if (DrawNeutralButton("Don't ask again##nudgenever", new Vector2(150, ButtonHeight)))
+                {
+                    config.VotePromptSilenced = true;
+                    config.Save();
+                    Dismiss();
+                }
+
+                ImGui.SameLine(0, 10);
+                ImGui.AlignTextToFramePadding();
+
                 using (UiHelpFont.Push())
-                    ImGui.TextColored(Faint, "This will not ask again.");
+                    ImGui.TextColored(Faint, "Closing this also stops it for now.");
 
                 EndDialog();
             }
