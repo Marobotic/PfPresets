@@ -286,25 +286,44 @@ namespace PfPresets
             }
         }
 
-        /// <summary>One option, as a row that reads as pressable rather than as a label.</summary>
+        /// <summary>
+        /// One option: a bordered row with a square mark, the label, and the detail under it.
+        ///
+        /// TWO COORDINATE SPACES MEET HERE and getting them confused is what broke the first
+        /// version. `PushTextWrapPos` takes a WINDOW-LOCAL x; it was handed a screen x, so the wrap
+        /// point landed hundreds of pixels off and the longest option ran past the edge of the
+        /// window. And `TextColored` returns the cursor to the window's content margin, so the
+        /// detail line - drawn without setting the cursor again - started at the far left, outside
+        /// the box it belonged to.
+        ///
+        /// Both are avoided the same way: the cursor is placed in SCREEN space before each line,
+        /// and the wrap point is derived from GetCursorPosX afterwards, which is already local.
+        /// </summary>
         private void DrawPollOption(PollOption option)
         {
             bool chosen = pollChoice == option.Id;
 
-            Vector2 start = ImGui.GetCursorScreenPos();
-            float width = ImGui.GetContentRegionMax().X - 16;
+            const float pad = 12f;
+            const float markColumn = 34f;
 
-            // Measured rather than guessed, so a long option wraps and the row grows with it. A
-            // fixed height here is how the fifth option ends up clipped on a narrow window.
-            float textWidth = width - 48f;
+            Vector2 start = ImGui.GetCursorScreenPos();
+            float width = ImGui.GetContentRegionAvail().X;
+            float textWidth = Math.Max(80f, width - markColumn - 14f);
+
+            // Measured at the width the text will actually wrap to, so the box is tall enough to
+            // hold it. The first version measured one width and wrapped at another, which is why
+            // the detail fell out of the bottom of the row.
             Vector2 labelSize = ImGui.CalcTextSize(option.Label, false, textWidth);
             Vector2 detailSize = option.Detail.Length > 0
                 ? ImGui.CalcTextSize(option.Detail, false, textWidth)
                 : Vector2.Zero;
 
-            float height = 20f + labelSize.Y + (detailSize.Y > 0 ? detailSize.Y + 4f : 0f);
+            float height = pad * 2f + labelSize.Y
+                + (detailSize.Y > 0 ? 3f + detailSize.Y : 0f);
 
-            ImGui.InvisibleButton($"##polt{option.Id}", new Vector2(width, height));
+            // The hit area first, so the whole row is the control and the input is ImGui's rather
+            // than a hand-rolled mouse test.
+            ImGui.InvisibleButton($"##pollopt{option.Id}", new Vector2(width, height));
             bool hovered = ImGui.IsItemHovered();
 
             if (ImGui.IsItemClicked())
@@ -321,31 +340,41 @@ namespace PfPresets
             dl.AddRect(start, end,
                 ImGui.ColorConvertFloat4ToU32(chosen ? Accent : RuleHair), 0f, 0, 1f);
 
-            // The mark is a filled square, not a tick: everything in this plugin is square, and a
-            // radio circle would be the one round thing on screen.
-            var dot = new Vector2(start.X + 13f, start.Y + 13f);
-            dl.AddRect(dot, new Vector2(dot.X + 12f, dot.Y + 12f),
+            // A square, not a circle: everything in this plugin is square, and a radio dot would be
+            // the one round thing on screen.
+            var mark = new Vector2(start.X + 13f, start.Y + pad + 2f);
+            var markEnd = new Vector2(mark.X + 13f, mark.Y + 13f);
+
+            dl.AddRect(mark, markEnd,
                 ImGui.ColorConvertFloat4ToU32(chosen ? Accent : BorderControl), 0f, 0, 1f);
+
             if (chosen)
             {
-                dl.AddRectFilled(new Vector2(dot.X + 3f, dot.Y + 3f),
-                    new Vector2(dot.X + 9f, dot.Y + 9f), ImGui.ColorConvertFloat4ToU32(Accent));
+                dl.AddRectFilled(new Vector2(mark.X + 3f, mark.Y + 3f),
+                    new Vector2(markEnd.X - 3f, markEnd.Y - 3f),
+                    ImGui.ColorConvertFloat4ToU32(Accent));
             }
 
-            float textX = start.X + 36f;
-            ImGui.SetCursorScreenPos(new Vector2(textX, start.Y + 10f));
-            ImGui.PushTextWrapPos(textX + width - 48f);
+            // The label. Cursor set in screen space, wrap point taken from the local x it produced.
+            ImGui.SetCursorScreenPos(new Vector2(start.X + markColumn, start.Y + pad));
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWidth);
 
             using (UiBodyFont.Push())
                 ImGui.TextColored(Ink, option.Label);
 
+            ImGui.PopTextWrapPos();
+
             if (option.Detail.Length > 0)
             {
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX());
+                // Set again, because the line above returned the cursor to the content margin.
+                float detailY = ImGui.GetCursorScreenPos().Y + 3f;
+                ImGui.SetCursorScreenPos(new Vector2(start.X + markColumn, detailY));
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWidth);
                 ImGui.TextColored(Dim, option.Detail);
+                ImGui.PopTextWrapPos();
             }
 
-            ImGui.PopTextWrapPos();
+            // Below the row, whatever the text did inside it.
             ImGui.SetCursorScreenPos(new Vector2(start.X, end.Y + 7f));
         }
 
