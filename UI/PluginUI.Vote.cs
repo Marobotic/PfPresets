@@ -111,18 +111,36 @@ namespace PfPresets
             if (p == null)
                 return;
 
-            ImGui.Dummy(new Vector2(0, 8));
-            ImGui.Indent(12);
-
+            // THE BODY SCROLLS, NOT THE WINDOW, and this child is the whole of what makes that
+            // true. Without it the tab's content simply overflowed the window, so the window
+            // itself scrolled and took the title bar and the tab strip up and out of sight with
+            // it - navigation you cannot reach because you scrolled down is the one failure a tab
+            // strip must not have. Every other tab in this plugin opens a child for the same
+            // reason; this one did not, and that was the whole bug.
+            ImGui.BeginChild("VoteBody", new Vector2(0, 0), false);
             try
             {
-                DrawPollPost(p);
-                DrawRuleHair(14f, 14f);
-                DrawPollBody(p);
+                ImGui.Dummy(new Vector2(0, 8));
+                ImGui.Indent(12);
+
+                try
+                {
+                    DrawPollPost(p);
+                    DrawRuleHair(14f, 14f);
+                    DrawPollBody(p);
+                }
+                finally
+                {
+                    ImGui.Unindent(12);
+                }
+
+                // Room under the last control, so the tab scrolls past it rather than stopping
+                // with it half inside the clip rect.
+                ImGui.Dummy(new Vector2(0, 20));
             }
             finally
             {
-                ImGui.Unindent(12);
+                ImGui.EndChild();
             }
         }
 
@@ -271,14 +289,32 @@ namespace PfPresets
             if (DrawAccentOutlineButton("Share this poll##pollshare", new Vector2(160, ButtonHeight)))
                 pollShareOpen = true;
 
-            // Beside the controls, where somebody is when they want to know it - rather than in a
-            // row of facts above, which is where it used to be with two sentences for company.
+            // Beside the controls, where somebody is when they want to know it - but only if it
+            // fits. At the window's narrowest the two buttons already fill the row, and a date
+            // appended to them regardless is a date clipped in half by the window edge.
             if (p.ClosesAt.HasValue)
             {
-                ImGui.SameLine(0, 14);
-                ImGui.AlignTextToFramePadding();
+                string closes = $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}";
+
+                float need;
                 using (UiHelpFont.Push())
-                    ImGui.TextColored(Faint, $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}");
+                    need = ImGui.CalcTextSize(closes).X;
+
+                bool sameLine = ImGui.GetCursorPosX() + 14f + need
+                    < ImGui.GetContentRegionMax().X - RowInset;
+
+                if (sameLine)
+                {
+                    ImGui.SameLine(0, 14);
+                    ImGui.AlignTextToFramePadding();
+                }
+                else
+                {
+                    ImGui.Dummy(new Vector2(0, 8));
+                }
+
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(Faint, closes);
             }
 
             if (pollNote.Length > 0)
