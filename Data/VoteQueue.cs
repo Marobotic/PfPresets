@@ -27,6 +27,19 @@ namespace PfPresets
         public DateTime MetAtUtc { get; set; }
         public DateTime QueuedUtc { get; set; } = DateTime.UtcNow;
 
+        /// <summary>
+        /// The sealed proof of the duty this vote came out of, built when the player clicked.
+        ///
+        /// KEPT WITH THE VOTE, because it cannot be rebuilt later. It describes a duty the encounter
+        /// store forgets after an hour, and a queued vote routinely waits longer than that - so
+        /// building it at send time meant queued votes went out with nothing attached and were held.
+        /// Sealed at the click, it stays true however long the queue takes to drain.
+        ///
+        /// Empty is a legitimate value: a build without the sealing component, or a vote whose duty
+        /// really was gone. It is still sent. The server decides, not this.
+        /// </summary>
+        public string Evidence { get; set; } = string.Empty;
+
         /// <summary>Failed sends, so one permanently bad vote can't block the queue forever.</summary>
         public int Attempts { get; set; }
 
@@ -99,6 +112,22 @@ namespace PfPresets
 
         public bool CanSendNow() => SentThisHour() < VotesPerHour;
 
+        /// <summary>
+        /// Stores the seal a vote was cast with, and writes the queue to disk.
+        ///
+        /// Persisting matters as much as storing: a vote queued at midnight and sent after a restart
+        /// must still carry the duty it came from, and a seal held only in memory would leave it
+        /// with nothing to show - the exact failure this whole change exists to end.
+        /// </summary>
+        public void AttachEvidence(QueuedVote vote, string evidence)
+        {
+            lock (gate)
+            {
+                vote.Evidence = evidence ?? string.Empty;
+                Save();
+            }
+        }
+
         /// <summary>Takes a vote. Always succeeds - that is the point.</summary>
         public QueuedVote Enqueue(CharacterIdentity target, VoteDirection direction, int tags,
             int dutyRowId, SocialLink social, DateTime metAtUtc)
@@ -139,16 +168,20 @@ namespace PfPresets
 
             lock (gate)
             {
-                // Anything past the voting window is dead and the server will say so. Dropped here
-                // rather than sent: a vote queued during an outage and delivered two hours later is
-                // refused for being stale, which reads as a fault and is really just arithmetic.
-                int expired = pending.RemoveAll(v => now - v.QueuedUtc > EncounterStore.VotingWindow);
-                if (expired > 0)
-                {
-                    log.Debug($"[Ratings] Dropped {expired} vote(s) past the {EncounterStore.VotingWindow.TotalMinutes:0}m window.");
-                    Save();
-                }
-
+                // NOTHING IS DROPPED HERE ANY MORE, and this was the third place the client threw
+                // away votes it had no business judging.
+                //
+                // It deleted anything queued for more than an hour, reasoning that the server would
+                // refuse it as stale anyway. That reasoning was sound and the arithmetic was fatal:
+                // the send allowance is twenty-four an hour, so a busy night queues votes for
+                // exactly the sort of wait that tripped this - and they were deleted here, quietly,
+                // in a Debug line, without ever being sent. A vote nobody refused and nobody counted
+                // existed in no place at all.
+                //
+                // They now carry the seal they were cast with (see QueuedVote.Evidence) and the
+                // server dates the duty from when the vote was cast, so a wait is no longer what
+                // makes a vote stale. Anything genuinely too old is held for a person to look at,
+                // which is where that decision belongs.
                 foreach (var vote in pending)
                 {
                     if (vote.NotBeforeUtc == null || vote.NotBeforeUtc <= now)

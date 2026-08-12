@@ -614,26 +614,40 @@ namespace PfPresets
             var queued = votes.Enqueue(target, vote, tags & RatingTags.KnownMask,
                 dutyRowId, socialLink, metAtUtc);
 
+            int score = vote == VoteDirection.Up ? 1 : -1;
+
+            // ── SEALED NOW, AT THE MOMENT OF THE VOTE, AND KEPT WITH IT ──────────────────────
+            //
+            // This used to be built further down, past the early return below - so a vote that went
+            // into the queue was stored with no evidence at all, and the flush loop tried to build
+            // it later from an encounter store that had already forgotten the duty. It sent an empty
+            // seal and the vote was held.
+            //
+            // Three windows are all one hour long and they defeat each other: the allowance is
+            // twenty-four votes an hour, so vote twenty-five is queued; the store keeps duties for
+            // an hour; and the server will not accept a duty older than an hour. A vote queued for
+            // being over the allowance therefore waits exactly long enough to lose the proof that
+            // would have justified it. Rating a full night of roulettes guaranteed it.
+            //
+            // Sealing here fixes that at the root, because the moment of the vote is the only moment
+            // the claim is actually true: the duty just ended and the party is still known. The seal
+            // is tamper-proof and its nonce is single-use, so keeping one for an hour costs nothing
+            // - and the server now dates the duty against when the vote was CAST rather than when it
+            // happened to arrive.
+            //
+            // A build without the sealing component leaves this empty, and the server holds the vote
+            // for a person to look at rather than refusing it. That is the rule: the client sends
+            // what it has and never decides.
+            string evidence = string.Empty;
+            BuildVoteEvidence(target, score, ref evidence);
+            votes.AttachEvidence(queued, evidence);
+
             if (!votes.CanSendNow())
             {
                 RecordLocalCooldown(target);
                 Invalidate(target);
                 return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
             }
-
-            int score = vote == VoteDirection.Up ? 1 : -1;
-
-            // The duty this vote is about, sealed by a component that is not in this repository.
-            //
-            // Built here rather than in the queue because it is only honest at the moment of
-            // sending: it carries a timestamp the server checks for drift, so a payload sealed an
-            // hour ago and flushed now would be refused.
-            //
-            // A build without that component leaves this empty and the server refuses the vote,
-            // which is the correct behaviour rather than a failure - such a build can read ratings
-            // and cannot cast them.
-            string evidence = string.Empty;
-            BuildVoteEvidence(target, score, ref evidence);
 
             var request = new SubmitRatingRequest
             {
@@ -751,19 +765,21 @@ namespace PfPresets
                     if (next == null)
                         continue;
 
-                    // SEALED HERE TOO, AND THAT WAS THE BUG. This request was built without an
-                    // Evidence field at all, so every queued vote went out with the empty default
-                    // and the server refused it as unreadable - then the switch below marked it
-                    // permanently failed and threw it away. Any vote that did not send on the
-                    // first attempt was silently lost, which is every vote past the hourly
-                    // allowance and every vote cast while the server was unreachable. Roughly
-                    // eight hundred a day across the service.
+                    // THE SEAL THE VOTE WAS CAST WITH, not one built now.
                     //
-                    // Built now rather than at enqueue for the reason SubmitAsync gives: the
-                    // payload carries a timestamp the server checks for drift, so one sealed an
-                    // hour ago and flushed now would be refused for that instead.
-                    string evidence = string.Empty;
-                    BuildVoteEvidence(next.Target, next.Score, ref evidence);
+                    // Rebuilding it here was the second half of the vote-loss bug. The first half
+                    // was sending no Evidence field at all; the fix for that built one at this
+                    // point, which is an hour or more after the duty ended - by which time the
+                    // encounter store has forgotten it and the builder honestly returns nothing.
+                    // Queued votes went out with an empty seal and were held instead of counted.
+                    //
+                    // It is sealed at the click now and travels with the vote, so this only has to
+                    // carry it. The fallback covers votes queued by an older build, which have no
+                    // seal saved: it will usually come back empty, and that is fine. Empty is sent
+                    // like anything else and the server holds it for a person to decide on.
+                    string evidence = next.Evidence;
+                    if (string.IsNullOrEmpty(evidence))
+                        BuildVoteEvidence(next.Target, next.Score, ref evidence);
 
                     // SENT EVEN WHEN THERE IS NOTHING TO SEAL, and that is the rule now.
                     //
