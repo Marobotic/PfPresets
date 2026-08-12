@@ -275,37 +275,51 @@ namespace PfPresets
 
             bool ready = pollChoice.Length > 0 && !pollSending;
 
+            // DECIDED BEFORE ANYTHING IS DRAWN, from widths that are known, because the obvious
+            // way round does not work: after a button the cursor has already wrapped to the next
+            // line, so GetCursorPosX reads the LEFT margin. The check therefore always found room
+            // and always chose SameLine, which is how the date ended up clipped by the window edge
+            // in the one case the check existed to catch.
+            const float castWidth = 150f;
+            const float shareWidth = 160f;
+            const float buttonGap = 10f;
+            const float dateGap = 14f;
+
+            string closes = p.ClosesAt.HasValue
+                ? $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}"
+                : string.Empty;
+
+            float dateWidth = 0f;
+            if (closes.Length > 0)
+            {
+                using (UiHelpFont.Push())
+                    dateWidth = ImGui.CalcTextSize(closes).X;
+            }
+
+            float row = ImGui.GetContentRegionAvail().X - RowInset;
+            bool dateFits = closes.Length > 0
+                && castWidth + buttonGap + shareWidth + dateGap + dateWidth <= row;
+
             if (!ready)
                 ImGui.BeginDisabled();
 
-            if (DrawPrimaryButton("Cast vote##pollcast", new Vector2(150, ButtonHeight)))
+            if (DrawPrimaryButton("Cast vote##pollcast", new Vector2(castWidth, ButtonHeight)))
                 CastPollVote(p);
 
             if (!ready)
                 ImGui.EndDisabled();
 
-            ImGui.SameLine(0, 10);
+            ImGui.SameLine(0, buttonGap);
 
-            if (DrawAccentOutlineButton("Share this poll##pollshare", new Vector2(160, ButtonHeight)))
+            if (DrawAccentOutlineButton("Share this poll##pollshare",
+                    new Vector2(shareWidth, ButtonHeight)))
                 pollShareOpen = true;
 
-            // Beside the controls, where somebody is when they want to know it - but only if it
-            // fits. At the window's narrowest the two buttons already fill the row, and a date
-            // appended to them regardless is a date clipped in half by the window edge.
-            if (p.ClosesAt.HasValue)
+            if (closes.Length > 0)
             {
-                string closes = $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}";
-
-                float need;
-                using (UiHelpFont.Push())
-                    need = ImGui.CalcTextSize(closes).X;
-
-                bool sameLine = ImGui.GetCursorPosX() + 14f + need
-                    < ImGui.GetContentRegionMax().X - RowInset;
-
-                if (sameLine)
+                if (dateFits)
                 {
-                    ImGui.SameLine(0, 14);
+                    ImGui.SameLine(0, dateGap);
                     ImGui.AlignTextToFramePadding();
                 }
                 else
