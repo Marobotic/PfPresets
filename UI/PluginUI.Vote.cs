@@ -42,6 +42,16 @@ namespace PfPresets
         private bool pollSending;
         private bool pollShareOpen;
 
+        /// <summary>
+        /// How far every block in this tab stops short of the content edge.
+        ///
+        /// The same number as the tab's own Indent, so the left and right margins match. They did
+        /// not: the card was measured off GetContentRegionMax (a local x, used as though it were a
+        /// width) and the rows off GetContentRegionAvail, so the two ended four pixels apart and
+        /// the rows ran flush into the window border.
+        /// </summary>
+        private const float RowInset = 12f;
+
         /// <summary>How long between asking the server whether a poll is running.</summary>
         private static readonly TimeSpan PollRecheck = TimeSpan.FromMinutes(10);
 
@@ -135,7 +145,7 @@ namespace PfPresets
             // A CARD, NOT A LINE OF TEXT. Drawn on a split channel so the panel is exactly its
             // contents and the accent edge sits behind them - the same construction the profile
             // card uses, and the reason it does not need a height guessed in advance.
-            float width = ImGui.GetContentRegionMax().X - 16f;
+            float width = ImGui.GetContentRegionAvail().X - RowInset;
             var dl = ImGui.GetWindowDrawList();
             Vector2 cardMin = ImGui.GetCursorScreenPos();
 
@@ -194,7 +204,7 @@ namespace PfPresets
             if (!string.IsNullOrWhiteSpace(p.Blurb))
             {
                 ImGui.Dummy(new Vector2(0, 4));
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - 16);
+                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
                 ImGui.TextColored(Dim, p.Blurb);
                 ImGui.PopTextWrapPos();
             }
@@ -241,7 +251,7 @@ namespace PfPresets
             if (pollNote.Length > 0)
             {
                 ImGui.Dummy(new Vector2(0, 8));
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - 16);
+                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
                 using (UiHelpFont.Push())
                     ImGui.TextColored(AccentYellow, pollNote);
                 ImGui.PopTextWrapPos();
@@ -263,10 +273,10 @@ namespace PfPresets
                 : string.Empty;
 
             string[] parts = closes.Length > 0
-                ? new[] { "One vote each", "Results at close", closes }
-                : new[] { "One vote each", "Results at close" };
+                ? new[] { "One vote per person", "Results published at close", closes }
+                : new[] { "One vote per person", "Results published at close" };
 
-            float right = ImGui.GetContentRegionMax().X - 16f;
+            float right = ImGui.GetContentRegionMax().X - RowInset;
 
             using (UiHelpFont.Push())
             {
@@ -307,7 +317,7 @@ namespace PfPresets
             const float markColumn = 34f;
 
             Vector2 start = ImGui.GetCursorScreenPos();
-            float width = ImGui.GetContentRegionAvail().X;
+            float width = ImGui.GetContentRegionAvail().X - RowInset;
             float textWidth = Math.Max(80f, width - markColumn - 14f);
 
             // Measured at the width the text will actually wrap to, so the box is tall enough to
@@ -319,7 +329,7 @@ namespace PfPresets
                 : Vector2.Zero;
 
             float height = pad * 2f + labelSize.Y
-                + (detailSize.Y > 0 ? 3f + detailSize.Y : 0f);
+                + (detailSize.Y > 0 ? detailSize.Y : 0f);
 
             // The hit area first, so the whole row is the control and the input is ImGui's rather
             // than a hand-rolled mouse test.
@@ -367,7 +377,7 @@ namespace PfPresets
             if (option.Detail.Length > 0)
             {
                 // Set again, because the line above returned the cursor to the content margin.
-                float detailY = ImGui.GetCursorScreenPos().Y + 3f;
+                float detailY = ImGui.GetCursorScreenPos().Y;
                 ImGui.SetCursorScreenPos(new Vector2(start.X + markColumn, detailY));
                 ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWidth);
                 ImGui.TextColored(Dim, option.Detail);
@@ -389,7 +399,7 @@ namespace PfPresets
                 ? $"on {p.ClosesAt.Value.ToLocalTime():d MMMM}"
                 : "when voting closes";
 
-            ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - 16);
+            ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
             ImGui.TextColored(Dim, $"Results appear here {when}.");
             ImGui.PopTextWrapPos();
 
@@ -515,7 +525,7 @@ namespace PfPresets
 
             if (BeginDialog("Share this poll", "PfPresetsPollShare", 400f, ref open))
             {
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - 16);
+                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
                 ImGui.TextColored(Dim,
                     "Anyone can vote from this link, whether or not they have the plugin.");
                 ImGui.PopTextWrapPos();
