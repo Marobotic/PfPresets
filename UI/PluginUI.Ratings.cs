@@ -20,6 +20,7 @@ namespace PfPresets
         Ratings = 1,
         Settings = 2,
         Achievements = 3,
+        Vote = 4,
 
         // Identities for tabs contributed by optional components. Nothing in this repository adds
         // them to the list or draws them; they exist so that a component which does has a stable

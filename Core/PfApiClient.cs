@@ -426,6 +426,26 @@ namespace PfPresets
         //  TRANSPORT
         // ══════════════════════════════════════════════════════════
 
+        // ── The community poll ────────────────────────────────────────────
+        //
+        // Unauthenticated on the read: the poll is public and the same five options go to every
+        // surface. The vote carries the session only when this install is taking part - see the
+        // note on the Vote tab about somebody who has opted out.
+
+        public async Task<ApiResult<PollResponse>> GetPollAsync()
+            => await SendAsync<PollResponse>(
+                HttpMethod.Get, "poll", null, requireAuth: false).ConfigureAwait(false);
+
+        public async Task<ApiResult<PollVoteResponse>> VotePollAsync(
+            string slug, string option, string token, bool identified)
+            => await SendAsync<PollVoteResponse>(
+                HttpMethod.Post, "poll/vote",
+                new PollVoteRequest
+                {
+                    Slug = slug, Option = option, Token = token, FromPlugin = identified,
+                },
+                requireAuth: identified).ConfigureAwait(false);
+
         private async Task<ApiResult<TRes>> SendAsync<TRes>(
             HttpMethod method,
             string path,

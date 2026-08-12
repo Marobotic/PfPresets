@@ -302,6 +302,32 @@ namespace PfPresets
         public bool Reacting(AchievementPost post)
             => reacting.ContainsKey(post.Id + "#heart") || reacting.ContainsKey(post.Id + "#share");
 
+        // ── The community poll ────────────────────────────────────
+
+        /// <summary>The poll the server is running, or null when there is not one.</summary>
+        public async Task<PollResponse?> GetPollAsync()
+        {
+            var res = await api.GetPollAsync().ConfigureAwait(false);
+            return res.IsOk && res.Value is { Question.Length: > 0 } ? res.Value : null;
+        }
+
+        /// <summary>
+        /// Casts a vote. Returns an empty string on success, or the server's reason.
+        ///
+        /// The reason is passed through rather than translated here: what a person should be told
+        /// about a refusal is a UI decision, and this layer has no business deciding it.
+        /// </summary>
+        public async Task<string> VotePollAsync(
+            string slug, string option, string token, bool identified)
+        {
+            var res = await api.VotePollAsync(slug, option, token, identified).ConfigureAwait(false);
+
+            if (res.IsOk && res.Value?.Ok == true)
+                return string.Empty;
+
+            return res.Value?.Error ?? "unreachable";
+        }
+
         // ── Posting ───────────────────────────────────────────────
 
         /// <summary>

@@ -183,6 +183,12 @@ namespace PfPresets
                 return;
             }
 
+            if (activeTab == MainTab.Vote)
+            {
+                DrawVoteTab();
+                return;
+            }
+
             if (activeTab == MainTab.Settings)
             {
                 DrawSettingsTab();

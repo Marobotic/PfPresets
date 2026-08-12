@@ -464,6 +464,68 @@ namespace PfPresets
             !Hidden && !OptedOut && (YouCanRateAt == null || YouCanRateAt <= DateTime.UtcNow);
     }
 
+    // ── The community poll ────────────────────────────────────────────────
+    //
+    // A survey about the plugin, not about a player, so nothing here touches a rating. The one
+    // property worth noticing is what is ABSENT: no counts arrive while a poll is open, because
+    // the server does not send any until it is published.
+
+    internal sealed class PollOption
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+    }
+
+    internal sealed class PollResponse
+    {
+        public string Slug { get; set; } = string.Empty;
+        public string Question { get; set; } = string.Empty;
+        public string Blurb { get; set; } = string.Empty;
+
+        [Newtonsoft.Json.JsonProperty("postUrl")]
+        public string PostUrl { get; set; } = string.Empty;
+
+        [Newtonsoft.Json.JsonProperty("closesAt")]
+        public DateTime? ClosesAt { get; set; }
+
+        public bool Open { get; set; }
+        public string Token { get; set; } = string.Empty;
+        public List<PollOption> Options { get; set; } = new();
+
+        /// <summary>Only ever present once the poll is published. Absent means sealed.</summary>
+        public PollResults? Results { get; set; }
+    }
+
+    internal sealed class PollResults
+    {
+        public int Total { get; set; }
+        public List<PollResultRow> Options { get; set; } = new();
+    }
+
+    internal sealed class PollResultRow
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public int Votes { get; set; }
+    }
+
+    internal sealed class PollVoteRequest
+    {
+        public string Slug { get; set; } = string.Empty;
+        public string Option { get; set; } = string.Empty;
+        public string Token { get; set; } = string.Empty;
+
+        [Newtonsoft.Json.JsonProperty("fromPlugin")]
+        public bool FromPlugin { get; set; }
+    }
+
+    internal sealed class PollVoteResponse
+    {
+        public bool Ok { get; set; }
+        public string? Error { get; set; }
+    }
+
     internal sealed class BatchLookupResponse
     {
         public List<PlayerRating> Players { get; set; } = new();

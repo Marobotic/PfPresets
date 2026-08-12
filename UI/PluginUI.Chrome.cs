@@ -65,6 +65,14 @@ namespace PfPresets
                 tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
             }
 
+            // THE VOTE TAB IS TEMPORARY and is not gated with the rest. It appears while the
+            // server says a poll is running and disappears when one is not, without a release
+            // either way - and it is shown to people who have opted out, because the poll decides
+            // the future of the system they opted out of. See PluginUI.Vote.cs.
+            EnsurePollLoaded();
+            if (PollAvailable)
+                tabs.Add(("Vote", FontAwesomeIcon.CheckSquare, MainTab.Vote));
+
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
 
             // Optional components may append their own. Both layouts read this one list, so a tab
