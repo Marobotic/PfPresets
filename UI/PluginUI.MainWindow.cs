@@ -166,7 +166,7 @@ namespace PfPresets
         {
             // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
             bool extraHandled = false;
-            DrawAdminTabBody(ref extraHandled);
+            DrawPanelTabBody(ref extraHandled);
             if (extraHandled)
                 return;
 

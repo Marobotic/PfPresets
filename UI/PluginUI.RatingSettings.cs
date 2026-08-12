@@ -59,7 +59,7 @@ namespace PfPresets
                 }
 
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
-                DrawAdminSettings();
+                DrawPanelSettings();
 
                 ImGui.Unindent(12);
             }

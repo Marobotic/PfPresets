@@ -63,13 +63,17 @@ def present(needle):
 # by the server now and the plugin has no name for either. See src/screens.js - the whole point is
 # that a released DLL no longer says what moderation can do, so this check has to name the two
 # generic endpoints that remain instead of the surface that used to leak.
-missing = [n for n in ("admin/challenge", "admin/screen", "admin/do", "achievements/feed", "clears")
+missing = [n for n in ("panels/hello", "panels", "panels/act", "achievements/feed", "clears")
            if not present(n)]
 
 # And the reverse: the converted surface must NOT come back. A build that still carries these is one
 # where the old panel was resurrected or the deletion was reverted, which is exactly the regression
 # this change exists to prevent, and it would ship unnoticed.
-leaked = [n for n in ("admin/leaderboard", "admin/audit", "##modrows", "##auditrows") if present(n)]
+# THE WHOLE LIST, not a sample. Every one of these was in a shipped build and each is a word that
+# tells a reader what the panel is for. A build carrying any of them is one where the conversion was
+# reverted or a new tool was written the old way.
+leaked = [n for n in ("admin/", "moderat", "enrol", "leaderboard", "##modrows", "##auditrows",
+                      "MODERATION", "held vote", "Unban") if present(n)]
 
 if leaked:
     print("!! this build leaks the moderation surface again: " + ", ".join(leaked), file=sys.stderr)
@@ -82,7 +86,7 @@ if missing:
     raise SystemExit(1)
 
 print("   ratings, achievements and the moderator panel are present, and the")
-print("   moderation surface is not in the binary")
+print("   panel vocabulary is not in the binary")
 CHECK
 
 echo

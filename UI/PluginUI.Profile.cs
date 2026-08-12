@@ -594,7 +594,7 @@ namespace PfPresets
             // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs. Takes the right
             // edge and moves it left by whatever it used, so the site icons follow on without
             // either row having to know the other's width.
-            DrawAdminCardActions(who, rowY, ref right);
+            DrawSubjectActions(who, rowY, ref right);
 
             for (int i = 0; i < sites.Length; i++)
             {

@@ -169,7 +169,7 @@ namespace PfPresets
 
             // Erased entirely in an ordinary build - the implementation is not in this repository.
             // See UI/PluginUI.AdminHooks.cs for why the moderator build works this way.
-            InitAdmin(pluginLog);
+            InitPanel(pluginLog);
 
             // Register commands
             // /pfa and /pfanalysis are the names the plugin goes by now; /pfp and /pfpresets stay
@@ -385,12 +385,12 @@ namespace PfPresets
             });
         }
 
-        partial void InitAdmin(IPluginLog log);
-        partial void DisposeAdmin();
+        partial void InitPanel(IPluginLog log);
+        partial void DisposePanel();
 
         public void Dispose()
         {
-            DisposeAdmin();
+            DisposePanel();
             this.framework.Update -= OnFrameworkUpdate;
 
             this.pluginInterface.UiBuilder.Draw -= this.ui.Draw;

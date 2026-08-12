@@ -129,7 +129,7 @@ namespace PfPresets
                 DrawListingLeaderRatingOverlay();
 #endif
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
-                DrawAdminOverlay();
+                DrawPanelOverlay();
             }
             finally
             {

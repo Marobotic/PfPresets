@@ -21,7 +21,7 @@ namespace PfPresets
         partial void OnVersionLabelClicked();
 
         /// <summary>Anything that draws over the whole window, before the frame ends.</summary>
-        partial void DrawAdminOverlay();
+        partial void DrawPanelOverlay();
 
         /// <summary>Appends any tabs an optional component contributes to the shared list.</summary>
         partial void AddExtraTabs(System.Collections.Generic.List<(string, Dalamud.Interface.FontAwesomeIcon, MainTab)> tabs);
@@ -32,10 +32,10 @@ namespace PfPresets
         /// `handled` rather than a return value because a partial method must return void to be
         /// erasable - a non-void one has to have an implementation, which would defeat the purpose.
         /// </summary>
-        partial void DrawAdminTabBody(ref bool handled);
+        partial void DrawPanelTabBody(ref bool handled);
 
         /// <summary>An extra block at the foot of the settings tab.</summary>
-        partial void DrawAdminSettings();
+        partial void DrawPanelSettings();
 
         /// <summary>
         /// Moderator controls beside the site links on a profile card.
@@ -43,6 +43,6 @@ namespace PfPresets
         /// Given the card's right edge and the row to sit on, and reports back how much room it
         /// took so the site icons can shuffle left by exactly that much.
         /// </summary>
-        partial void DrawAdminCardActions(CharacterIdentity who, float rowY, ref float right);
+        partial void DrawSubjectActions(CharacterIdentity who, float rowY, ref float right);
     }
 }
