@@ -751,6 +751,29 @@ namespace PfPresets
                     if (next == null)
                         continue;
 
+                    // SEALED HERE TOO, AND THAT WAS THE BUG. This request was built without an
+                    // Evidence field at all, so every queued vote went out with the empty default
+                    // and the server refused it as unreadable - then the switch below marked it
+                    // permanently failed and threw it away. Any vote that did not send on the
+                    // first attempt was silently lost, which is every vote past the hourly
+                    // allowance and every vote cast while the server was unreachable. Roughly
+                    // eight hundred a day across the service.
+                    //
+                    // Built now rather than at enqueue for the reason SubmitAsync gives: the
+                    // payload carries a timestamp the server checks for drift, so one sealed an
+                    // hour ago and flushed now would be refused for that instead.
+                    string evidence = string.Empty;
+                    BuildVoteEvidence(next.Target, next.Score, ref evidence);
+
+                    if (evidence.Length == 0)
+                    {
+                        // The duty has aged past the window the server will accept, so there is
+                        // nothing to seal and nothing a later attempt could change. Dropped
+                        // deliberately rather than resent forever - which is what it was doing.
+                        votes.Failed(next, permanent: true);
+                        continue;
+                    }
+
                     var result = await api.SubmitAsync(new SubmitRatingRequest
                     {
                         VoteId = next.VoteId,
@@ -760,6 +783,7 @@ namespace PfPresets
                         DutyRowId = next.DutyRowId,
                         SocialLink = next.SocialLink,
                         MetAt = next.MetAtUtc,
+                        Evidence = evidence,
                     }).ConfigureAwait(false);
 
                     switch (result.Status)
