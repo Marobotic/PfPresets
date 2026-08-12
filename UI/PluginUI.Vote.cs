@@ -142,9 +142,9 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 8));
 
-            // A CARD, NOT A LINE OF TEXT. Drawn on a split channel so the panel is exactly its
-            // contents and the accent edge sits behind them - the same construction the profile
-            // card uses, and the reason it does not need a height guessed in advance.
+            const float markSize = 30f;
+            const float markGap = 14f;
+
             float width = ImGui.GetContentRegionAvail().X - RowInset;
             var dl = ImGui.GetWindowDrawList();
             Vector2 cardMin = ImGui.GetCursorScreenPos();
@@ -155,21 +155,27 @@ namespace PfPresets
             ImGui.BeginGroup();
             try
             {
-                ImGui.Dummy(new Vector2(width, 14f));
-                ImGui.Indent(16f);
+                ImGui.Dummy(new Vector2(width, 15f));
 
-                ImGui.PushTextWrapPos(cardMin.X + width - 20f);
+                // The heading and the button share a left edge, and the mark sits outside it. The
+                // mark is decoration; the text column is the content, and they should not be
+                // arguing about where the column starts.
+                float textLeft = 16f + markSize + markGap;
+                ImGui.Indent(textLeft);
+
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width - textLeft - 14f);
                 using (UiBodyFont.Push())
                     ImGui.TextColored(Ink, "The controversy, and the future of PF Analysis");
                 ImGui.PopTextWrapPos();
 
-                ImGui.Dummy(new Vector2(0, 10f));
+                ImGui.Dummy(new Vector2(0, 9f));
 
-                if (DrawNeutralButton("Read the post##pollpost", new Vector2(150, ButtonHeight)))
+                if (DrawAccentOutlineButton("Read the post \u2197##pollpost",
+                        new Vector2(148, ButtonHeight)))
                     Dalamud.Utility.Util.OpenLink(p.PostUrl);
 
-                ImGui.Unindent(16f);
-                ImGui.Dummy(new Vector2(width, 14f));
+                ImGui.Unindent(textLeft);
+                ImGui.Dummy(new Vector2(width, 15f));
             }
             finally
             {
@@ -182,11 +188,24 @@ namespace PfPresets
             dl.ChannelsSetCurrent(0);
             dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
             dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
-
-            // The accent down the left edge, which is what makes it read as a card rather than as
-            // a box. Three pixels, matching the band on the website.
             dl.AddRectFilled(cardMin, new Vector2(cardMin.X + 3f, cardMax.Y),
                 ImGui.ColorConvertFloat4ToU32(Accent));
+
+            // The mark: a bordered square with the glyph centred in it, drawn on the background
+            // channel so the group above never had to leave room for it.
+            var markMin = new Vector2(cardMin.X + 16f, cardMin.Y + 15f);
+            var markMax = new Vector2(markMin.X + markSize, markMin.Y + markSize);
+
+            dl.AddRect(markMin, markMax, ImGui.ColorConvertFloat4ToU32(BorderControl), 0f, 0, 1f);
+
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                string glyph = FontAwesomeIcon.PenNib.ToIconString();
+                Vector2 g = ImGui.CalcTextSize(glyph);
+                dl.AddText(new Vector2(markMin.X + (markSize - g.X) * 0.5f,
+                                       markMin.Y + (markSize - g.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(Accent), glyph);
+            }
 
             dl.ChannelsMerge();
         }
@@ -201,17 +220,21 @@ namespace PfPresets
             using (UiHeadingFont.Push())
                 ImGui.TextColored(Ink, p.Question);
 
-            if (!string.IsNullOrWhiteSpace(p.Blurb))
-            {
-                ImGui.Dummy(new Vector2(0, 4));
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
-                ImGui.TextColored(Dim, p.Blurb);
-                ImGui.PopTextWrapPos();
-            }
-
             ImGui.Dummy(new Vector2(0, 4));
 
-            DrawPollMeta(p);
+            // ONE SENTENCE, NOT A ROW OF FACTS. The blurb and "results are published when voting
+            // closes" are the same thought, and splitting them into a mono row of pipe-separated
+            // items put three pieces of furniture where a line of prose belonged. The closing date
+            // is the only one that is genuinely a fact rather than a sentence, and it has moved
+            // next to the button, which is where somebody is when they want it.
+            string blurb = p.Blurb.Length > 0 ? p.Blurb : string.Empty;
+            string sentence = blurb.Length > 0
+                ? $"{blurb} Results are published when voting closes, not before."
+                : "Results are published when voting closes, not before.";
+
+            ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
+            ImGui.TextColored(Dim, sentence);
+            ImGui.PopTextWrapPos();
 
             ImGui.Dummy(new Vector2(0, 12));
 
@@ -245,8 +268,18 @@ namespace PfPresets
 
             ImGui.SameLine(0, 10);
 
-            if (DrawNeutralButton("Share this poll##pollshare", new Vector2(170, ButtonHeight)))
+            if (DrawAccentOutlineButton("Share this poll##pollshare", new Vector2(160, ButtonHeight)))
                 pollShareOpen = true;
+
+            // Beside the controls, where somebody is when they want to know it - rather than in a
+            // row of facts above, which is where it used to be with two sentences for company.
+            if (p.ClosesAt.HasValue)
+            {
+                ImGui.SameLine(0, 14);
+                ImGui.AlignTextToFramePadding();
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(Faint, $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}");
+            }
 
             if (pollNote.Length > 0)
             {
@@ -259,80 +292,87 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The three facts about the poll, as a row of pieces rather than one long sentence.
+        /// Two-toned text laid out as ONE wrapped paragraph.
         ///
-        /// A single line of middot-separated text runs straight off the edge of a narrow window,
-        /// which is what the first version did. Each piece is measured and the row breaks between
-        /// them when there is not room, so it degrades into two tidy lines instead of one clipped
-        /// one.
+        /// This is what the mockup asks for and what ImGui will not do on its own: the label and
+        /// the detail run together and wrap together, with the label brighter. TextWrapped cannot
+        /// change colour mid-run, and SameLine cannot wrap, so the words are placed by hand onto
+        /// the draw list - which this row is already using for its background anyway.
+        ///
+        /// Measures and draws through the same code, because a height computed by one routine and a
+        /// layout produced by another is exactly how the detail fell out of the bottom of the box
+        /// the first time.
         /// </summary>
-        private void DrawPollMeta(PollResponse p)
+        private float DrawTwoTonedRun(Vector2 at, float wrapWidth,
+            string strong, string rest, bool draw)
         {
-            string closes = p.ClosesAt.HasValue
-                ? $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}"
-                : string.Empty;
+            var dl = ImGui.GetWindowDrawList();
+            float lineHeight = ImGui.GetTextLineHeight();
+            float spaceW = ImGui.CalcTextSize(" ").X;
 
-            string[] parts = closes.Length > 0
-                ? new[] { "One vote per person", "Results published at close", closes }
-                : new[] { "One vote per person", "Results published at close" };
+            float x = at.X;
+            float y = at.Y;
+            bool atLineStart = true;
 
-            float right = ImGui.GetContentRegionMax().X - RowInset;
-
-            using (UiHelpFont.Push())
+            void Run(string text, Vector4 colour)
             {
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    float need = ImGui.CalcTextSize(parts[i]).X + (i > 0 ? 22f : 0f);
+                if (string.IsNullOrWhiteSpace(text))
+                    return;
 
-                    if (i > 0 && ImGui.GetCursorPosX() + need < right)
+                foreach (string word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    float w = ImGui.CalcTextSize(word).X;
+
+                    if (!atLineStart && x + spaceW + w > at.X + wrapWidth)
                     {
-                        ImGui.SameLine(0, 10);
-                        ImGui.TextColored(RuleStrong, "|");
-                        ImGui.SameLine(0, 10);
+                        x = at.X;
+                        y += lineHeight;
+                        atLineStart = true;
                     }
 
-                    ImGui.TextColored(Faint, parts[i]);
+                    if (!atLineStart)
+                    {
+                        x += spaceW;
+                    }
+
+                    if (draw)
+                        dl.AddText(new Vector2(x, y), ImGui.ColorConvertFloat4ToU32(colour), word);
+
+                    x += w;
+                    atLineStart = false;
                 }
             }
+
+            Run(strong, Ink);
+            Run(rest, Dim);
+
+            return (y - at.Y) + lineHeight;
         }
 
         /// <summary>
-        /// One option: a bordered row with a square mark, the label, and the detail under it.
+        /// One option: a bordered row with a square mark and the text beside it.
         ///
-        /// TWO COORDINATE SPACES MEET HERE and getting them confused is what broke the first
-        /// version. `PushTextWrapPos` takes a WINDOW-LOCAL x; it was handed a screen x, so the wrap
-        /// point landed hundreds of pixels off and the longest option ran past the edge of the
-        /// window. And `TextColored` returns the cursor to the window's content margin, so the
-        /// detail line - drawn without setting the cursor again - started at the far left, outside
-        /// the box it belonged to.
-        ///
-        /// Both are avoided the same way: the cursor is placed in SCREEN space before each line,
-        /// and the wrap point is derived from GetCursorPosX afterwards, which is already local.
+        /// The label and the detail are one wrapped paragraph, not two lines - see
+        /// DrawTwoTonedRun. The mark is a square because everything in this plugin is square, and a
+        /// radio dot would be the one round thing on screen.
         /// </summary>
         private void DrawPollOption(PollOption option)
         {
             bool chosen = pollChoice == option.Id;
 
-            const float pad = 12f;
+            const float padY = 12f;
             const float markColumn = 34f;
 
             Vector2 start = ImGui.GetCursorScreenPos();
             float width = ImGui.GetContentRegionAvail().X - RowInset;
             float textWidth = Math.Max(80f, width - markColumn - 14f);
 
-            // Measured at the width the text will actually wrap to, so the box is tall enough to
-            // hold it. The first version measured one width and wrapped at another, which is why
-            // the detail fell out of the bottom of the row.
-            Vector2 labelSize = ImGui.CalcTextSize(option.Label, false, textWidth);
-            Vector2 detailSize = option.Detail.Length > 0
-                ? ImGui.CalcTextSize(option.Detail, false, textWidth)
-                : Vector2.Zero;
+            var textAt = new Vector2(start.X + markColumn, start.Y + padY);
 
-            float height = pad * 2f + labelSize.Y
-                + (detailSize.Y > 0 ? detailSize.Y : 0f);
+            // Measured by the routine that will draw it, at the width it will wrap to.
+            float textHeight = DrawTwoTonedRun(textAt, textWidth, option.Label, option.Detail, false);
+            float height = padY * 2f + textHeight;
 
-            // The hit area first, so the whole row is the control and the input is ImGui's rather
-            // than a hand-rolled mouse test.
             ImGui.InvisibleButton($"##pollopt{option.Id}", new Vector2(width, height));
             bool hovered = ImGui.IsItemHovered();
 
@@ -350,9 +390,7 @@ namespace PfPresets
             dl.AddRect(start, end,
                 ImGui.ColorConvertFloat4ToU32(chosen ? Accent : RuleHair), 0f, 0, 1f);
 
-            // A square, not a circle: everything in this plugin is square, and a radio dot would be
-            // the one round thing on screen.
-            var mark = new Vector2(start.X + 13f, start.Y + pad + 2f);
+            var mark = new Vector2(start.X + 13f, start.Y + padY + 1f);
             var markEnd = new Vector2(mark.X + 13f, mark.Y + 13f);
 
             dl.AddRect(mark, markEnd,
@@ -365,26 +403,8 @@ namespace PfPresets
                     ImGui.ColorConvertFloat4ToU32(Accent));
             }
 
-            // The label. Cursor set in screen space, wrap point taken from the local x it produced.
-            ImGui.SetCursorScreenPos(new Vector2(start.X + markColumn, start.Y + pad));
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWidth);
+            DrawTwoTonedRun(textAt, textWidth, option.Label, option.Detail, true);
 
-            using (UiBodyFont.Push())
-                ImGui.TextColored(Ink, option.Label);
-
-            ImGui.PopTextWrapPos();
-
-            if (option.Detail.Length > 0)
-            {
-                // Set again, because the line above returned the cursor to the content margin.
-                float detailY = ImGui.GetCursorScreenPos().Y;
-                ImGui.SetCursorScreenPos(new Vector2(start.X + markColumn, detailY));
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWidth);
-                ImGui.TextColored(Dim, option.Detail);
-                ImGui.PopTextWrapPos();
-            }
-
-            // Below the row, whatever the text did inside it.
             ImGui.SetCursorScreenPos(new Vector2(start.X, end.Y + 7f));
         }
 
