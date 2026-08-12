@@ -132,13 +132,53 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 8));
 
-            using (UiBodyFont.Push())
-                ImGui.TextColored(Ink, "The controversy, and the future of PF Analysis");
+            // A CARD, NOT A LINE OF TEXT. Drawn on a split channel so the panel is exactly its
+            // contents and the accent edge sits behind them - the same construction the profile
+            // card uses, and the reason it does not need a height guessed in advance.
+            float width = ImGui.GetContentRegionMax().X - 16f;
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 cardMin = ImGui.GetCursorScreenPos();
 
-            ImGui.Dummy(new Vector2(0, 8));
+            dl.ChannelsSplit(2);
+            dl.ChannelsSetCurrent(1);
 
-            if (DrawNeutralButton("Read the post##pollpost", new Vector2(150, ButtonHeight)))
-                Dalamud.Utility.Util.OpenLink(p.PostUrl);
+            ImGui.BeginGroup();
+            try
+            {
+                ImGui.Dummy(new Vector2(width, 14f));
+                ImGui.Indent(16f);
+
+                ImGui.PushTextWrapPos(cardMin.X + width - 20f);
+                using (UiBodyFont.Push())
+                    ImGui.TextColored(Ink, "The controversy, and the future of PF Analysis");
+                ImGui.PopTextWrapPos();
+
+                ImGui.Dummy(new Vector2(0, 10f));
+
+                if (DrawNeutralButton("Read the post##pollpost", new Vector2(150, ButtonHeight)))
+                    Dalamud.Utility.Util.OpenLink(p.PostUrl);
+
+                ImGui.Unindent(16f);
+                ImGui.Dummy(new Vector2(width, 14f));
+            }
+            finally
+            {
+                ImGui.EndGroup();
+            }
+
+            float cardHeight = ImGui.GetItemRectSize().Y;
+            var cardMax = new Vector2(cardMin.X + width, cardMin.Y + cardHeight);
+
+            dl.ChannelsSetCurrent(0);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+
+            // The accent down the left edge, which is what makes it read as a card rather than as
+            // a box. Three pixels, matching the band on the website.
+            dl.AddRectFilled(cardMin, new Vector2(cardMin.X + 3f, cardMax.Y),
+                ImGui.ColorConvertFloat4ToU32(Accent));
+
+            dl.ChannelsMerge();
         }
 
         private void DrawPollBody(PollResponse p)
@@ -161,15 +201,7 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 4));
 
-            using (UiHelpFont.Push())
-            {
-                string closes = p.ClosesAt.HasValue
-                    ? $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}"
-                    : string.Empty;
-
-                ImGui.TextColored(Faint,
-                    $"One vote per person   ·   Results published at close   ·   {closes}");
-            }
+            DrawPollMeta(p);
 
             ImGui.Dummy(new Vector2(0, 12));
 
@@ -213,6 +245,44 @@ namespace PfPresets
                 using (UiHelpFont.Push())
                     ImGui.TextColored(AccentYellow, pollNote);
                 ImGui.PopTextWrapPos();
+            }
+        }
+
+        /// <summary>
+        /// The three facts about the poll, as a row of pieces rather than one long sentence.
+        ///
+        /// A single line of middot-separated text runs straight off the edge of a narrow window,
+        /// which is what the first version did. Each piece is measured and the row breaks between
+        /// them when there is not room, so it degrades into two tidy lines instead of one clipped
+        /// one.
+        /// </summary>
+        private void DrawPollMeta(PollResponse p)
+        {
+            string closes = p.ClosesAt.HasValue
+                ? $"Closes {p.ClosesAt.Value.ToLocalTime():d MMMM}"
+                : string.Empty;
+
+            string[] parts = closes.Length > 0
+                ? new[] { "One vote each", "Results at close", closes }
+                : new[] { "One vote each", "Results at close" };
+
+            float right = ImGui.GetContentRegionMax().X - 16f;
+
+            using (UiHelpFont.Push())
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    float need = ImGui.CalcTextSize(parts[i]).X + (i > 0 ? 22f : 0f);
+
+                    if (i > 0 && ImGui.GetCursorPosX() + need < right)
+                    {
+                        ImGui.SameLine(0, 10);
+                        ImGui.TextColored(RuleStrong, "|");
+                        ImGui.SameLine(0, 10);
+                    }
+
+                    ImGui.TextColored(Faint, parts[i]);
+                }
             }
         }
 
