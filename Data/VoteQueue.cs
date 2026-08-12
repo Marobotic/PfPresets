@@ -70,7 +70,22 @@ namespace PfPresets
     {
         /// <summary>Matches the server's own allowance so the client stops at the same line rather
         /// than discovering it by being refused.</summary>
-        public const int VotesPerHour = 24;
+        /// <summary>
+        /// How many votes this install sends in an hour before queueing the rest.
+        ///
+        /// MUST NOT EXCEED the server's own per-identity ceiling, or the plugin paces itself behind
+        /// a line the server was never going to draw. Raised with it from 24 to 100 on 2026-08-12.
+        ///
+        /// Twenty-four was far below how the game is actually played: a duty runs two to ten minutes
+        /// and leaves seven people worth rating, and one alliance raid is twenty-three votes by
+        /// itself. So an ordinary evening spent most of itself queued behind this, and the queue
+        /// then deleted what was still waiting after an hour. Around seventy per cent of a measured
+        /// session was destroyed between the two.
+        ///
+        /// Going over the line no longer costs anything either way: the server holds a vote past its
+        /// pace rather than refusing it, and a person decides.
+        /// </summary>
+        public const int VotesPerHour = 100;
 
         /// <summary>Given up on after this many failures. A vote the server keeps rejecting is
         /// malformed or about a character that no longer resolves; retrying it forever would
