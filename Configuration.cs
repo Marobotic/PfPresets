@@ -296,6 +296,14 @@ namespace PfPresets
         /// </summary>
         public bool CommunityEnabled => RatingsEnabled && AnalyticsMode == AnalyticsMode.Full;
 
+        /// <summary>
+        /// Whether the plugin has been told to stop mentioning community votes.
+        ///
+        /// Survives restarts, unlike the once-per-session hold, and covers every future poll rather
+        /// than the current one. Somebody who says "do not ask again" has not said "not today".
+        /// </summary>
+        public bool VotePromptSilenced { get; set; }
+
         /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
         public bool PostDutyPromptEnabled { get; set; } = true;
 

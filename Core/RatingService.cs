@@ -765,15 +765,13 @@ namespace PfPresets
                     string evidence = string.Empty;
                     BuildVoteEvidence(next.Target, next.Score, ref evidence);
 
-                    if (evidence.Length == 0)
-                    {
-                        // The duty has aged past the window the server will accept, so there is
-                        // nothing to seal and nothing a later attempt could change. Dropped
-                        // deliberately rather than resent forever - which is what it was doing.
-                        votes.Failed(next, permanent: true);
-                        continue;
-                    }
-
+                    // SENT EVEN WHEN THERE IS NOTHING TO SEAL, and that is the rule now.
+                    //
+                    // The first version of this fix dropped the vote here when evidence could not
+                    // be built - which is the client deciding a vote is worthless, and the client
+                    // deciding is the whole reason a thousand seven hundred votes went into a bin
+                    // over two days. It is not the client's call. The client sends what it has; the
+                    // server holds anything it cannot verify and a person decides.
                     var result = await api.SubmitAsync(new SubmitRatingRequest
                     {
                         VoteId = next.VoteId,
@@ -811,7 +809,11 @@ namespace PfPresets
                             votes.HoldUntil(next, DateTime.UtcNow + TimeSpan.FromMinutes(1));
                             break;
 
-                        // Refused for a reason resending cannot change.
+                        // Refused for a reason resending cannot change: rating yourself, a
+                        // banned character, a cooldown still running. These are decisions the
+                        // SERVER stated plainly, not guesses made here - anything it was merely
+                        // unsure about it has already kept, so there is nothing left to lose by
+                        // letting these go.
                         default:
                             votes.Failed(next, permanent: true);
                             break;

@@ -27,6 +27,13 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.4.3", "August 2026", new[]
+            {
+                "New Vote tab. There is a poll running on the future of the plugin, and the option with the most votes will be implemented in the next update. You can share it with a link so other people can vote too.",
+                "I have written a post about where the plugin is going and the thinking behind it. Please read it at pfa.marobotic.dev/blog before you vote.",
+                "The vote reminder appears once, never again after you have voted, and has a \"Don't ask again\" button that stops it for good.",
+            }),
+
             new("3.4.2", "August 2026", new[]
             {
                 "New Achievements tab. Share your Ultimate clears and your savage tier clear on the achievement feed, and heart everybody else's.",
