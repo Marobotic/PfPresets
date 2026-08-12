@@ -89,7 +89,15 @@ namespace PfPresets
                 {
                     var got = await Ratings.GetPollAsync().ConfigureAwait(false);
                     if (got != null)
+                    {
                         poll = got;
+
+                        // ONE WINDOW ACROSS ALL FOUR SURFACES. A vote cast on the website closes
+                        // this one, and the other way round - the server keys both on the same
+                        // address, so it is the only thing that can know.
+                        if (got.Voted)
+                            pollVoted = true;
+                    }
                 }
                 catch (Exception)
                 {
@@ -470,7 +478,8 @@ namespace PfPresets
                 : "when voting closes";
 
             ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
-            ImGui.TextColored(Dim, $"Results appear here {when}.");
+            ImGui.TextColored(Dim,
+                $"One vote per person, counted wherever you cast it. Results appear here {when}.");
             ImGui.PopTextWrapPos();
 
             ImGui.Dummy(new Vector2(0, 12));

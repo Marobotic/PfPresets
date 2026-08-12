@@ -128,6 +128,7 @@ namespace PfPresets
                 DrawReportDialog();
                 DrawListingLeaderRatingOverlay();
                 DrawPollShare();
+                DrawVoteNudge();
 #endif
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
                 DrawPanelOverlay();

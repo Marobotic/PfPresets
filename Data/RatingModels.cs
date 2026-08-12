@@ -490,6 +490,16 @@ namespace PfPresets
         public DateTime? ClosesAt { get; set; }
 
         public bool Open { get; set; }
+
+        /// <summary>
+        /// Whether this connection has already voted, anywhere.
+        ///
+        /// The server's answer, keyed on the same address the write is, so the plugin knows about a
+        /// vote cast on the website and the website knows about one cast here. Without it each
+        /// surface only knew its own history and would offer a vote it was going to be refused.
+        /// </summary>
+        public bool Voted { get; set; }
+
         public string Token { get; set; } = string.Empty;
         public List<PollOption> Options { get; set; } = new();
 

@@ -696,6 +696,11 @@ namespace PfPresets
 
                 if (applyClicked && canRecruit)
                     pfAutomation.ApplyPreset(preset);
+#if PFP_RATINGS
+                    // The end of a task, which is the only honest moment to ask for thirty
+                    // seconds. Silent unless a poll is open and this install has not voted.
+                    OfferVoteNudge();
+#endif
 
                 if (ImGui.IsItemHovered())
                 {

@@ -312,6 +312,9 @@ namespace PfPresets
         /// </summary>
         private void DrawPromptFinished()
         {
+            // The other end of a task. Offered once, from the frame the thanks appears on.
+            OfferVoteNudge();
+
             double ms = promptFinishedUtc == DateTime.MinValue
                 ? 0d
                 : (DateTime.UtcNow - promptFinishedUtc).TotalMilliseconds;
