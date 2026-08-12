@@ -29,12 +29,8 @@ namespace PfPresets
         {
             new("3.4.2", "August 2026", new[]
             {
-                "Whether a clear is your first is now decided by FFLogs rather than by whether we happened to have seen you clear it before. A tier reclear is no longer announced as a tier clear, and an Ultimate you have been running for years no longer reads as a first clear the week you install this.",
-                "Clears already in the feed have been re-checked against FFLogs and corrected.",
-                "A player who has opted out now reads as \"This player has opted out\" wherever their score would be - no profile, no score, and nobody can rate them. Nothing is deleted: opting back in restores their score, their clears and their place in the feed exactly as they were.",
-                "Banned players no longer show a score of -999999. They simply do not appear.",
-                "Opting out now opts you out of everything: no ratings, no achievements feed, and nothing about your duties is sent. Your presets are untouched and keep working exactly as before.",
-                "\"Anonymous usage stats\" set below Full opts you out too, since taking part means sending something. It is on Full by default.",
+                "New Achievements tab. Share your Ultimate clears and your savage tier clear on the achievement feed, and heart everybody else's.",
+                "You can now opt out: turn off the ratings system in Settings, or visit pfa.marobotic.dev/optout. Opting out hides you completely, and opting back in restores everything.",
             }),
 
             new("3.4.0", "August 2026", new[]
