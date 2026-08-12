@@ -68,24 +68,23 @@ namespace PfPresets
     /// </summary>
     internal sealed class VoteQueue
     {
-        /// <summary>Matches the server's own allowance so the client stops at the same line rather
-        /// than discovering it by being refused.</summary>
         /// <summary>
-        /// How many votes this install sends in an hour before queueing the rest.
+        /// THE CLIENT NO LONGER PACES ANYTHING. Kept only so the number has one home if a future
+        /// build wants to show it.
         ///
-        /// MUST NOT EXCEED the server's own per-identity ceiling, or the plugin paces itself behind
-        /// a line the server was never going to draw. Raised with it from 24 to 100 on 2026-08-12.
+        /// There used to be an allowance here, matched to the server's, and matching it was the
+        /// mistake. Two components enforcing the same rule is one rule that can disagree with
+        /// itself: the client's was twenty-four while the server's real ceiling was six per address,
+        /// so the plugin queued votes to respect a line that was not where it thought, then deleted
+        /// them for waiting. Around seventy per cent of a measured session was destroyed between the
+        /// two, and neither end reported it.
         ///
-        /// Twenty-four was far below how the game is actually played: a duty runs two to ten minutes
-        /// and leaves seven people worth rating, and one alliance raid is twenty-three votes by
-        /// itself. So an ordinary evening spent most of itself queued behind this, and the queue
-        /// then deleted what was still waiting after an hour. Around seventy per cent of a measured
-        /// session was destroyed between the two.
-        ///
-        /// Going over the line no longer costs anything either way: the server holds a vote past its
-        /// pace rather than refusing it, and a person decides.
+        /// Pacing belongs to the server alone. It is the only side that can see everyone, it is the
+        /// side that has to be right, and it now holds anything over the line for a person to look
+        /// at rather than refusing it. The client's job is to send what the player did, once,
+        /// promptly, and to keep it until the server has actually answered.
         /// </summary>
-        public const int VotesPerHour = 100;
+        public const int VotesPerHour = int.MaxValue;
 
         /// <summary>Given up on after this many failures. A vote the server keeps rejecting is
         /// malformed or about a character that no longer resolves; retrying it forever would
@@ -125,7 +124,13 @@ namespace PfPresets
             }
         }
 
-        public bool CanSendNow() => SentThisHour() < VotesPerHour;
+        /// <summary>
+        /// Always true now. The server does the pacing; see VotesPerHour.
+        ///
+        /// Kept as a method rather than deleted because the call sites read better for it - "can I
+        /// send this now" is still the question, the answer just stopped being the client's to give.
+        /// </summary>
+        public bool CanSendNow() => true;
 
         /// <summary>
         /// Stores the seal a vote was cast with, and writes the queue to disk.

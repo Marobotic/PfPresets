@@ -608,9 +608,10 @@ namespace PfPresets
             if (LocalCooldownUntil(target) is { } until)
                 return new SubmitResult { Outcome = SubmitOutcome.OnCooldown, NextEligibleAt = until };
 
-            // Taken into the queue first, always. The click is never refused for pacing: the
-            // vote is recorded locally and sent when the hour allows, so the player sees their
-            // rating land and never sees a quota.
+            // Taken into the queue first, always - but the queue is a retry buffer now, not a
+            // throttle. Every vote is sent the moment it is cast; the entry exists so that a vote
+            // survives a dropped connection or a restart, and it is removed as soon as the server
+            // has actually answered.
             var queued = votes.Enqueue(target, vote, tags & RatingTags.KnownMask,
                 dutyRowId, socialLink, metAtUtc);
 
@@ -642,13 +643,13 @@ namespace PfPresets
             BuildVoteEvidence(target, score, ref evidence);
             votes.AttachEvidence(queued, evidence);
 
-            if (!votes.CanSendNow())
-            {
-                RecordLocalCooldown(target);
-                Invalidate(target);
-                return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
-            }
-
+            // NOTHING IS WITHHELD HERE ANY MORE. This used to stop and leave the vote for the flush
+            // loop whenever the client believed it was over its allowance, which is how votes came
+            // to sit in a queue long enough to lose their seal and then be deleted for the wait.
+            //
+            // The client cannot know where the line is - it only ever had a copy of the number, and
+            // the copy was wrong. So it sends, and the server, which can see everyone, decides
+            // whether the vote counts now, waits for a person, or is refused.
             var request = new SubmitRatingRequest
             {
                 VoteId = queued.VoteId,
