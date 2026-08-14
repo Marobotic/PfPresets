@@ -32,6 +32,7 @@ namespace PfPresets
                 "New clears to see? The Achievements tab now wears a badge telling you how many people have posted since you last looked.",
                 "The badge shows even when the window is rolled up, so you won't miss it while you're busy.",
                 "The Vote tab gets one too, so you know when there's a new poll waiting for your say.",
+                "Filled your party? The fight you recruited for stays on screen now, so you can see how everyone's doing while you get ready.",
                 "Want to know where the plugin is heading? There's a \"Read the update\" button in About now.",
             }),
 
