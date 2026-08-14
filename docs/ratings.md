@@ -5,6 +5,46 @@ repo — see `PfRatingsApi/README.md` for the backend half.
 
 ---
 
+## A vote is never thrown away, on either side
+
+**The client sends. The server decides. Neither of them deletes.**
+
+Read this before touching anything in the voting path. Every vote-loss incident this feature has
+had was one of these two rules being broken by code that looked fine on its own, and half of them
+were in *this* repo rather than the server.
+
+What it cost, measured against one player's own `ratings-given.json`: 19 cast / 7 landed,
+27 / 2, 17 / 1 — **57 of 100 votes existed in no table at all.** Across the life of the system,
+more than half the votes it was given were destroyed by code that had decided they did not count.
+
+The four places it happened:
+
+1. `FlushVotesAsync` built `SubmitRatingRequest` with no `Evidence` field, so ~1,700 votes were
+   refused as unreadable and then deleted as `Failed(permanent)`.
+2. A first attempt at fixing that had the client *drop* votes whose evidence would not build —
+   the same mistake wearing a fix's clothes.
+3. Evidence was built at **send** time, after the over-allowance early return, so a queued vote was
+   stored with no evidence and could never have had any.
+4. `VoteQueue.Next()` silently `RemoveAll`'d anything queued for over an hour, in a debug line,
+   without sending. A vote nobody refused and nobody counted existed in **no place at all**.
+
+**Concretely, in this codebase:**
+
+- The client's job is to deliver a vote and keep delivering it. It does not get to decide a vote is
+  invalid, stale, over quota, unsendable, or not worth the bandwidth.
+- Never `Remove`, `RemoveAll`, `Clear`, or skip an entry in the vote queue because of its *content*
+  or its *age*. Delivery may be retried, deferred, or bounded — the vote itself stays.
+- Build everything a vote needs at **cast** time, not send time. Anything built later is built after
+  the early returns that might skip it.
+- A local record of what was cast (`ratings-given.json`, 100 entries) is not a cache. It is the only
+  copy that survives a server-side loss, and it is what any future audit is reconciled against.
+
+**The server half of the rule** — anything that arrives is written before it is judged and is never
+removed by any automatic process — lives in `PfRatingsApi/README.md` under *"Nothing that arrives
+here is ever erased"*, and is enforced by the `vote_archive` table (migration 036).
+
+---
+
 ## Build flag
 
 All of this sits behind the `PFP_RATINGS` compile symbol, **off by default**:
