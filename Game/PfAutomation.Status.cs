@@ -536,11 +536,35 @@ namespace PfPresets
             return entry?.Name ?? $"Unknown duty ({dutyId})";
         }
 
-        /// <summary>Records the listing's duty so a party that later fills still knows which fight
-        /// it filled for. A listing with no specific duty carries nothing worth remembering, so it
-        /// clears the memory rather than pinning "None".</summary>
+        /// <summary>
+        /// Records the listing's duty so a party that later fills still knows which fight it
+        /// filled for.
+        ///
+        /// A ZERO DOES NOT CLEAR THE MEMORY, and that is the whole repair.
+        ///
+        /// It used to, on the reading that a listing with no specific duty has nothing worth
+        /// remembering. The flaw is that zero is not only what a duty-less listing looks like -
+        /// it is also what a listing looks like while it is being torn down. Filling the last
+        /// seat ends the recruitment, and on the tick where the game has zeroed
+        /// StoredRecruitmentInfo but still reports us as recruiting, this was called with a duty
+        /// id of nothing and wiped the fight the party had just spent an hour filling for. The
+        /// readout went blank at 8/8, which is precisely the moment it matters, and the party had
+        /// no way to get it back. LastViewedListing does the same thing to members - it is stale
+        /// by design, so a zero from it says nothing about the party either.
+        ///
+        /// So a zero is now read as "this tells us nothing", not as "forget what you knew".
+        /// Forgetting has one home, <see cref="RecruitedDutyStillApplies"/>, which asks whether
+        /// the party still stands for that fight - filled and holding together, queued for it, or
+        /// inside it - and that is a question about the party rather than about one frame's read
+        /// of an agent that is mid-teardown.
+        /// </summary>
         private void RememberRecruitedDuty(ushort dutyId, string name, int slots)
-            => lastRecruitedDuty = dutyId != 0 ? (dutyId, name, slots) : null;
+        {
+            if (dutyId == 0)
+                return;
+
+            lastRecruitedDuty = (dutyId, name, slots);
+        }
 
         /// <summary>How many people are in the party, counting yourself, or 0 when solo. Duty
         /// Support NPCs fill seats in the game's own list but are not company, and a party of you
