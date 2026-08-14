@@ -718,13 +718,19 @@ namespace PfPresets
                         ServerMessage = result.Message,
                     };
 
+                // KEPT, NOT REJECTED. BadRequest arrives here, and a malformed request is this
+                // plugin's fault rather than the vote's - the vote is fine, the envelope was not.
+                // Deleting it here is the precise move that lost 1,700 of them.
+                //
+                // Reported as taken, like every other case the queue is quietly handling: the
+                // click did what the player asked, and the flush loop owns it from here. The long
+                // hold keeps a genuine client bug from becoming thousands of identical requests.
                 default:
-                    votes.Failed(queued, permanent: true);
-                    return new SubmitResult
-                    {
-                        Outcome = SubmitOutcome.Rejected,
-                        ServerMessage = result.Message,
-                    };
+                    log.Warning($"[Ratings] Unhandled submit status {result.Status}; keeping the vote for the queue.");
+                    votes.HoldUntil(queued, DateTime.UtcNow + TimeSpan.FromHours(6));
+                    RecordLocalCooldown(target);
+                    Invalidate(target);
+                    return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
             }
         }
 
@@ -831,8 +837,34 @@ namespace PfPresets
                         // SERVER stated plainly, not guesses made here - anything it was merely
                         // unsure about it has already kept, so there is nothing left to lose by
                         // letting these go.
-                        default:
+                        //
+                        // NAMED, rather than left to `default`. They used to share the catch-all
+                        // with BadRequest and with every status a future server might invent, so
+                        // "the server told us this vote is void" and "this build did not
+                        // understand the answer" destroyed the vote identically.
+                        case ApiStatus.Cooldown:
+                        case ApiStatus.Refused:
                             votes.Failed(next, permanent: true);
+                            break;
+
+                        // ANYTHING ELSE IS KEPT.
+                        //
+                        // BadRequest lands here, and it is the important one: a malformed request
+                        // is a bug in this plugin, not a verdict on the vote. That is exactly how
+                        // 1,700 votes were lost - the queue sent them with no evidence field, the
+                        // server answered 400, and the client read its own bug as a refusal and
+                        // deleted the evidence of it.
+                        //
+                        // A status this build does not recognise lands here too, which is the
+                        // other half: an old plugin must never delete votes because a newer server
+                        // said something it has not been taught yet.
+                        //
+                        // Six hours rather than a minute, because if this IS a client bug then
+                        // retrying hard just means writing the same bad request into the server's
+                        // logs four thousand times a day, which the plugin has done before.
+                        default:
+                            log.Warning($"[Ratings] Unhandled submit status {result.Status}; keeping the vote and retrying later.");
+                            votes.HoldUntil(next, DateTime.UtcNow + TimeSpan.FromHours(6));
                             break;
                     }
                 }

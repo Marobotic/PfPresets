@@ -86,10 +86,18 @@ namespace PfPresets
         /// </summary>
         public const int VotesPerHour = int.MaxValue;
 
-        /// <summary>Given up on after this many failures. A vote the server keeps rejecting is
-        /// malformed or about a character that no longer resolves; retrying it forever would
-        /// block everything queued behind it.</summary>
-        private const int MaxAttempts = 6;
+        // MaxAttempts WAS HERE AND IS GONE (2026-08-14).
+        //
+        // Six failures and the vote was deleted, on the reasoning that a vote the server keeps
+        // rejecting is malformed and would block everything behind it. Neither half held up. The
+        // queue has not been ordered-and-blocking since Next() started skipping past anything
+        // holding a Retry-After, so nothing was being starved. And "the server keeps rejecting it"
+        // is not something this end can conclude - the 1,700 votes lost in August were rejected
+        // over and over for a field the CLIENT had failed to send, and counting those rejections
+        // was how the client convinced itself to delete them.
+        //
+        // A vote now leaves this queue for exactly two reasons: the server took it, or the server
+        // said plainly that it never will. Running out of patience is not one of them.
 
         private readonly string path;
         private readonly IPluginLog log;
@@ -239,9 +247,14 @@ namespace PfPresets
         /// <summary>
         /// Records a failed attempt.
         ///
-        /// <paramref name="permanent"/> for a refusal that resending cannot fix - a malformed
-        /// vote, or a target the server won't accept. Those are dropped immediately rather than
-        /// retried, because the queue is ordered and a stuck head starves everything behind it.
+        /// <paramref name="permanent"/> is ONLY for a refusal the server stated plainly and that
+        /// resending cannot change: the 24h cooldown is still running, or the target will not be
+        /// rated at all. Nothing else may pass true here, and in particular nothing this end has
+        /// merely concluded - a malformed request is a statement about the plugin, not about the
+        /// vote, and the vote outlives the bug that failed to deliver it.
+        ///
+        /// Everything else is kept and moved to the back of the queue. The attempt count is now
+        /// only a record of how hard delivery has been; it can no longer condemn anything.
         /// </summary>
         public void Failed(QueuedVote vote, bool permanent)
         {
@@ -253,14 +266,16 @@ namespace PfPresets
 
                 found.Attempts++;
 
-                if (permanent || found.Attempts >= MaxAttempts)
+                if (permanent)
                 {
-                    log.Debug($"[Ratings] Dropping vote after {found.Attempts} attempt(s).");
+                    // The server said so, in as many words. This is the only deletion left here.
+                    log.Debug($"[Ratings] Server refused a vote outright after {found.Attempts} attempt(s); dropping it.");
                     pending.Remove(found);
                 }
                 else
                 {
-                    // Moved to the back so one bad entry can't hold up the rest.
+                    // Moved to the back so one bad entry can't hold up the rest. Kept, however
+                    // many times it has come back - see the note where MaxAttempts used to be.
                     pending.Remove(found);
                     pending.Add(found);
                 }
