@@ -109,6 +109,37 @@ namespace PfPresets
         public int Pages { get; set; } = 1;
 
         public int Total { get; set; }
+
+        /// <summary>
+        /// The server's clock when it answered, in unix ms. Stored as the unread mark.
+        ///
+        /// Somebody holding this response has seen everything that existed when it was built, so
+        /// this is the honest "read up to here". It is the server's own number and goes back to the
+        /// server unchanged - the badge is never a comparison between two machines' clocks, which
+        /// is the mistake that would show a player with a fast PC nothing and a player with a slow
+        /// one the same three posts every hour.
+        ///
+        /// Zero from a server that predates it, which reads as "no mark to take" and leaves the
+        /// stored one alone.
+        /// </summary>
+        public long Now { get; set; }
+    }
+
+    internal sealed class AchievementUnseenRequest
+    {
+        /// <summary>The mark from the last feed the reader was shown, in unix ms. Never zero - a
+        /// client with no mark has never opened the tab and does not ask.</summary>
+        public long Since { get; set; }
+    }
+
+    internal sealed class AchievementUnseenResponse
+    {
+        /// <summary>How many posts have appeared since, capped by the server.</summary>
+        public int Count { get; set; }
+
+        /// <summary>The cap was hit, so the badge says "99+" rather than a number that is
+        /// wrong.</summary>
+        public bool More { get; set; }
     }
 
     /// <summary>A clear being offered to the feed. The sealed payload is the whole of it - the

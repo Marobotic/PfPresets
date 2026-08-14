@@ -63,6 +63,8 @@ namespace PfPresets
             {
                 tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
                 tabs.Add(("Achievements", FontAwesomeIcon.Trophy, MainTab.Achievements));
+
+                TickUnreadBadge();
             }
 
             // THE VOTE TAB IS TEMPORARY and is not gated with the rest. It appears while the
@@ -91,6 +93,30 @@ namespace PfPresets
                 activeTab = MainTab.Presets;
 
             return tabs;
+        }
+
+        /// <summary>
+        /// The unread badge's tick, alongside the poll's and for the same reason: the answer changes
+        /// what the navigation looks like, so it is asked where the navigation is drawn.
+        ///
+        /// Called from THREE places, which is two more than it looks like it needs. Both layouts
+        /// build their tabs through TabList, but the collapsed bar has no tabs at all - and a window
+        /// shrunk to its title bar and parked in a corner is the state this whole feature is for.
+        /// A badge that only counted while the navigation happened to be on screen would be silent
+        /// in exactly the case somebody wanted to be told something.
+        ///
+        /// Never while the feed itself is being read, where the tab in front of them is the answer
+        /// and a second one would be paid for and thrown away.
+        /// </summary>
+        private void TickUnreadBadge()
+        {
+            if (!config.CommunityEnabled)
+                return;
+
+            if (activeTab == MainTab.Achievements && !isMinimized)
+                return;
+
+            Ratings?.EnsureUnseenChecked();
         }
 #endif
 
@@ -302,11 +328,28 @@ namespace PfPresets
                 labelEnd = p.X + 42f + ts.X;
             }
 
-            // The beta mark, when the row has room for it. Drawn rather than written into the
-            // label so the word cannot be what decides whether the navigation fits.
-            if (tab == MainTab.Achievements
-                && labelEnd + 6f + BetaChipWidth() <= p.X + width - 8f)
-                DrawBetaChip(dl, new Vector2(labelEnd + 6f, p.Y), rowHeight, active ? 1f : 0.7f);
+            // ORDER, AND WHY IT IS THIS WAY ROUND: the word, the badge against it, and beta pushed
+            // to the far edge.
+            //
+            // The badge is news and beta is a standing fact, so the badge gets the position next to
+            // the thing it is about and beta gets the corner. They were the other way round for a
+            // day, which put a permanent grey chip between the tab's name and the one part of the
+            // row that ever changes.
+            var badge = TabBadgeFor(tab);
+            float badgeWidth = BadgeWidth(badge);
+
+            DrawTabBadge(dl, badge, new Vector2(labelEnd, p.Y), rowHeight);
+
+            if (tab != MainTab.Achievements)
+                return;
+
+            // Beta, flush right, when the row has room for it after the word and the badge. Drawn
+            // rather than written into the label so it can never be the thing that decides whether
+            // the navigation fits.
+            float betaX = p.X + width - 8f - BetaChipWidth();
+
+            if (betaX >= labelEnd + badgeWidth + 6f)
+                DrawBetaChip(dl, new Vector2(betaX, p.Y), rowHeight, active ? 1f : 0.7f);
         }
 #endif
 
@@ -434,6 +477,45 @@ namespace PfPresets
 
             ImGui.SetCursorScreenPos(new Vector2(p.X + 12f, p.Y + 9f));
             DrawBrand();
+
+#if PFP_RATINGS
+            // THE COLLAPSED BAR HAS NO NAVIGATION, so the mark goes on the brand itself.
+            //
+            // This bar is a title bar and two buttons - the tabs it would normally sit on are not
+            // drawn at all - and it is where the window spends an evening once somebody has shrunk
+            // it out of the way. Without this the badge would be missing from precisely the state it
+            // exists for. On the corner of the mark rather than beside it, which is where every
+            // application on the machine has already taught people to look.
+            //
+            // Only while minimised: the full-width bar below has a strip of tabs under it, each
+            // carrying its own, and two marks for one thing is one mark too many.
+            if (isMinimized)
+            {
+                // Both of the things that decide whether a tab would be marked are normally ticked
+                // by TabList, and TabList is not reached from here - the collapsed bar builds no
+                // tabs. Without these two lines the mark on this bar would be frozen at whatever
+                // was true when the window was shrunk, which is the opposite of the point.
+                EnsurePollLoaded();
+                TickUnreadBadge();
+            }
+
+            if (isMinimized && AnyTabMarked())
+            {
+                const float mark = 26f;
+                var corner = new Vector2(p.X + 12f + mark - BadgeDotSize * 0.5f,
+                                         p.Y + 9f - BadgeDotSize * 0.5f);
+
+                dl.AddRectFilled(corner,
+                    new Vector2(corner.X + BadgeDotSize, corner.Y + BadgeDotSize),
+                    ImGui.ColorConvertFloat4ToU32(Negative));
+
+                // The bar cannot say which tab it is about - there are no tabs on it - so hovering
+                // the mark is the only way to find out without restoring the window first.
+                if (ImGui.IsMouseHoveringRect(new Vector2(p.X + 12f, p.Y + 9f),
+                        new Vector2(p.X + 12f + mark, p.Y + 9f + mark)))
+                    PaddedTooltip(MinimizedBadgeTooltip());
+            }
+#endif
 
             const float btn = 26f;
             float y = p.Y + (barHeight - btn) * 0.5f;

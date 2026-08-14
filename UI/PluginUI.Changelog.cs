@@ -27,6 +27,14 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.4.5", "August 2026", new[]
+            {
+                "New clears to see? The Achievements tab now wears a badge telling you how many people have posted since you last looked.",
+                "The badge shows even when the window is rolled up, so you won't miss it while you're busy.",
+                "The Vote tab gets one too, so you know when there's a new poll waiting for your say.",
+                "Want to know where the plugin is heading? There's a \"Read the update\" button in About now.",
+            }),
+
             new("3.4.3", "August 2026", new[]
             {
                 "New Vote tab. There is a poll running on the future of the plugin, and the option with the most votes will be implemented in the next update. You can share it with a link so other people can vote too.",

@@ -417,6 +417,16 @@ namespace PfPresets
             ImGui.Unindent(SectionInset);
         }
 
+        /// <summary>
+        /// The post about the plugin and where it is going.
+        ///
+        /// IT LIVES HERE BECAUSE THE ONE PLACE THAT LINKED IT IS GONE. The Vote tab carried it, and
+        /// the Vote tab only existed while the server said a poll was running - so with the poll
+        /// down there was no route from the plugin to the post at all. About is where somebody
+        /// already goes to read the changelog, which is the same errand.
+        /// </summary>
+        private const string BlogUrl = "https://pfa.marobotic.dev/blog";
+
         private void DrawAboutSettings()
         {
             DrawSectionLabel("About");
@@ -424,6 +434,12 @@ namespace PfPresets
 
             if (DrawNeutralButton("View changelog##OpenChangelog", new Vector2(180, ButtonHeight)))
                 isChangelogVisible = true;
+
+            ImGui.Dummy(new Vector2(0, 8));
+            if (DrawNeutralButton("Read the update##OpenBlog", new Vector2(180, ButtonHeight)))
+                Dalamud.Utility.Util.OpenLink(BlogUrl);
+            if (ImGui.IsItemHovered())
+                PaddedTooltip("A post from the developer on where the plugin is going.\nOpens pfa.marobotic.dev/blog in your browser.");
 
             ImGui.Dummy(new Vector2(0, 8));
             if (DrawNeutralButton("Show welcome again##OpenWelcome", new Vector2(180, ButtonHeight)))

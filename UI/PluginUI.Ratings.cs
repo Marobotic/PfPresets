@@ -199,13 +199,20 @@ namespace PfPresets
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
                 glyph = ImGui.CalcTextSize(FontAwesomeIcon.Star.ToIconString()).X;
 
+            // Icons only: the badge is drawn over the icon's corner rather than beside it, so it
+            // costs no width. At this tier there is not room for a number either, which is why it
+            // becomes a plain mark - the same thing a phone does to a home screen icon.
             if (!withLabel)
                 return glyph + pad * 2f;
 
             float text = ImGui.CalcTextSize(label).X;
             float beta = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
 
-            return glyph + gap + text + beta + pad * 2f;
+            // Counted, not overlaid, wherever there are labels. The strip is measured to the pixel
+            // and an overlay would be the one thing on it free to land on the next tab's word.
+            float badge = BadgeWidth(TabBadgeFor(tab));
+
+            return glyph + gap + text + beta + badge + pad * 2f;
         }
 
         /// <summary>
@@ -219,6 +226,166 @@ namespace PfPresets
         {
             using (UiLabelFont.Push())
                 return ImGui.CalcTextSize("BETA").X + 8f;
+        }
+
+        // ── The unread badge ──────────────────────────────────────
+        //
+        // A tab that quietly fills up with other people's clears is a tab nobody opens twice. The
+        // badge is the whole of the answer to that: a count of what has appeared since the feed was
+        // last put in front of them, and a plain mark for somebody who has never opened it at all.
+        //
+        // It is drawn on the navigation and nowhere else. No chat line, no toast, nothing that
+        // interrupts a fight - the clears will still be there afterwards, and a plugin that talks
+        // over the game to say somebody you have never met killed a boss deserves to be uninstalled.
+
+        /// <summary>What, if anything, the Achievements tab is wearing.</summary>
+        private enum TabBadge
+        {
+            None,
+
+            /// <summary>Never opened. A mark rather than a number - see FeedNeverSeen.</summary>
+            Dot,
+
+            /// <summary>Posts since the mark.</summary>
+            Count,
+        }
+
+        /// <summary>What a given destination is wearing. None for most of them, always.</summary>
+        private (TabBadge Kind, string Text) TabBadgeFor(MainTab tab) => tab switch
+        {
+            MainTab.Achievements => AchievementsBadge(),
+            MainTab.Vote => VoteBadge(),
+            _ => (TabBadge.None, string.Empty),
+        };
+
+        /// <summary>
+        /// The Vote tab's mark: a dot until somebody has opened it, and never a number.
+        ///
+        /// A poll is one thing, not a stream, so there is nothing to count - "you have not looked at
+        /// this yet" is the entire message. Keyed on the poll's slug rather than on a flag, so the
+        /// next poll marks the tab again without anybody having to remember to reset anything, and
+        /// the current one stops marking it the moment it has been read.
+        ///
+        /// Not cleared by voting elsewhere. Somebody who voted on the website has still never seen
+        /// what this tab says, and the tab is where the plugin explains what the poll is for.
+        /// </summary>
+        private (TabBadge Kind, string Text) VoteBadge()
+        {
+            var p = poll;
+            if (p == null || !PollAvailable || string.IsNullOrEmpty(p.Slug))
+                return (TabBadge.None, string.Empty);
+
+            if (activeTab == MainTab.Vote && !isMinimized)
+                return (TabBadge.None, string.Empty);
+
+            return string.Equals(config.PollSeenSlug, p.Slug, StringComparison.Ordinal)
+                ? (TabBadge.None, string.Empty)
+                : (TabBadge.Dot, string.Empty);
+        }
+
+        /// <summary>Whether anything in the navigation is marked, for the collapsed bar - which has
+        /// no navigation to put a mark on.</summary>
+        private bool AnyTabMarked()
+            => AchievementsBadge().Kind != TabBadge.None || VoteBadge().Kind != TabBadge.None;
+
+        /// <summary>What the mark on the collapsed bar is about. Says both when both apply, because
+        /// restoring the window to find the wrong tab marked is worse than a slightly long
+        /// tooltip.</summary>
+        private string MinimizedBadgeTooltip()
+        {
+            var feed = AchievementsBadge();
+            bool vote = VoteBadge().Kind != TabBadge.None;
+
+            string clears = feed.Kind switch
+            {
+                TabBadge.Count => $"{feed.Text} new clears",
+                TabBadge.Dot => "Achievements not opened yet",
+                _ => string.Empty,
+            };
+
+            if (clears.Length > 0 && vote) return $"{clears}, and a poll you haven't seen";
+            if (clears.Length > 0) return clears;
+            return vote ? "A poll you haven't seen" : string.Empty;
+        }
+
+        private (TabBadge Kind, string Text) AchievementsBadge()
+        {
+            var ratings = Ratings;
+            if (ratings == null || !config.CommunityEnabled)
+                return (TabBadge.None, string.Empty);
+
+            // The tab you are on cannot be unread. This is also what makes the badge disappear the
+            // instant it is clicked rather than a moment later when the mark is written - the click
+            // moves the tab, and the answer here changes in the same frame.
+            //
+            // MINIMISED IS NOT "ON THE TAB". The collapsed bar draws no body, so somebody who left
+            // the window on Achievements and shrank it is not reading anything - and would
+            // otherwise be the one person the badge never appears for, which is backwards.
+            if (activeTab == MainTab.Achievements && !isMinimized)
+                return (TabBadge.None, string.Empty);
+
+            if (ratings.FeedNeverSeen)
+                return (TabBadge.Dot, string.Empty);
+
+            int n = ratings.UnseenCount;
+            if (n <= 0)
+                return (TabBadge.None, string.Empty);
+
+            return (TabBadge.Count, ratings.UnseenCapped ? $"{n}+" : n.ToString());
+        }
+
+        /// <summary>The dot's size, and the badge's height when it carries a number.</summary>
+        private const float BadgeDotSize = 7f;
+
+        /// <summary>What the badge needs, including the gap in front of it. Zero when there is
+        /// none, so every caller can add it unconditionally.</summary>
+        private float BadgeWidth((TabBadge Kind, string Text) badge)
+        {
+            if (badge.Kind == TabBadge.None)
+                return 0f;
+
+            if (badge.Kind == TabBadge.Dot)
+                return 6f + BadgeDotSize;
+
+            using (UiLabelFont.Push())
+                return 6f + ImGui.CalcTextSize(badge.Text).X + 8f;
+        }
+
+        /// <summary>
+        /// The badge itself: a filled block in the negative red, with the count on it.
+        ///
+        /// Square, like everything else here. A rounded pill is what this is everywhere else in
+        /// software and it would be the only rounded thing in the plugin - the colour is doing the
+        /// work, and it does it just as well with corners.
+        /// </summary>
+        private void DrawTabBadge(ImDrawListPtr dl, (TabBadge Kind, string Text) badge, Vector2 pos,
+            float height)
+        {
+            if (badge.Kind == TabBadge.None)
+                return;
+
+            uint fill = ImGui.ColorConvertFloat4ToU32(Negative);
+
+            if (badge.Kind == TabBadge.Dot)
+            {
+                var top = new Vector2(pos.X + 6f, pos.Y + (height - BadgeDotSize) * 0.5f);
+                dl.AddRectFilled(top, new Vector2(top.X + BadgeDotSize, top.Y + BadgeDotSize), fill);
+                return;
+            }
+
+            using (UiLabelFont.Push())
+            {
+                Vector2 size = ImGui.CalcTextSize(badge.Text);
+                var min = new Vector2(pos.X + 6f, pos.Y + (height - size.Y - 4f) * 0.5f);
+                var max = new Vector2(min.X + size.X + 8f, min.Y + size.Y + 4f);
+
+                dl.AddRectFilled(min, max, fill);
+
+                // Ink rather than OnAccent: this fill is a fixed red, not the player's accent, so
+                // the text on it does not have to survive somebody choosing a pale one.
+                dl.AddText(new Vector2(min.X + 4f, min.Y + 2f),
+                    ImGui.ColorConvertFloat4ToU32(Ink), badge.Text);
+            }
         }
 
         private void DrawBetaChip(ImDrawListPtr dl, Vector2 pos, float height, float alpha)
@@ -266,34 +433,70 @@ namespace PfPresets
 
             var color = active ? TextPrimary : hovered ? TextSecondary : TextMuted;
 
+            (TabBadge Kind, string Text) badge = TabBadgeFor(tab);
+
             if (withLabel)
             {
                 float betaRoom = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
+                float badgeRoom = BadgeWidth(badge);
 
                 DrawIconLabelCentered(icon, label,
-                    pos, new Vector2(size.X - betaRoom, size.Y), color);
+                    pos, new Vector2(size.X - betaRoom - badgeRoom, size.Y), color);
 
-                if (betaRoom > 0f)
+                if (betaRoom > 0f || badgeRoom > 0f)
                 {
-                    // Placed against the label's own end rather than the cell's, so it travels with
-                    // the word instead of drifting off toward the next tab on a wide window.
+                    // Placed against the label's own end rather than the cell's, so they travel
+                    // with the word instead of drifting off toward the next tab on a wide window.
                     float glyph;
                     using (pluginInterface.UiBuilder.IconFontHandle.Push())
                         glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
 
                     float content = glyph + 8f + ImGui.CalcTextSize(label).X;
-                    float startX = pos.X + (size.X - betaRoom - content) * 0.5f;
+                    float startX = pos.X + (size.X - betaRoom - badgeRoom - content) * 0.5f;
 
-                    DrawBetaChip(dl, new Vector2(startX + content + 6f, pos.Y), size.Y,
-                        active ? 1f : 0.7f);
+                    // Same order as the rail: word, badge, then beta last. Last rather than pinned
+                    // to the cell's right edge, because a strip's cells sit shoulder to shoulder -
+                    // a chip flush against a cell boundary reads as belonging to the tab after it.
+                    DrawTabBadge(dl, badge, new Vector2(startX + content, pos.Y), size.Y);
+
+                    if (betaRoom > 0f)
+                        DrawBetaChip(dl, new Vector2(startX + content + badgeRoom + 6f, pos.Y),
+                            size.Y, active ? 1f : 0.7f);
                 }
             }
             else
             {
                 DrawIconCentered(icon, pos, size, color);
 
+                // Over the icon's top-right corner, and always as a mark: a cell this narrow has no
+                // room for a number, and "there is something in here" is the whole message anyway.
+                if (badge.Kind != TabBadge.None)
+                {
+                    float glyph;
+                    using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                        glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
+
+                    var corner = new Vector2(
+                        pos.X + (size.X + glyph) * 0.5f - BadgeDotSize * 0.5f,
+                        pos.Y + size.Y * 0.5f - ImGui.GetTextLineHeight() * 0.5f - 2f);
+
+                    dl.AddRectFilled(corner,
+                        new Vector2(corner.X + BadgeDotSize, corner.Y + BadgeDotSize),
+                        ImGui.ColorConvertFloat4ToU32(Negative));
+                }
+
                 if (hovered)
-                    PaddedTooltip(tab == MainTab.Achievements ? $"{label} (beta)" : label);
+                {
+                    string tip = tab == MainTab.Achievements ? $"{label} (beta)" : label;
+
+                    // The mark cannot say how many, so this is where the number lives at this tier.
+                    if (badge.Kind == TabBadge.Count)
+                        tip += $" - {badge.Text} new";
+                    else if (badge.Kind == TabBadge.Dot)
+                        tip += " - not opened yet";
+
+                    PaddedTooltip(tip);
+                }
             }
 
             if (!active)

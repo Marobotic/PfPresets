@@ -71,6 +71,153 @@ namespace PfPresets
             get { lock (feedLock) return incoming.Count > 0; }
         }
 
+        // ── The unread mark ───────────────────────────────────────
+        //
+        // What the badge on the tab counts, and the one thing it must never do is lie in the
+        // direction of "there is something here" when there is not. Somebody who presses a tab
+        // because it said three and finds nothing new stops believing the number, and a number
+        // nobody believes is worse than no number - it is a permanent smudge on the navigation.
+        //
+        // So the rule is: the mark only moves when the feed has actually been PUT IN FRONT OF
+        // SOMEBODY. Not when the tab is clicked, not when a poll lands in the background, not on a
+        // timer. A read that fails leaves the mark where it was and the badge keeps its word.
+
+        /// <summary>How often the badge asks, while the window is open and the tab is not. Slower
+        /// than the feed's own poll: this one runs for every client with the window up, and a clear
+        /// that shows up three minutes late is a clear that shows up.</summary>
+        private static readonly TimeSpan UnseenPollAfter = TimeSpan.FromMinutes(3);
+
+        private DateTime unseenCheckedAt = DateTime.MinValue;
+        private int unseenInFlight;
+
+        /// <summary>Set by the poll when it parks posts nobody has been shown, so the next tick
+        /// asks straight away instead of waiting out a window it is already in the middle of.
+        /// Volatile: written by the poll's worker, read by the frame.</summary>
+        private volatile bool unseenAskNow;
+
+        /// <summary>How many posts have appeared since the mark, as the server last counted
+        /// them.</summary>
+        public int UnseenCount { get; private set; }
+
+        /// <summary>The count hit the server's ceiling, so the badge says "99+".</summary>
+        public bool UnseenCapped { get; private set; }
+
+        /// <summary>
+        /// The feed has never been shown to this install.
+        ///
+        /// Its own state rather than "unseen == everything", because those two want completely
+        /// different things drawn: this one is an invitation to go and look at a tab somebody may
+        /// not have noticed exists, and a count of every clear ever posted is not that.
+        /// </summary>
+        public bool FeedNeverSeen => config.AchievementsSeenMark <= 0;
+
+        /// <summary>
+        /// Reads the count if it is time to. Safe to call every frame.
+        ///
+        /// Not called while the feed itself is on screen - the tab in front of them IS the answer,
+        /// and paying for a second one would be paying to be told something they can see.
+        /// </summary>
+        public void EnsureUnseenChecked()
+        {
+            if (!config.CommunityEnabled)
+                return;
+
+            // Nothing to count from. The tab wears a dot in this state and that costs no request:
+            // "you have never opened this" is knowable without asking anybody.
+            if (FeedNeverSeen)
+                return;
+
+            if (!unseenAskNow && DateTime.UtcNow - unseenCheckedAt < UnseenPollAfter)
+                return;
+
+            if (Interlocked.CompareExchange(ref unseenInFlight, 1, 0) != 0)
+                return;
+
+            unseenAskNow = false;
+            unseenCheckedAt = DateTime.UtcNow;
+            long since = config.AchievementsSeenMark;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.GetUnseenAsync(since).ConfigureAwait(false);
+
+                    // A failed count leaves the badge exactly as it was. There is no such thing as
+                    // an error state for this: the alternative to a number is no number, and
+                    // flickering between them every three minutes on a poor connection would be
+                    // the most annoying thing in the plugin.
+                    if (!result.IsOk || result.Value == null)
+                        return;
+
+                    // The mark may have moved on while this was in flight - they opened the tab.
+                    // Anything counted against the old mark is stale by definition, and applying it
+                    // would put a badge back on the tab they are sitting on.
+                    if (config.AchievementsSeenMark != since)
+                        return;
+
+                    UnseenCount = Math.Max(0, result.Value.Count);
+                    UnseenCapped = result.Value.More;
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Unread count failed: {ex.Message}");
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref unseenInFlight, 0);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Marks the feed read up to whatever the server last handed over.
+        ///
+        /// Called every frame the tab is on screen, and does nothing on almost all of them. The
+        /// mark it takes is the server's, carried on the feed response - so "read up to here" means
+        /// the same thing to both ends whatever this machine's clock says.
+        /// </summary>
+        public void MarkFeedSeen()
+        {
+            long shown;
+            lock (feedLock)
+                shown = feedMark;
+
+            // Nothing has been SHOWN yet: the first read is still out, every read has failed, or
+            // the only thing that has arrived is parked behind the pill. Either way there is
+            // nothing to claim as seen - and the count stands, because it is still true. Zeroing it
+            // here was the bug that ate a clear: somebody sitting on the tab while the poll parked
+            // a post they never saw had it marked read on their behalf.
+            if (shown <= 0 || shown <= config.AchievementsSeenMark)
+                return;
+
+            config.AchievementsSeenMark = shown;
+            config.Save();
+
+            UnseenCount = 0;
+            UnseenCapped = false;
+
+            // The next tick asks fresh rather than sitting on a three-minute-old answer about a
+            // mark that no longer exists.
+            unseenCheckedAt = DateTime.MinValue;
+        }
+
+        /// <summary>
+        /// The server's clock as of the last feed that was actually PUT ON SCREEN, in unix ms.
+        /// Zero until one is. Guarded by feedLock: written by the poll's worker, read by the frame.
+        /// </summary>
+        private long feedMark;
+
+        /// <summary>
+        /// The mark belonging to posts the poll is holding behind the pill.
+        ///
+        /// A read that lands while somebody is mid-feed does not replace what they are looking at -
+        /// it waits. Its mark has to wait with it, or the act of fetching a post would be what
+        /// marks it read, and the clear that was never drawn would leave no badge behind. Promoted
+        /// in ApplyNewPosts, which is the moment those posts are genuinely shown.
+        /// </summary>
+        private long pendingMark;
+
         /// <summary>Shows what the poll has been holding. The tab scrolls itself back to the top
         /// afterwards - the whole point is that something above you has changed.</summary>
         public void ApplyNewPosts()
@@ -83,6 +230,13 @@ namespace PfPresets
                 feed.Clear();
                 feed.AddRange(incoming);
                 incoming.Clear();
+
+                // These are on screen now, so their mark is finally ours to claim. Pressing the
+                // pill is the only thing that turns a held read into a shown one.
+                if (pendingMark > feedMark)
+                    feedMark = pendingMark;
+
+                pendingMark = 0;
             }
         }
 
@@ -148,9 +302,13 @@ namespace PfPresets
 
             _ = Task.Run(async () =>
             {
+                // The page this read is OF, kept rather than re-read afterwards: FeedPage can move
+                // under a request in flight, and the mark below is only ever page one's to claim.
+                int askedFor = FeedPage;
+
                 try
                 {
-                    var result = await api.GetFeedAsync(FeedPage).ConfigureAwait(false);
+                    var result = await api.GetFeedAsync(askedFor).ConfigureAwait(false);
 
                     if (!result.IsOk || result.Value == null)
                     {
@@ -169,6 +327,20 @@ namespace PfPresets
 
                     var posts = result.Value.Posts;
                     FeedPages = Math.Max(1, result.Value.Pages);
+
+                    // The mark this read is entitled to claim - IF its posts end up in front of
+                    // somebody. Whether they do is decided below, and the two cases are not the
+                    // same: a read that is held behind the pill has shown nobody anything.
+                    //
+                    // Falls back to this machine's clock against a server that does not send one.
+                    // It is the wrong clock, and it is still much better than the alternative:
+                    // without a mark the tab wears the never-opened dot forever, and a mark nobody
+                    // can clear is a permanent smudge on the navigation. The count endpoint does
+                    // not exist on such a server either, so the only thing this fallback decides is
+                    // that the dot goes away when they look - which is the whole of what it means.
+                    long mark = result.Value.Now > 0
+                        ? result.Value.Now
+                        : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                     // A page that has emptied out from under you - somebody opted out, a post was
                     // removed - lands you on the last one that still exists rather than on nothing.
@@ -194,11 +366,35 @@ namespace PfPresets
                             feed.Clear();
                             feed.AddRange(posts);
                             incoming.Clear();
+                            pendingMark = 0;
+
+                            // ONLY PAGE ONE CAN CLAIM THE MARK. The mark is a time, not a place,
+                            // and a page further down the feed proves nothing about what has
+                            // arrived at the top of it - so reading page three would otherwise
+                            // silently mark every new clear read without drawing one of them.
+                            //
+                            // Only ever forward: two reads can land out of order, a page change
+                            // racing the poll, and taking the earlier answer's mark would un-see
+                            // posts that had already been shown.
+                            if (askedFor == 0 && mark > feedMark)
+                                feedMark = mark;
                         }
                         else
                         {
                             incoming.Clear();
                             incoming.AddRange(posts);
+
+                            // Held, and so is its mark - see pendingMark. What is on screen is
+                            // still the older feed, and that is all anybody has been shown.
+                            if (mark > pendingMark)
+                                pendingMark = mark;
+
+                            // We have just learned first-hand that there is something they have not
+                            // been shown, so the badge does not sit out the rest of a three-minute
+                            // window before finding out. It still asks the server for the number
+                            // rather than counting these itself - the client cannot tell whose
+                            // clears these are, and their own must not ring a bell.
+                            unseenAskNow = true;
                         }
 
                         applyNextRead = false;

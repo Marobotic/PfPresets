@@ -332,6 +332,13 @@ namespace PfPresets
                 HttpMethod.Post, "achievements/feed",
                 new AchievementFeedRequest { Page = Math.Max(0, page) }).ConfigureAwait(false);
 
+        /// <summary>How many posts have appeared since the mark. The badge's whole conversation with
+        /// the server, and deliberately the cheapest call in this file.</summary>
+        public async Task<ApiResult<AchievementUnseenResponse>> GetUnseenAsync(long since)
+            => await SendAsync<AchievementUnseenResponse>(
+                HttpMethod.Post, "achievements/unseen",
+                new AchievementUnseenRequest { Since = since }).ConfigureAwait(false);
+
         public async Task<ApiResult<AchievementReactResponse>> HeartAsync(string id)
             => await SendAsync<AchievementReactResponse>(
                 HttpMethod.Post, "achievements/heart",

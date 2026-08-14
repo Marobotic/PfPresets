@@ -317,6 +317,27 @@ namespace PfPresets
         /// </summary>
         public bool BroadcastAchievements { get; set; } = true;
 
+        /// <summary>
+        /// How far the achievements feed has been read, as a mark the SERVER issued (unix ms).
+        ///
+        /// Zero means the tab has never been opened, which is a state in its own right: the badge
+        /// shows a dot rather than a number, because counting every clear ever posted and putting
+        /// four hundred on a tab is not an invitation, it is a wall. It stops being zero the first
+        /// time the feed is actually shown to somebody.
+        ///
+        /// The server's clock rather than this machine's, on purpose - see AchievementFeedResponse.
+        /// </summary>
+        public long AchievementsSeenMark { get; set; }
+
+        /// <summary>
+        /// The poll whose Vote tab has actually been opened, by slug. Empty until one has been.
+        ///
+        /// A slug rather than a flag, so the next poll marks the tab by itself: a boolean would have
+        /// to be found and reset by hand every time one starts, and the time somebody forgets is the
+        /// time nobody is told there is a poll.
+        /// </summary>
+        public string PollSeenSlug { get; set; } = string.Empty;
+
         /// <summary>Whether to show ratings beside the members of the party you are actually in.
         /// Deliberately not offered while browsing the Party Finder: a score attached to a listing
         /// you haven't joined turns the feature into a screening tool for strangers, which is not

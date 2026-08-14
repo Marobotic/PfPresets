@@ -98,6 +98,12 @@ namespace PfPresets
 
             ratings.EnsureFeedLoaded();
 
+            // Being here is what reads the feed - not clicking the tab, and not scrolling to the
+            // bottom of it. Somebody who opens the tab, sees the top three posts and leaves has
+            // been told what the badge was for, and asking them to scroll before it clears would
+            // make the number a chore rather than a notice. See MarkFeedSeen.
+            ratings.MarkFeedSeen();
+
             float avail = ImGui.GetContentRegionAvail().X;
             float width = Math.Max(160f, avail - FeedMargin * 2f);
 

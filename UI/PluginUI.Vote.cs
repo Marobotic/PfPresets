@@ -119,6 +119,16 @@ namespace PfPresets
             if (p == null)
                 return;
 
+            // Being here is what reads the poll, exactly as with the feed - not voting in it, and
+            // not seeing it mentioned somewhere else. Somebody who opens the tab, reads the question
+            // and decides to think about it has been told what the mark was for.
+            if (!string.IsNullOrEmpty(p.Slug)
+                && !string.Equals(config.PollSeenSlug, p.Slug, StringComparison.Ordinal))
+            {
+                config.PollSeenSlug = p.Slug;
+                config.Save();
+            }
+
             // THE BODY SCROLLS, NOT THE WINDOW, and this child is the whole of what makes that
             // true. Without it the tab's content simply overflowed the window, so the window
             // itself scrolled and took the title bar and the tab strip up and out of sight with
