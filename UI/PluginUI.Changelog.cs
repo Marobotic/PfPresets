@@ -35,6 +35,11 @@ namespace PfPresets
                 "Want to know where the plugin is heading? There's a \"Read the update\" button in About now.",
             }),
 
+            new("3.4.4", "August 2026", new[]
+            {
+                "Security and performance improvements on the server side. Nothing to do at your end.",
+            }),
+
             new("3.4.3", "August 2026", new[]
             {
                 "New Vote tab. There is a poll running on the future of the plugin, and the option with the most votes will be implemented in the next update. You can share it with a link so other people can vote too.",
