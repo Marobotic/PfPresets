@@ -737,6 +737,23 @@ namespace PfPresets
                 return (title, AccentYellow, FontAwesomeIcon.DoorClosed);
             }
 
+            // A PARTY THAT FILLED ITS LISTING IS PREPPING, NOT "READY TO RECRUIT".
+            //
+            // Outside a duty and outside the queue, a duty name here can only have come from a
+            // recruitment this party still stands for - RecruitedDutyStillApplies has already
+            // decided that, and it only says yes while the party is full and holding together.
+            // So this is a group that just filled for a fight and is about to go and do it.
+            //
+            // "Ready to recruit" was actively wrong in that state: an 8/8 party cannot recruit,
+            // and the line underneath was already saying so. The header announced an option that
+            // was not available while the fight's own progress was listed directly beneath it.
+            if (snap.Activity is PfActivity.Idle or PfActivity.InPartyNotLeader
+                && !string.IsNullOrWhiteSpace(snap.DutyName)
+                && !snap.DutyName.Equals("None", StringComparison.OrdinalIgnoreCase))
+            {
+                return ($"Prepping for {snap.DutyName}", AccentGreen, FontAwesomeIcon.CheckCircle);
+            }
+
             return snap.Activity switch
             {
                 PfActivity.InPartyNotLeader => ("In a party", TextSecondary, FontAwesomeIcon.Users),
