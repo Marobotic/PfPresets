@@ -39,10 +39,3 @@ Core/Admin*.cs
 # ...except the hook declarations, which MUST stay in the repo: they are what the ordinary build
 # compiles (to nothing), and a missing partial declaration is a build error for everybody else.
 !UI/PluginUI.AdminHooks.cs
-
-# Vote evidence. The payload a vote carries to show it came out of a real duty, and the key that
-# seals it. Kept out of the repository so that mimicking a vote costs somebody a decompile rather
-# than a page of source - it is a speed bump, not the defence, but it is a free one.
-# THE SERVER-SIDE CHECKS ARE WHAT ACTUALLY HOLD: a duty of plausible length, containing both
-# players, recent, and no more of them per hour than a person can actually play.
-Core/VoteEvidence*.cs
