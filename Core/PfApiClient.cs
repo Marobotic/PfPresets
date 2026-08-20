@@ -344,10 +344,39 @@ namespace PfPresets
                 HttpMethod.Post, "achievements/heart",
                 new AchievementReactRequest { Id = id }).ConfigureAwait(false);
 
+        /// <summary>Takes back a heart this session's character cast. The server refuses one that
+        /// belongs to another character on the same connection, and says so.</summary>
+        public async Task<ApiResult<AchievementReactResponse>> UnheartAsync(string id)
+            => await SendAsync<AchievementReactResponse>(
+                HttpMethod.Post, "achievements/unheart",
+                new AchievementReactRequest { Id = id }).ConfigureAwait(false);
+
         public async Task<ApiResult<AchievementReactResponse>> ShareAsync(string id)
             => await SendAsync<AchievementReactResponse>(
                 HttpMethod.Post, "achievements/reshare",
                 new AchievementReactRequest { Id = id }).ConfigureAwait(false);
+
+        // ── Party finder crowdsourcing ────────────────────────────
+
+        /// <summary>Says this character is in the listing led by the named character. The server
+        /// refuses it unless the character matches the session, so it can only ever report the
+        /// sender.</summary>
+        public async Task<ApiResult<PfReportResponse>> ReportPfListingAsync(PfReportRequest request)
+            => await SendAsync<PfReportResponse>(
+                HttpMethod.Post, "pf/report", request).ConfigureAwait(false);
+
+        /// <summary>Takes this character's report back down, for when the listing ends.</summary>
+        public async Task<ApiResult<PfReportResponse>> WithdrawPfListingAsync()
+            => await SendAsync<PfReportResponse>(
+                HttpMethod.Post, "pf/withdraw", new { }).ConfigureAwait(false);
+
+        /// <summary>Who has reported themselves into a listing.</summary>
+        public async Task<ApiResult<PfLookupResponse>> LookupPfListingAsync(
+            string leaderName, string leaderWorld)
+            => await SendAsync<PfLookupResponse>(
+                HttpMethod.Post, "pf/lookup",
+                new PfLookupRequest { LeaderName = leaderName, LeaderWorld = leaderWorld })
+                .ConfigureAwait(false);
 
         /// <summary>Turns broadcasting on or off for the character this session belongs to. The
         /// server checks it against the session's own character, so this cannot be pointed at

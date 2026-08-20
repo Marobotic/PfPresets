@@ -1,0 +1,316 @@
+#if PFP_RATINGS
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Dalamud.Plugin.Services;
+
+namespace PfPresets
+{
+    /// <summary>
+    /// Publishes this character's presence in a party finder listing, and reads back who else has
+    /// published theirs.
+    ///
+    /// WHAT LEAVES THIS MACHINE, EXACTLY: the name and world of the listing's leader (as the key
+    /// everyone matches on), this character's own name, world and job, and the duty id. Nothing
+    /// about anybody else in the party, ever - not because the client cannot see them, but because
+    /// they have not agreed to be published and cannot be asked. The server enforces the same rule
+    /// independently, so a client that tried could not succeed.
+    ///
+    /// It is off for anybody running PFRadar, which does this already, and off for anybody who
+    /// turns it off. It stops the moment a listing ends, and the server forgets a report within the
+    /// hour regardless - this describes what is happening now, not where anybody has been.
+    /// </summary>
+    internal sealed class PfCrowdsource
+    {
+        /// <summary>How often a standing report is refreshed while a listing is up. The row carries
+        /// its own timestamp and the server expires it, so this is a heartbeat rather than a
+        /// write per frame.</summary>
+        private static readonly TimeSpan ReportEvery = TimeSpan.FromMinutes(2);
+
+        /// <summary>How long a looked-up roster is trusted before asking again. A party fills over
+        /// minutes, not seconds, and the panel is read for a moment.</summary>
+        private static readonly TimeSpan RosterFreshFor = TimeSpan.FromSeconds(45);
+
+        /// <summary>How often the reporting half looks at the world at all.</summary>
+        private static readonly TimeSpan TickEvery = TimeSpan.FromSeconds(5);
+
+        private readonly PfApiClient api;
+        private readonly Configuration config;
+        private readonly IPluginLog log;
+        private readonly PfAutomation pfAutomation;
+        private readonly WorldHelper worlds;
+        private readonly Func<CharacterIdentity?> localIdentity;
+        private readonly Func<bool> suppressed;
+
+        private DateTime lastTick = DateTime.MinValue;
+        private DateTime lastReport = DateTime.MinValue;
+
+        /// <summary>
+        /// A frame number for <c>GetSnapshot</c> that cannot collide with the UI's.
+        ///
+        /// That method caches one snapshot keyed on the number it is handed, and the UI hands it
+        /// <c>ImGui.GetFrameCount()</c>. Passing anything from this side that could ever equal an
+        /// ImGui frame count - a tick count, say - risks the UI being handed a snapshot built on a
+        /// different frame, which is a stale party list drawn as a current one.
+        ///
+        /// ImGui frame counts are never negative, so counting down from zero can never be mistaken
+        /// for one. The cost is that our call rebuilds rather than sharing the UI's snapshot, which
+        /// at once every five seconds is nothing.
+        /// </summary>
+        private int snapshotTicket = -1;
+
+        /// <summary>The key we last reported under, so a listing that ends can be withdrawn from
+        /// and a party whose leader changes does not leave a row behind under the old one.</summary>
+        private string reportedUnder = string.Empty;
+
+        private readonly ConcurrentDictionary<string, (DateTime When, List<PfMember> Members)> rosters = new();
+        private readonly ConcurrentDictionary<string, byte> rosterInFlight = new();
+
+        public PfCrowdsource(PfApiClient api, Configuration config, IPluginLog log,
+            PfAutomation pfAutomation, WorldHelper worlds,
+            Func<CharacterIdentity?> localIdentity, Func<bool> suppressed)
+        {
+            this.api = api;
+            this.config = config;
+            this.log = log;
+            this.pfAutomation = pfAutomation;
+            this.worlds = worlds;
+            this.localIdentity = localIdentity;
+            this.suppressed = suppressed;
+        }
+
+        /// <summary>Whether this install is taking part at all.</summary>
+        public bool Enabled
+            => config.PfCrowdsourceEnabled && config.RatingsEnabled && !suppressed();
+
+        // ── Reporting ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Called every frame; does something about once every five seconds.
+        ///
+        /// The whole reporting half lives here rather than reacting to an event, because "am I in a
+        /// listing" has no event - the listing goes up, fills, and comes down through several
+        /// different mechanisms, and polling a cheap flag is more honest than trying to hook them
+        /// all and missing one.
+        /// </summary>
+        public void Tick()
+        {
+            if (DateTime.UtcNow - lastTick < TickEvery)
+                return;
+
+            lastTick = DateTime.UtcNow;
+
+            // Minted here rather than above, so it advances once per tick instead of once per
+            // frame - the counter only has to be unique against ImGui's, not busy.
+            int frameCount = snapshotTicket--;
+
+            try
+            {
+                if (!Enabled)
+                {
+                    Withdraw();
+                    return;
+                }
+
+                if (!TryGetListingKey(frameCount, out string leaderName, out string leaderWorld))
+                {
+                    // Not in a listing any more - take the row down rather than letting it age out,
+                    // so somebody looking at that party stops being told we are in it.
+                    Withdraw();
+                    return;
+                }
+
+                string key = $"{leaderName}@{leaderWorld}";
+
+                // A changed key means a different listing, which is a new report immediately rather
+                // than at the next heartbeat.
+                if (key != reportedUnder)
+                    lastReport = DateTime.MinValue;
+
+                if (DateTime.UtcNow - lastReport < ReportEvery)
+                    return;
+
+                var me = localIdentity();
+                if (me is not { IsValid: true })
+                    return;
+
+                lastReport = DateTime.UtcNow;
+                reportedUnder = key;
+
+                var (jobId, _) = pfAutomation.GetLocalJobAndLevel();
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await api.ReportPfListingAsync(new PfReportRequest
+                        {
+                            LeaderName = leaderName,
+                            LeaderWorld = leaderWorld,
+                            Name = me.Name,
+                            World = me.World,
+                            Job = (int)jobId,
+                            DutyId = (int)CurrentDutyId(frameCount),
+                        }).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Debug($"[PF] Report failed: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                log.Debug($"[PF] Tick failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>Takes our row down. Cheap to call when there is nothing to withdraw - it only
+        /// does anything if we believe we have a row up.</summary>
+        public void Withdraw()
+        {
+            if (reportedUnder.Length == 0)
+                return;
+
+            reportedUnder = string.Empty;
+            lastReport = DateTime.MinValue;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await api.WithdrawPfListingAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[PF] Withdraw failed: {ex.Message}");
+                }
+            });
+        }
+
+        private uint CurrentDutyId(int frameCount)
+        {
+            try
+            {
+                return pfAutomation.GetSnapshot(frameCount).DutyRowId;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// The listing this character is currently in, named the way everybody else will name it.
+        ///
+        /// THE KEY HAS TO BE THE SAME STRING ON BOTH SIDES. Somebody looking at a listing reads the
+        /// leader's name and world out of the game's own listing data; somebody sitting in that
+        /// listing has to arrive at exactly the same pair or the two never meet. Hence the leader,
+        /// rather than anything about the party that only one side can see.
+        /// </summary>
+        private bool TryGetListingKey(int frameCount, out string leaderName, out string leaderWorld)
+        {
+            leaderName = string.Empty;
+            leaderWorld = string.Empty;
+
+            var snapshot = pfAutomation.GetSnapshot(frameCount);
+            if (!snapshot.IsRecruiting)
+                return false;
+
+            // Leading it ourselves is the unambiguous case: the listing is ours, so the key is us.
+            if (snapshot.IsLeader || pfAutomation.IsPartyLeader())
+            {
+                var me = localIdentity();
+                if (me is not { IsValid: true })
+                    return false;
+
+                leaderName = me.Name;
+                leaderWorld = me.World;
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(snapshot.LeaderName))
+                return false;
+
+            // A member of somebody else's listing. The name is known; the world comes from the
+            // party list, which carries a home world per member - matched by name rather than by a
+            // leader flag, because the cross-world party proxy does not expose one usefully and a
+            // name that is in the party is the leader we were just told about.
+            foreach (var member in pfAutomation.GetOtherPartyMemberDetails())
+            {
+                if (!string.Equals(member.Name, snapshot.LeaderName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string world = worlds.GetWorldName(member.HomeWorldId);
+                if (string.IsNullOrWhiteSpace(world))
+                    return false;
+
+                leaderName = member.Name;
+                leaderWorld = world;
+                return true;
+            }
+
+            return false;
+        }
+
+        // ── Reading ───────────────────────────────────────────────
+
+        /// <summary>
+        /// Who has published themselves into this listing, or null while nobody has been asked yet.
+        ///
+        /// Safe to call every frame: it answers from the cache and asks the server at most once per
+        /// listing per <see cref="RosterFreshFor"/>.
+        /// </summary>
+        public IReadOnlyList<PfMember>? RosterFor(string leaderName, string leaderWorld)
+        {
+            if (!Enabled || string.IsNullOrWhiteSpace(leaderName) || string.IsNullOrWhiteSpace(leaderWorld))
+                return null;
+
+            string key = $"{leaderName}@{leaderWorld}".ToLowerInvariant();
+
+            if (rosters.TryGetValue(key, out var found))
+            {
+                if (DateTime.UtcNow - found.When < RosterFreshFor)
+                    return found.Members;
+            }
+            else
+            {
+                found = default;
+            }
+
+            Fetch(key, leaderName, leaderWorld);
+
+            // The stale copy while the new one is on its way. A panel that blanked every time it
+            // refreshed would flicker once a minute for no reason.
+            return found.Members;
+        }
+
+        private void Fetch(string key, string leaderName, string leaderWorld)
+        {
+            if (!rosterInFlight.TryAdd(key, 0))
+                return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.LookupPfListingAsync(leaderName, leaderWorld)
+                        .ConfigureAwait(false);
+
+                    if (result.IsOk && result.Value != null)
+                        rosters[key] = (DateTime.UtcNow, result.Value.Members ?? new List<PfMember>());
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[PF] Lookup failed: {ex.Message}");
+                }
+                finally
+                {
+                    rosterInFlight.TryRemove(key, out _);
+                }
+            });
+        }
+    }
+}
+#endif

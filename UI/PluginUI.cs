@@ -32,6 +32,14 @@ namespace PfPresets
         /// "reset install id" control.</summary>
         internal AnalyticsClient? Analytics { get; set; }
 
+        /// <summary>The listing reader, or null in a build without it.</summary>
+        internal ListingXray? Listings { get; set; }
+
+#if PFP_RATINGS
+        /// <summary>Who has published themselves into the listing on screen.</summary>
+        internal PfCrowdsource? Crowd { get; set; }
+#endif
+
         // ── Window Visibility ─────────────────────────────────────
         private bool isMainWindowVisible = false;
         private bool isSettingsWindowVisible = false;
@@ -65,6 +73,16 @@ namespace PfPresets
         // ── Per-frame caches (reset at the top of Draw) ───────────
         private bool? rrActiveThisFrame;
         private (bool Ok, string Reason)? canRecruitThisFrame;
+
+        /// <summary>Preset id -> whether its duty is locked on this character, for this frame only.
+        /// Resolving a preset's duty is a name search through the whole sheet when the row id has
+        /// gone stale, and the preset list asks the same question of the same presets every frame.
+        /// </summary>
+        private readonly Dictionary<string, bool> presetLockedThisFrame = new();
+
+        /// <summary>Why each of those is locked, kept alongside so the tooltip can say it without
+        /// resolving the duty again.</summary>
+        private readonly Dictionary<string, string?> presetLockReasonThisFrame = new();
         private bool? partyHasNonBattleJobThisFrame;
 
         public PluginUI(
@@ -99,6 +117,9 @@ namespace PfPresets
             rrActiveThisFrame = null;
             canRecruitThisFrame = null;
             partyHasNonBattleJobThisFrame = null;
+            presetLockedThisFrame.Clear();
+            presetLockReasonThisFrame.Clear();
+            categoryLockedThisFrame.Clear();
 
             // PushPluginTheme pushes onto ImGui's process-global color stack, shared with Dalamud
             // and every other plugin. The finally guarantees we pop exactly what we pushed even if a
@@ -110,28 +131,33 @@ namespace PfPresets
             var theme = PushPluginTheme();
             try
             {
-                DrawMainWindow();
-                DrawEditorWindow();
+                // The screen first, then everything that is anchored to the game rather than to it,
+                // and the sheet layer LAST.
+                //
+                // Last is not a preference. A sheet is a real ImGui window pinned inside the screen
+                // (see PluginUI.Sheets.cs), and ImGui stacks windows in the order they are first
+                // submitted in a frame. Submitting the sheet before the body it covers would put the
+                // body on top of its own modal.
+                screenRectValid = false;
                 DrawSettingsWindow();
+                DrawMainWindow();
+
                 DrawChecklistOverlay();
-                DrawJobSelectorWindow();
-                DrawShareExportWindow();
-                DrawShareImportWindow();
                 DrawSaveFromListingOverlay();
+                DrawListingPanel();
                 DrawPartyFinderOpenButton();
                 ReportOverlayDiagnostic();
-                DrawConfirmDialog();
-                DrawChangelogWindow();
                 DrawWelcomeWindow();
 #if PFP_RATINGS
                 DrawRatingPrompt();
-                DrawReportDialog();
                 DrawListingLeaderRatingOverlay();
-                DrawPollShare();
                 DrawVoteNudge();
 #endif
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
                 DrawPanelOverlay();
+
+                DrawSheetLayer();
+                HandleSheetKeyboard();
             }
             finally
             {
@@ -172,6 +198,34 @@ namespace PfPresets
             }
             reason = canRecruitThisFrame.Value.Reason;
             return canRecruitThisFrame.Value.Ok;
+        }
+
+        /// <summary>
+        /// Whether this preset is for content the character has not unlocked, computed at most once
+        /// per frame per preset.
+        ///
+        /// A preset whose duty cannot be identified at all counts as unlocked - see DutyUnlocks for
+        /// why "unknown" never blocks.
+        /// </summary>
+        private bool IsPresetLocked(PfPresetData preset)
+        {
+            if (presetLockedThisFrame.TryGetValue(preset.Id, out bool cached))
+                return cached;
+
+            string? reason = dutyDataHelper.DescribePresetLock(preset);
+            presetLockedThisFrame[preset.Id] = reason != null;
+            presetLockReasonThisFrame[preset.Id] = reason;
+            return reason != null;
+        }
+
+        /// <summary>Why this preset is locked, or null. Reuses the per-frame answer above rather
+        /// than resolving the duty a second time.</summary>
+        private string PresetLockReason(PfPresetData preset)
+        {
+            IsPresetLocked(preset);
+            return presetLockReasonThisFrame.TryGetValue(preset.Id, out var reason) && reason != null
+                ? reason
+                : "this duty is not unlocked on this character";
         }
 
         /// <summary>Whether a non-battle job (crafter/gatherer) is currently in the party, computed
@@ -288,11 +342,12 @@ namespace PfPresets
         }
 
         /// <summary>Draws a FontAwesome glyph centered within a rectangle (used to overlay icons on buttons).</summary>
-        private void DrawGlyphCentered(FontAwesomeIcon icon, Vector2 rectMin, Vector2 rectMax, Vector4 color)
+        private void DrawGlyphCentered(FontAwesomeIcon icon, Vector2 rectMin, Vector2 rectMax, Vector4 color,
+            Dalamud.Interface.ManagedFontAtlas.IFontHandle? iconFace = null)
         {
             var dl = ImGui.GetWindowDrawList();
             string g = icon.ToIconString();
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            using ((iconFace ?? pluginInterface.UiBuilder.IconFontHandle).Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(g);
                 dl.AddText(new Vector2((rectMin.X + rectMax.X - ts.X) * 0.5f, (rectMin.Y + rectMax.Y - ts.Y) * 0.5f),
@@ -303,12 +358,15 @@ namespace PfPresets
         /// <summary>Draws a FontAwesome icon followed by a text label, centered as a group within
         /// a rectangle. Used for buttons that mix an icon (icon font) with normal-font text, which
         /// a single ImGui.Button label cannot do.</summary>
-        private void DrawIconLabelCentered(FontAwesomeIcon icon, string text, Vector2 rectMin, Vector2 rectSize, Vector4 color, float alphaMul = 1f)
+        private void DrawIconLabelCentered(FontAwesomeIcon icon, string text, Vector2 rectMin, Vector2 rectSize, Vector4 color, float alphaMul = 1f,
+            Dalamud.Interface.ManagedFontAtlas.IFontHandle? iconFace = null)
         {
             var dl = ImGui.GetWindowDrawList();
             string glyph = icon.ToIconString();
+            var face = iconFace ?? pluginInterface.UiBuilder.IconFontHandle;
+
             Vector2 iconSize;
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            using (face.Push())
                 iconSize = ImGui.CalcTextSize(glyph);
             Vector2 textSize = ImGui.CalcTextSize(text);
             const float gap = 8f;
@@ -317,7 +375,7 @@ namespace PfPresets
 
             var col = color; col.W *= alphaMul;
             uint colU = ImGui.ColorConvertFloat4ToU32(col);
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            using (face.Push())
                 dl.AddText(new Vector2(startX, midY - iconSize.Y * 0.5f), colU, glyph);
             dl.AddText(new Vector2(startX + iconSize.X + gap, midY - textSize.Y * 0.5f), colU, text);
         }
@@ -446,7 +504,7 @@ namespace PfPresets
 
             Vector2 tl = topLeft;
             Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
-            const float rounding = 0f;
+            const float rounding = Radius.Tile;
 
             int n = Math.Max(1, colors.Length);
             float band = size / n;
@@ -473,7 +531,7 @@ namespace PfPresets
                     Col(new Vector4(0f, 0f, 0f, 0.35f)), 1f);
             }
 
-            dl.AddRect(tl, br, Col(ColorFromHex("#1b2230")), rounding, ImDrawFlags.None, 1.5f);
+            dl.AddRect(tl, br, Col(Ground), rounding, ImDrawFlags.None, 1.5f);
 
             // Neutral person silhouette on top, with a soft shadow so it reads over any band colour.
             string glyph = FreeGlyph.ToIconString();
@@ -482,7 +540,7 @@ namespace PfPresets
                 Vector2 ts = ImGui.CalcTextSize(glyph);
                 Vector2 tp = new Vector2(topLeft.X + (size - ts.X) * 0.5f, topLeft.Y + (size - ts.Y) * 0.5f);
                 dl.AddText(new Vector2(tp.X + 1f, tp.Y + 1f), Col(new Vector4(0, 0, 0, 0.5f)), glyph);
-                dl.AddText(tp, Col(ColorFromHex("#eef2f8")), glyph);
+                dl.AddText(tp, Col(Ink), glyph);
             }
         }
 

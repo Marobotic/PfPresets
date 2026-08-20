@@ -269,14 +269,14 @@ namespace PfPresets
 
                 var boxMin = new Vector2(x - 62f, c.Y + 4f);
                 var boxMax = new Vector2(x + 62f, c.Y + 62f);
-                dl.AddRectFilled(boxMin, boxMax, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
+                dl.AddRectFilled(boxMin, boxMax, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Card);
                 dl.AddRect(boxMin, boxMax,
                     ImGui.ColorConvertFloat4ToU32(new Vector4(tints[i].X, tints[i].Y, tints[i].Z, 0.55f * pop)),
-                    0f, 0, 1.5f);
+                    Radius.Card, ImDrawFlags.None, 1.5f);
 
                 dl.AddRectFilled(new Vector2(boxMin.X + 14f, boxMin.Y + 12f),
                     new Vector2(boxMin.X + 14f + 96f * pop, boxMin.Y + 15f),
-                    ImGui.ColorConvertFloat4ToU32(tints[i]), 0f);
+                    ImGui.ColorConvertFloat4ToU32(tints[i]), Radius.Pill);
 
                 Vector2 ls = ImGui.CalcTextSize(pillars[i]);
                 dl.AddText(new Vector2(x - ls.X * 0.5f, c.Y + 30f),
@@ -289,8 +289,8 @@ namespace PfPresets
         {
             var leftMin = new Vector2(c.X - 210f, c.Y - 52f);
             var leftMax = new Vector2(c.X - 60f, c.Y + 52f);
-            dl.AddRectFilled(leftMin, leftMax, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
-            dl.AddRect(leftMin, leftMax, ImGui.ColorConvertFloat4ToU32(BorderDefault), 0f, 0, 1f);
+            dl.AddRectFilled(leftMin, leftMax, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Card);
+            dl.AddRect(leftMin, leftMax, ImGui.ColorConvertFloat4ToU32(BorderDefault), Radius.Card, ImDrawFlags.None, 1f);
             ArtLabel(dl, new Vector2(leftMin.X + 14f, leftMin.Y + 12f), "SAVED PRESET", TextMuted);
 
             for (int i = 0; i < 3; i++)
@@ -298,7 +298,7 @@ namespace PfPresets
                 float y = leftMin.Y + 40f + i * 16f;
                 dl.AddRectFilled(new Vector2(leftMin.X + 14f, y),
                     new Vector2(leftMin.X + 14f + (i == 2 ? 70f : 106f), y + 6f),
-                    ImGui.ColorConvertFloat4ToU32(BorderHover), 0f);
+                    ImGui.ColorConvertFloat4ToU32(BorderHover), Radius.Pill);
             }
 
             float slide = Ease(Math.Clamp(ease / 0.8f, 0f, 1f));
@@ -306,10 +306,10 @@ namespace PfPresets
 
             var rightMin = new Vector2(c.X + 46f, c.Y - 52f);
             var rightMax = new Vector2(c.X + 210f, c.Y + 52f);
-            dl.AddRectFilled(rightMin, rightMax, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
+            dl.AddRectFilled(rightMin, rightMax, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Card);
             dl.AddRect(rightMin, rightMax,
                 ImGui.ColorConvertFloat4ToU32(new Vector4(AccentGreen.X, AccentGreen.Y, AccentGreen.Z, 0.6f)),
-                0f, 0, 1.5f);
+                Radius.Card, ImDrawFlags.None, 1.5f);
             ArtLabel(dl, new Vector2(rightMin.X + 14f, rightMin.Y + 12f), "LISTING UP", AccentGreen);
 
             // Seats filling left to right as the card settles - the point of the whole figure.
@@ -346,20 +346,20 @@ namespace PfPresets
                 var min = new Vector2(c.X - 185f, top + i * rowH);
                 var max = new Vector2(c.X + 185f, min.Y + rowH - 7f);
 
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
+                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Small);
 
                 // Progress runs behind the row as a tinted wash, so the bar and the words are the
                 // same statement rather than two.
                 var wash = new Vector4(rows[i].Tint.X, rows[i].Tint.Y, rows[i].Tint.Z, 0.16f * pop);
                 dl.AddRectFilled(min,
                     new Vector2(min.X + (max.X - min.X) * rows[i].Fill * pop, max.Y),
-                    ImGui.ColorConvertFloat4ToU32(wash), 0f);
+                    ImGui.ColorConvertFloat4ToU32(wash), Radius.Small, ImDrawFlags.RoundCornersLeft);
 
                 dl.AddCircleFilled(new Vector2(min.X + 18f, (min.Y + max.Y) * 0.5f), 7f,
                     ImGui.ColorConvertFloat4ToU32(BorderHover));
                 dl.AddRectFilled(new Vector2(min.X + 34f, (min.Y + max.Y) * 0.5f - 3f),
                     new Vector2(min.X + 34f + 86f, (min.Y + max.Y) * 0.5f + 3f),
-                    ImGui.ColorConvertFloat4ToU32(BorderHover), 0f);
+                    ImGui.ColorConvertFloat4ToU32(BorderHover), Radius.Pill);
 
                 Vector2 ts = ImGui.CalcTextSize(rows[i].Label);
                 dl.AddText(new Vector2(max.X - ts.X - 14f, (min.Y + max.Y) * 0.5f - ts.Y * 0.5f),
@@ -391,8 +391,8 @@ namespace PfPresets
 
             var panelMin = new Vector2(c.X - panelW * 0.5f, top - 12f);
             var panelMax = new Vector2(c.X + panelW * 0.5f, top + rows.Length * rowH + 12f);
-            dl.AddRectFilled(panelMin, panelMax, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
-            dl.AddRect(panelMin, panelMax, ImGui.ColorConvertFloat4ToU32(BorderDefault), 0f, 0, 1f);
+            dl.AddRectFilled(panelMin, panelMax, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Card);
+            dl.AddRect(panelMin, panelMax, ImGui.ColorConvertFloat4ToU32(BorderDefault), Radius.Card, ImDrawFlags.None, 1f);
 
             for (int i = 0; i < rows.Length; i++)
             {
@@ -406,22 +406,22 @@ namespace PfPresets
                 {
                     dl.AddRectFilled(new Vector2(panelMin.X + 1f, top + i * rowH),
                         new Vector2(panelMax.X - 1f, top + (i + 1) * rowH),
-                        ImGui.ColorConvertFloat4ToU32(BgCardExpanded), 0f);
+                        ImGui.ColorConvertFloat4ToU32(BgCardExpanded), Radius.Small);
                     dl.AddRectFilled(new Vector2(panelMin.X + 1f, top + i * rowH),
                         new Vector2(panelMin.X + 3f, top + (i + 1) * rowH),
-                        ImGui.ColorConvertFloat4ToU32(AccentBlue), 0f);
+                        ImGui.ColorConvertFloat4ToU32(AccentBlue), Radius.Pill);
                 }
 
                 // A square for the job icon and two bars for a name and a world: the shape of a row
                 // rather than a caption pretending to be one.
                 dl.AddRectFilled(new Vector2(left, mid - 9f), new Vector2(left + 18f, mid + 9f),
-                    ImGui.ColorConvertFloat4ToU32(BorderHover), 0f);
+                    ImGui.ColorConvertFloat4ToU32(BorderHover), Radius.Tile);
                 dl.AddRectFilled(new Vector2(left + 28f, mid - 8f),
                     new Vector2(left + 28f + 104f * pop, mid - 2f),
-                    ImGui.ColorConvertFloat4ToU32(BorderHover), 0f);
+                    ImGui.ColorConvertFloat4ToU32(BorderHover), Radius.Pill);
                 dl.AddRectFilled(new Vector2(left + 28f, mid + 2f),
                     new Vector2(left + 28f + 62f * pop, mid + 7f),
-                    ImGui.ColorConvertFloat4ToU32(RuleHair), 0f);
+                    ImGui.ColorConvertFloat4ToU32(RuleHair), Radius.Pill);
 
                 if (!rating)
                 {
@@ -452,8 +452,8 @@ namespace PfPresets
             var max = new Vector2(min.X + side, min.Y + side);
             uint col = ImGui.ColorConvertFloat4ToU32(tint);
 
-            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), 0f);
-            dl.AddRect(min, max, col, 0f, 0, 1.2f);
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), Radius.Small);
+            dl.AddRect(min, max, col, Radius.Small, ImDrawFlags.None, 1.2f);
 
             float arrow = side * 0.52f;
             DrawRedditArrow(dl, new Vector2(min.X + (side - arrow) * 0.5f, min.Y + (side - arrow) * 0.5f),
@@ -492,7 +492,7 @@ namespace PfPresets
                 var max = new Vector2(left + box, mid + box * 0.5f);
                 dl.AddRect(min, max,
                     ImGui.ColorConvertFloat4ToU32(new Vector4(AccentGreen.X, AccentGreen.Y,
-                        AccentGreen.Z, 0.25f + 0.75f * pop)), 0f, 0, 1.4f);
+                        AccentGreen.Z, 0.25f + 0.75f * pop)), Radius.Chip, ImDrawFlags.None, 1.4f);
 
                 // Two strokes, written rather than stamped, inside the box rather than filling it.
                 var a = new Vector2(min.X + 4f, mid);
@@ -561,7 +561,8 @@ namespace PfPresets
             var max = at + size;
 
             dl.AddRectFilled(at, max, ImGui.ColorConvertFloat4ToU32(
-                hot ? new Vector4(1f, 1f, 1f, 1f) : new Vector4(0.93f, 0.94f, 0.96f, 1f)), 0f);
+                hot ? new Vector4(1f, 1f, 1f, 1f) : new Vector4(0.93f, 0.94f, 0.96f, 1f)),
+                Radius.Control);
 
             using (BodyFont.Push())
             {
@@ -589,7 +590,7 @@ namespace PfPresets
                 var max = new Vector2(min.X + segW, railY + 4f);
                 bool done = i <= welcomePage;
                 dl.AddRectFilled(min, max,
-                    ImGui.ColorConvertFloat4ToU32(done ? AccentBlue : BorderDefault), 0f);
+                    ImGui.ColorConvertFloat4ToU32(done ? AccentBlue : BorderDefault), Radius.Pill);
             }
 
             const float btnW = 112f, btnH = 32f;

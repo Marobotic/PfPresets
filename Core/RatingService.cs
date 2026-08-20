@@ -490,20 +490,14 @@ namespace PfPresets
             var candidates = encounters.EligibleToVote();
             var result = new List<Contact>(candidates.Count);
 
+            // A hidden player - banned, or opted out - is dropped before the list is built rather
+            // than shown and refused. The server rejects the vote either way, but offering somebody
+            // a button that always fails is worse than not offering it: nothing about the refusal
+            // would tell the voter why, and "the plugin is broken" is the reasonable conclusion.
             foreach (var c in candidates)
             {
-                if (LocalCooldownUntil(c.Identity) != null)
-                    continue;
-
-                // A hidden player - banned, or opted out - is dropped before the list is built
-                // rather than shown and refused. The server rejects the vote either way, but
-                // offering somebody a button that always fails is worse than not offering it:
-                // nothing about the refusal would tell the voter why, and "the plugin is broken" is
-                // the reasonable conclusion.
-                if (IsHidden(c.Identity))
-                    continue;
-
-                result.Add(c);
+                if (IsRateableNow(c.Identity))
+                    result.Add(c);
             }
 
             return result;
@@ -527,10 +521,28 @@ namespace PfPresets
         public bool HasMet(CharacterIdentity who) => encounters.HasMet(who);
 
         public bool CanRate(CharacterIdentity who)
-        {
-            if (!HasMet(who))
-                return false;
+            => HasMet(who) && IsRateableNow(who);
 
+        /// <summary>
+        /// Whether a rating button should be offered for someone the player has already met.
+        ///
+        /// THE ONE RULE, and it is one rule because it was two and they disagreed. The Ratings tab
+        /// dropped anybody the server had told us was hidden - banned, or opted out - and the
+        /// post-duty prompt only checked the local cooldown, so somebody who had opted out was
+        /// filtered out of one list and offered an up and a down arrow in the other.
+        ///
+        /// Answered from the rating cache, which is filled by <see cref="Prefetch"/> - the client
+        /// sends the roster, the server answers with each character's state, and this reads that
+        /// answer. An identity nobody has looked up yet reads as rateable, deliberately: the row
+        /// stands until the lookup lands and then goes, which is the right way round. Refusing to
+        /// draw anything until every answer is in would leave the prompt blank for a second after
+        /// every duty.
+        ///
+        /// It does not enforce anything. The server rejects a vote for a hidden character whatever
+        /// the client believes; this exists so nobody is shown a button that cannot work.
+        /// </summary>
+        public bool IsRateableNow(CharacterIdentity who)
+        {
             if (LocalCooldownUntil(who) != null)
                 return false;
 
@@ -604,6 +616,17 @@ namespace PfPresets
             // method, so this is the one place the rule cannot be routed around.
             if (!HasMet(target))
                 return new SubmitResult { Outcome = SubmitOutcome.NotMet };
+
+            // OPTED OUT, AND WE ALREADY KNOW IT. Checked here rather than only in the list builder,
+            // because the list is filtered from whatever the last lookup said and the lookup for a
+            // freshly met player lands a frame or two after the row is drawn - so there is a real
+            // window where the button exists for somebody who is out of this. The server refuses
+            // the vote either way; what this stops is the vote being cast at all, and with it the
+            // queue entry, the sealed evidence naming them, and the retry loop behind both.
+            //
+            // Deliberately not enqueued and not retried: an opt-out is not a transient failure.
+            if (Get(target) is { } known && (known.OptedOut || known.Hidden))
+                return new SubmitResult { Outcome = SubmitOutcome.OptedOut };
 
             if (LocalCooldownUntil(target) is { } until)
                 return new SubmitResult { Outcome = SubmitOutcome.OnCooldown, NextEligibleAt = until };
@@ -892,10 +915,24 @@ namespace PfPresets
         private readonly ConcurrentDictionary<string, byte> characterPending = new();
 
         /// <summary>
+        /// When a failed lookup may be retried. Absent unless the last attempt failed.
+        ///
+        /// Without this, a character the server refuses - one that doesn't exist, one that is
+        /// malformed - gets asked about again on every single call, because a miss clears
+        /// <see cref="characterPending"/> in its `finally` and leaves nothing behind to say "don't
+        /// bother". A panel that draws that character every frame turned one bad name into a
+        /// lookup every frame, forever, which is what actually blew through the server's rate
+        /// limit on 2026-08-15 - not a person clicking a lot, a retry with no memory of failing.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, DateTime> characterRetryAfter = new();
+
+        /// <summary>
         /// Job and level for a character, or null until it arrives.
         ///
         /// Safe to call every frame: a miss queues one fetch and returns null, and the server
-        /// answers from its own cache after the first viewer anywhere has looked.
+        /// answers from its own cache after the first viewer anywhere has looked. A miss that
+        /// FAILED is remembered for a while too - see <see cref="characterRetryAfter"/> - so a
+        /// character the server keeps refusing is asked about once, not every frame.
         /// </summary>
         public CharacterInfo? CharacterFor(CharacterIdentity who)
         {
@@ -926,13 +963,22 @@ namespace PfPresets
                 return local;
             }
 
+            var fallback = knownJob == 0
+                ? null
+                : new CharacterInfo { Name = who.Name, World = who.World, JobId = knownJob };
+
+            if (characterRetryAfter.TryGetValue(who.Key, out var retryAt) && DateTime.UtcNow < retryAt)
+            {
+                // Still in the cooldown from the last refusal. Same answer as "a lookup is already
+                // running" below - show whatever is known and do not touch the network.
+                return fallback;
+            }
+
             if (!characterPending.TryAdd(who.Key, 0))
             {
                 // A lookup is already running. Show the stale job rather than nothing while it
                 // does - an icon that is a week old beats an empty space.
-                return knownJob == 0
-                    ? null
-                    : new CharacterInfo { Name = who.Name, World = who.World, JobId = knownJob };
+                return fallback;
             }
 
             _ = Task.Run(async () =>
@@ -943,16 +989,29 @@ namespace PfPresets
                     if (result.IsOk && result.Value != null)
                     {
                         characters[who.Key] = result.Value;
+                        characterRetryAfter.TryRemove(who.Key, out _);
 
                         // Written back so the week's grace starts now and survives a reload.
                         // Flagged as not-from-game, so a later sighting in a party overrides it.
                         players.RememberJob(who, result.Value.JobId, fromGame: false);
                         players.FlushIfDue();
                     }
+                    else
+                    {
+                        // RateLimited carries the server's own wait; every other refusal - a
+                        // character that doesn't exist, one the server rejects as malformed, an
+                        // offline provider - gets the same cooldown ratings misses already use, so
+                        // this doesn't invent a second policy for "unknown for now".
+                        characterRetryAfter[who.Key] = DateTime.UtcNow
+                            + (result.Status == ApiStatus.RateLimited
+                                ? (result.RetryAfter ?? NegativeCacheTtl)
+                                : NegativeCacheTtl);
+                    }
                 }
                 catch (Exception ex)
                 {
                     log.Debug($"[Ratings] Character lookup failed: {ex.Message}");
+                    characterRetryAfter[who.Key] = DateTime.UtcNow + NegativeCacheTtl;
                 }
                 finally
                 {
@@ -960,9 +1019,7 @@ namespace PfPresets
                 }
             });
 
-            return knownJob == 0
-                ? null
-                : new CharacterInfo { Name = who.Name, World = who.World, JobId = knownJob };
+            return fallback;
         }
 
         /// <summary>
@@ -1196,19 +1253,36 @@ namespace PfPresets
             if (!moved && !due)
                 return;
 
+            // STAMPED ONLY IF THE READ ACTUALLY WENT OUT.
+            //
+            // These two lines used to run before the call and unconditionally, which quietly broke
+            // the whole panel whenever a request happened to already be in flight: RequestPartyProgress
+            // returns without doing anything while progressFetching is set, but the signature had
+            // already been recorded as read. From then on `moved` is false for this party, and
+            // `due` needs AnythingQueued() - which is false, because nothing was ever asked. So the
+            // panel never reads again for that party and every member sits on "Fetch" for the rest
+            // of the evening, including people the server has answers for.
+            //
+            // It looked like a caching problem and it is an ordering one. Two frames is all it
+            // takes: the panel opening while a press from the previous party is still resolving.
+            if (!RequestPartyProgress(dutyName, party, refresh: false))
+                return;
+
             progressReadFor = signature;
             progressReadAt = DateTime.UtcNow;
-            RequestPartyProgress(dutyName, party, refresh: false);
         }
 
-        public void RequestPartyProgress(string dutyName,
+        /// <summary>Whether the request actually went out. A caller that records having read must
+        /// only do so on a true - see EnsureProgressLoaded for what happens when it does not.
+        /// </summary>
+        public bool RequestPartyProgress(string dutyName,
             IReadOnlyList<(CharacterIdentity Who, string Region)> party, bool refresh = true)
         {
             if (progressFetching || party.Count == 0 || string.IsNullOrWhiteSpace(dutyName))
-                return;
+                return false;
 
             if (refresh && !ProgressButtonReady)
-                return;
+                return false;
 
             progressFetching = true;
             progressNote = null;
@@ -1236,10 +1310,11 @@ namespace PfPresets
             if (players.Count == 0)
             {
                 progressFetching = false;
-                return;
+                return false;
             }
 
             Send(dutyName, players, refresh, merge: false, () => progressFetching = false);
+            return true;
         }
 
         /// <summary>

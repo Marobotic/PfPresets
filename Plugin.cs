@@ -37,7 +37,15 @@ namespace PfPresets
         private readonly PfApiClient ratingApi;
         private readonly RatingService ratingService;
         private readonly DutyTracker dutyTracker;
+
+        /// <summary>Publishes this character's own presence in a party finder listing, and reads
+        /// back who else has published theirs.</summary>
+        private readonly PfCrowdsource pfCrowdsource;
 #endif
+
+        /// <summary>Reads the listing window's own data. Outside the ratings guard: it asks the
+        /// server nothing and stores nothing about anybody, so it is not part of that system.</summary>
+        private readonly ListingXray listingXray;
 
         public Plugin(
             IDalamudPluginInterface pluginInterface,
@@ -54,7 +62,8 @@ namespace PfPresets
             ITargetManager targetManager,
             ICondition condition,
             ISigScanner sigScanner,
-            IDutyState dutyState)
+            IDutyState dutyState,
+            IGameInteropProvider interop)
         {
             this.pluginInterface = pluginInterface;
             this.commandManager = commandManager;
@@ -127,6 +136,18 @@ namespace PfPresets
 
             // A character switch must not carry the previous character's session over.
             clientState.Login += this.ratingApi.OnCharacterChanged;
+#endif
+
+            this.listingXray = new ListingXray(
+                this.pluginInterface, interop, pluginLog,
+                () => this.config.ListingDetailsEnabled);
+#if PFP_RATINGS
+            // Suppressed by PFRadar for the same reason the panel is: it already does this, and two
+            // plugins publishing the same party is two rows saying the same thing.
+            this.pfCrowdsource = new PfCrowdsource(
+                this.ratingApi, this.config, pluginLog, this.pfAutomation, this.worldHelper,
+                () => GetLocalIdentity(clientState, playerState),
+                () => this.listingXray.SuppressedByPfRadar);
 
             // The server holds the opt-out, not the config file - that is the whole promise made to
             // somebody who turns ratings off, since a fresh install defaults to on. Asked once per
@@ -137,6 +158,13 @@ namespace PfPresets
 
             // Initialize UI
             this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, textureProvider);
+
+            // AFTER the UI exists, not beside where the service is built. Assigning this next to the
+            // constructor above read better and dereferenced a field that is not set until here.
+            this.ui.Listings = this.listingXray;
+#if PFP_RATINGS
+            this.ui.Crowd = this.pfCrowdsource;
+#endif
 
 #if PFP_RATINGS
             this.ui.Ratings = this.ratingService;
@@ -157,6 +185,12 @@ namespace PfPresets
             // And the achievements feed. Every finished duty is offered; the server decides which
             // ones are worth a post and says no to nearly all of them, silently.
             this.dutyTracker.EncounterCompleted += this.ratingService.PostAchievement;
+
+            // Combat is the service's one reason to hold a filed duty back - see
+            // TickPendingDuties. Handed in as a predicate rather than a reference to the automation
+            // layer, because that is the only thing it needs to know and the rating service has no
+            // other business with the game's condition flags.
+            this.ratingService.InCombat = () => this.pfAutomation.IsInCombat();
 #endif
 
             // Anonymous usage counts. Constructed last and entirely fire-and-forget: it never
@@ -309,6 +343,36 @@ namespace PfPresets
                 return;
             }
 
+            // "/pfpdebug criteria" reads the recruitment window's own answer back out.
+            //
+            // THE ONE THING THAT CANNOT BE WORKED OUT FROM THE SHEETS. The duty field is a single
+            // ushort read against whatever category the listing carries, and for most categories it
+            // is a ContentFinderCondition row - which the sheets give us. For Crystalline Conflict
+            // and for a FATE location they are not: those two are a ContentRoulette row and a
+            // TerritoryType row in the game's data, and neither number is what the field wants.
+            // Guessing has now cost several attempts, and the client already knows the answer.
+            //
+            // Set the criteria by hand in the game's own window - PvP then Crystalline Conflict, or
+            // FATEs then a zone - and run this before pressing Recruit. It prints the two numbers
+            // the client put there.
+            if (args.Trim().Equals("criteria", StringComparison.OrdinalIgnoreCase))
+            {
+                var lfg = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
+                if (lfg == null)
+                {
+                    chatGui.Print("[PF Analysis Debug] Party Finder agent not available.");
+                    return;
+                }
+
+                var stored = lfg->StoredRecruitmentInfo;
+                chatGui.Print("[PF Analysis Debug] Recruitment criteria as the client has them:");
+                chatGui.Print($"  SelectedCategory = {(uint)stored.SelectedCategory} ({stored.SelectedCategory})");
+                chatGui.Print($"  SelectedDutyId   = {stored.SelectedDutyId}");
+                chatGui.Print($"  Objective        = {(uint)stored.Objective} ({stored.Objective})");
+                chatGui.Print($"  SlotsInMainParty = {stored.NumberOfSlotsInMainParty}");
+                return;
+            }
+
             var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
             if (agent == null)
             {
@@ -319,7 +383,7 @@ namespace PfPresets
             chatGui.Print("[PF Analysis Debug] Agent fields:");
             chatGui.Print($"  OwnListingId: {agent->OwnListingId}");
             chatGui.Print($"  ListingContentId: {agent->ListingContentId}");
-            chatGui.Print($"  ListingAccountId: {agent->ListingAccountId}");
+            chatGui.Print($"  ListingAccountId: {agent->ListingAccountIdUInt64}");
             chatGui.Print($"  NumberOfListingsDisplayed: {agent->NumberOfListingsDisplayed}");
             chatGui.Print($"  CategoryTab: {agent->CategoryTab}");
             chatGui.Print($"  GroupTypeTab: {agent->GroupTypeTab}");
@@ -347,6 +411,21 @@ namespace PfPresets
             this.pfAutomation.UpdateAutoRefresher(this.framework.UpdateDelta.TotalMinutes);
             this.pfAutomation.UpdateLockedSlotAdjuster();
             this.pfAutomation.UpdateListingWatch();
+
+            // Cheap, and throttles its own expensive half. Done here rather than from a draw call
+            // so the hook follows the setting even while no window of ours is open.
+            this.listingXray.Sync();
+
+#if PFP_RATINGS
+            // Framework rather than draw, for the same reason: a listing goes up and comes down
+            // whether or not any window of ours is open, and a report that only refreshed while
+            // somebody was looking at the plugin would be wrong exactly when it mattered.
+            this.pfCrowdsource.Tick();
+
+            // Drains at most one filed duty per frame, and only out of combat. Returns on a count
+            // check the rest of the time.
+            this.ratingService.TickPendingDuties();
+#endif
         }
 
 #if PFP_RATINGS
@@ -392,6 +471,17 @@ namespace PfPresets
         {
             DisposePanel();
             this.framework.Update -= OnFrameworkUpdate;
+
+            // Before the UI goes, so nothing can be mid-draw against a snapshot while the hook that
+            // produced it is being torn down.
+            this.listingXray.Dispose();
+
+#if PFP_RATINGS
+            // Takes our row down on the way out. Unloading the plugin is a clearer "I am no longer
+            // publishing this" than letting the row sit until the server expires it, and somebody
+            // looking at that listing stops being told we are in a party we have left.
+            this.pfCrowdsource.Withdraw();
+#endif
 
             this.pluginInterface.UiBuilder.Draw -= this.ui.Draw;
             this.pluginInterface.UiBuilder.OpenMainUi -= this.ui.ToggleMainWindow;

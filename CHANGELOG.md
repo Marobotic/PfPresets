@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.5.0
+
+### Updates
+
+We now have two layouts: portrait and landscape.
+
+Overhauled UI and UX improvements across the entire plugin.
+
+Updated fonts, resized icons and buttons, and rounded corners everywhere.
+
+Adjusted the role table so that if auto-select jobs is disabled, it defaults to the default roles instead of leaving every slot as FFA.
+
+Added a spoiler button in settings to hide and lock any duty that your current character hasn't unlocked yet. This also prevents applying presets for locked duties. You can disable the setting to show the duty names, but you can keep it on if you don't want spoilers for duties you haven't unlocked.
+
+The PF Analysis button now hides if you open the native in-game recruitment criteria or browse listings.
+
+Clears now have notifications for each new clear that pops up, so you can keep track if someone else clears an ultimate. Hearting them is now locked to your character, and it's a toggle — you can remove the heart.
+
+FATEs and The Hunt now force "limit recruiting to my world" on, and restore your previous setting when you switch to a different category.
+
+Hidden duty categories for content we don't currently support until they can be fixed at a later time.
+
+Language selectors in PF preset letters are now centered.
+
+### Bugs Fixed
+
+Fixed a bug where presets were saved without pressing Save. Now they only save when you press Save.
+
+Fixed a bug where dungeons showed as full party. Now content is correctly set to light party for instances with a light party limit.
+
+Fixed a bug where Omit didn't work as intended and failed to omit the role.
+
+---
+
 ## 3.3.5
 
 **Overlay button positioning now respects multi-monitor and windowed setups.** Buttons anchored to game windows (like *PF Analysis* beside Recruit Members and *Save as Preset*) now map game coordinates to virtual desktop space correctly, preventing alignment drift on non-primary monitors or windowed modes. Added `/pfpdebug overlay` diagnostic.

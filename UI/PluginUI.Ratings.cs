@@ -200,8 +200,9 @@ namespace PfPresets
                 glyph = ImGui.CalcTextSize(FontAwesomeIcon.Star.ToIconString()).X;
 
             // Icons only: the badge is drawn over the icon's corner rather than beside it, so it
-            // costs no width. At this tier there is not room for a number either, which is why it
-            // becomes a plain mark - the same thing a phone does to a home screen icon.
+            // costs no width - the same thing a phone does to a home screen icon. It still carries
+            // its number there; overlaying is about width, not about what the badge is allowed to
+            // say.
             if (!withLabel)
                 return glyph + pad * 2f;
 
@@ -224,8 +225,7 @@ namespace PfPresets
         /// </summary>
         private float BetaChipWidth()
         {
-            using (UiLabelFont.Push())
-                return ImGui.CalcTextSize("BETA").X + 8f;
+            return ChipWidth("BETA");
         }
 
         // ── The unread badge ──────────────────────────────────────
@@ -275,7 +275,7 @@ namespace PfPresets
             if (p == null || !PollAvailable || string.IsNullOrEmpty(p.Slug))
                 return (TabBadge.None, string.Empty);
 
-            if (activeTab == MainTab.Vote && !isMinimized)
+            if (activeTab == MainTab.Vote)
                 return (TabBadge.None, string.Empty);
 
             return string.Equals(config.PollSeenSlug, p.Slug, StringComparison.Ordinal)
@@ -321,7 +321,7 @@ namespace PfPresets
             // MINIMISED IS NOT "ON THE TAB". The collapsed bar draws no body, so somebody who left
             // the window on Achievements and shrank it is not reading anything - and would
             // otherwise be the one person the badge never appears for, which is backwards.
-            if (activeTab == MainTab.Achievements && !isMinimized)
+            if (activeTab == MainTab.Achievements)
                 return (TabBadge.None, string.Empty);
 
             if (ratings.FeedNeverSeen)
@@ -339,6 +339,29 @@ namespace PfPresets
 
         /// <summary>What the badge needs, including the gap in front of it. Zero when there is
         /// none, so every caller can add it unconditionally.</summary>
+        /// <summary>
+        /// The badge's diameter - what a one-digit count is drawn as, in both layouts.
+        ///
+        /// Taken from the label face rather than fixed, so it stays in proportion if the type scale
+        /// moves. Both the sidebar and the phone's tab bar draw through here, which is why they can
+        /// no longer be two different shapes.
+        /// </summary>
+        private float BadgeCountSize()
+        {
+            using (UiLabelFont.Push())
+                return MathF.Max(16f, MathF.Round(ImGui.GetTextLineHeight()) + 5f);
+        }
+
+        /// <summary>How wide the badge ends up: the diameter, or more when the number is longer
+        /// than one digit and would otherwise touch the edges.</summary>
+        private float BadgeCountWidth(string text)
+        {
+            float diameter = BadgeCountSize();
+
+            using (UiLabelFont.Push())
+                return MathF.Max(diameter, ImGui.CalcTextSize(text).X + 10f);
+        }
+
         private float BadgeWidth((TabBadge Kind, string Text) badge)
         {
             if (badge.Kind == TabBadge.None)
@@ -348,15 +371,15 @@ namespace PfPresets
                 return 6f + BadgeDotSize;
 
             using (UiLabelFont.Push())
-                return 6f + ImGui.CalcTextSize(badge.Text).X + 8f;
+                return 6f + BadgeCountWidth(badge.Text);
         }
 
         /// <summary>
-        /// The badge itself: a filled block in the negative red, with the count on it.
+        /// The badge itself: a filled capsule in the negative red, with the count on it.
         ///
-        /// Square, like everything else here. A rounded pill is what this is everywhere else in
-        /// software and it would be the only rounded thing in the plugin - the colour is doing the
-        /// work, and it does it just as well with corners.
+        /// A pill, which is what this is everywhere else in software. It used to be a square block,
+        /// back when nothing in the plugin was round; a badge is the one shape people read without
+        /// looking at, and there was never a reason for ours to be the odd one.
         /// </summary>
         private void DrawTabBadge(ImDrawListPtr dl, (TabBadge Kind, string Text) badge, Vector2 pos,
             float height)
@@ -369,38 +392,40 @@ namespace PfPresets
             if (badge.Kind == TabBadge.Dot)
             {
                 var top = new Vector2(pos.X + 6f, pos.Y + (height - BadgeDotSize) * 0.5f);
-                dl.AddRectFilled(top, new Vector2(top.X + BadgeDotSize, top.Y + BadgeDotSize), fill);
+                dl.AddCircleFilled(new Vector2(top.X + BadgeDotSize * 0.5f, top.Y + BadgeDotSize * 0.5f),
+                    BadgeDotSize * 0.5f, fill);
                 return;
             }
 
             using (UiLabelFont.Push())
             {
                 Vector2 size = ImGui.CalcTextSize(badge.Text);
-                var min = new Vector2(pos.X + 6f, pos.Y + (height - size.Y - 4f) * 0.5f);
-                var max = new Vector2(min.X + size.X + 8f, min.Y + size.Y + 4f);
+                float diameter = BadgeCountSize();
+                float w = BadgeCountWidth(badge.Text);
 
-                dl.AddRectFilled(min, max, fill);
+                var min = new Vector2(pos.X + 6f, pos.Y + (height - diameter) * 0.5f);
+                var max = new Vector2(min.X + w, min.Y + diameter);
+
+                // A CIRCLE FOR ONE DIGIT, a capsule only when the number needs the room.
+                //
+                // The badge used to be sized entirely from its text - width from the glyph, height
+                // from the line - so "1" came out a few pixels narrower than it was tall and read
+                // as an egg. A count badge is a dot with a number in it; the dot decides the size
+                // and the number is what has to fit inside, not the other way round.
+                dl.AddRectFilled(min, max, fill, diameter * 0.5f);
 
                 // Ink rather than OnAccent: this fill is a fixed red, not the player's accent, so
                 // the text on it does not have to survive somebody choosing a pale one.
-                dl.AddText(new Vector2(min.X + 4f, min.Y + 2f),
+                dl.AddText(new Vector2(min.X + (w - size.X) * 0.5f,
+                                       min.Y + (diameter - size.Y) * 0.5f),
                     ImGui.ColorConvertFloat4ToU32(Ink), badge.Text);
             }
         }
 
         private void DrawBetaChip(ImDrawListPtr dl, Vector2 pos, float height, float alpha)
         {
-            using (UiLabelFont.Push())
-            {
-                Vector2 size = ImGui.CalcTextSize("BETA");
-                var min = new Vector2(pos.X, pos.Y + (height - size.Y - 4f) * 0.5f);
-                var max = new Vector2(min.X + size.X + 8f, min.Y + size.Y + 4f);
-
-                dl.AddRect(min, max,
-                    ImGui.ColorConvertFloat4ToU32(BorderControl with { W = alpha }), 0f, 0, 1f);
-                dl.AddText(new Vector2(min.X + 4f, min.Y + 2f),
-                    ImGui.ColorConvertFloat4ToU32(TextMuted with { W = alpha }), "BETA");
-            }
+            DrawChip(new Vector2(pos.X, pos.Y + (height - ChipHeight) * 0.5f),
+                "BETA", Dim with { W = alpha });
         }
 
         private void DrawNavTab(ImDrawListPtr dl, string label, FontAwesomeIcon icon, MainTab tab,
@@ -468,28 +493,63 @@ namespace PfPresets
             {
                 DrawIconCentered(icon, pos, size, color);
 
-                // Over the icon's top-right corner, and always as a mark: a cell this narrow has no
-                // room for a number, and "there is something in here" is the whole message anyway.
+                // Over the icon's top-right corner, overlaid rather than beside it, so it still
+                // costs the strip no width at the tier that has none to spare.
+                //
+                // THE NUMBER SURVIVES HERE. It used to flatten to a plain mark on the grounds that
+                // a cell this narrow has no room for one - but "3" is barely wider than the mark it
+                // replaced, and a count is the entire reason anybody looks at this badge. A window
+                // narrow enough to drop the labels is not a window that stopped caring how many
+                // clears it missed. Only the never-opened dot stays a mark, because it has no
+                // number to show in the first place.
                 if (badge.Kind != TabBadge.None)
                 {
                     float glyph;
                     using (pluginInterface.UiBuilder.IconFontHandle.Push())
                         glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
 
-                    var corner = new Vector2(
-                        pos.X + (size.X + glyph) * 0.5f - BadgeDotSize * 0.5f,
-                        pos.Y + size.Y * 0.5f - ImGui.GetTextLineHeight() * 0.5f - 2f);
+                    float iconRight = pos.X + (size.X + glyph) * 0.5f;
+                    float topY = pos.Y + size.Y * 0.5f - ImGui.GetTextLineHeight() * 0.5f - 2f;
+                    uint fill = ImGui.ColorConvertFloat4ToU32(Negative);
 
-                    dl.AddRectFilled(corner,
-                        new Vector2(corner.X + BadgeDotSize, corner.Y + BadgeDotSize),
-                        ImGui.ColorConvertFloat4ToU32(Negative));
+                    if (badge.Kind == TabBadge.Dot)
+                    {
+                        var corner = new Vector2(iconRight - BadgeDotSize * 0.5f, topY);
+                        dl.AddRectFilled(corner,
+                            new Vector2(corner.X + BadgeDotSize, corner.Y + BadgeDotSize), fill);
+                    }
+                    else
+                    {
+                        using (UiLabelFont.Push())
+                        {
+                            Vector2 ts = ImGui.CalcTextSize(badge.Text);
+                            float w = ts.X + 6f;
+                            float h = ts.Y + 2f;
+
+                            // Clamped inside the cell. "99+" against the right-hand tab would
+                            // otherwise hang off the strip's end, and a badge that draws outside
+                            // its own tab is a badge on the wrong tab.
+                            float x = Math.Min(iconRight - 2f, pos.X + size.X - w - 1f);
+                            x = Math.Max(x, pos.X + 1f);
+
+                            var min = new Vector2(x, topY);
+                            dl.AddRectFilled(min, new Vector2(min.X + w, min.Y + h), fill);
+
+                            // Ink for the same reason the counted badge uses it: this fill is a
+                            // fixed red, not the player's accent.
+                            dl.AddText(new Vector2(min.X + 3f, min.Y + 1f),
+                                ImGui.ColorConvertFloat4ToU32(Ink), badge.Text);
+                        }
+                    }
                 }
 
                 if (hovered)
                 {
                     string tip = tab == MainTab.Achievements ? $"{label} (beta)" : label;
 
-                    // The mark cannot say how many, so this is where the number lives at this tier.
+                    // The badge carries the number now, so this is the wording rather than the
+                    // count: "12" on the icon and "12 new" here say the same thing, and the tier
+                    // with no label is the one where the word is worth spelling out.
                     if (badge.Kind == TabBadge.Count)
                         tip += $" - {badge.Text} new";
                     else if (badge.Kind == TabBadge.Dot)
@@ -539,6 +599,10 @@ namespace PfPresets
         private const float ProfilePaneWidth = 320f;
         private const float RatingsSplitMinWidth = 760f;
 
+        /// <summary>The margin the tab leaves either side of itself, matching the Recruit tab's.
+        /// </summary>
+        private const float RatingsGutter = 12f;
+
         /// <summary>
         /// The My Profile tab: who you can still rate on the left, and a character on the right.
         ///
@@ -558,7 +622,11 @@ namespace PfPresets
 
             DrawRatingSearchBar();
 
-            float bodyWidth = ImGui.GetWindowWidth() - 16;
+            // Equal margins either side. The body used to start at the window's left edge and
+            // stop 16px short of the right, so the whole tab sat visibly off-centre - and the
+            // right-hand list, being the column against that edge, was the one that showed it.
+            float bodyWidth = ImGui.GetWindowWidth() - RatingsGutter * 2f;
+            ImGui.SetCursorPosX(RatingsGutter);
             ImGui.BeginChild("RatingsBody", new Vector2(bodyWidth, 0), false);
             try
             {
@@ -606,12 +674,19 @@ namespace PfPresets
                 // scrolling back either.
                 profileScrollPending = false;
 
-                float listWidth = bodyWidth - ProfilePaneWidth - 18f;
+                // THE PROFILE IS ON THE LEFT, and it gets the larger half.
+                //
+                // It was on the right in a fixed 320px column, with the lists filling everything to
+                // its left - which put the tab's subject in the margin and gave the majority of a
+                // 900px body to two lists of names. The tab is called My Profile; the card is what
+                // it is for, and it is the thing with something to show at that size.
+                float profileWidth = MathF.Max(ProfilePaneWidth, (bodyWidth - 18f) * 0.54f);
+                float listWidth = bodyWidth - profileWidth - 18f;
 
-                ImGui.BeginChild("RatingsListColumn", new Vector2(listWidth, -1), false);
+                ImGui.BeginChild("RatingsProfileColumn", new Vector2(profileWidth, -1), false);
                 try
                 {
-                    DrawRatingLists();
+                    DrawProfilePane(compact: false);
                 }
                 finally
                 {
@@ -620,10 +695,10 @@ namespace PfPresets
 
                 ImGui.SameLine(0, 18);
 
-                ImGui.BeginChild("RatingsProfileColumn", new Vector2(ProfilePaneWidth, -1), false);
+                ImGui.BeginChild("RatingsListColumn", new Vector2(listWidth, -1), false);
                 try
                 {
-                    DrawProfilePane(compact: false);
+                    DrawRatingLists();
                 }
                 finally
                 {
@@ -651,9 +726,16 @@ namespace PfPresets
 
             bool searched = ratingSearchTarget != null;
 
+            DrawListHeading(searched ? "Looked up" : "Your profile");
+
             // No measured height in either layout: the card sizes itself to its contents now, so
             // "compact" is simply the same card in a narrower column.
             DrawProfileCard(who, showBack: searched);
+
+            // And room beneath it. The card is the last thing in this column, so without a spacer
+            // its lower edge is the window's - a rounded corner sitting flush against the frame,
+            // which reads as the card having been cut off rather than as the column ending.
+            ImGui.Dummy(new Vector2(0, Space.Gutter));
         }
 
         /// <summary>
@@ -682,24 +764,27 @@ namespace PfPresets
             // Recruit. A heading with nothing under it is a promise the tab does not keep.
             if (eligible is { Count: > 0 })
             {
-                ImGui.Indent(8);
                 DrawListHeading("You can still rate these");
-                ImGui.Unindent(8);
 
-                DrawSkipAll(eligible.Count);
-
-                if (Ratings != null)
+                DrawListCard(() =>
                 {
-                    var identities = new List<CharacterIdentity>(eligible.Count);
-                    foreach (var c in eligible)
-                        identities.Add(c.Identity);
-                    Ratings.Prefetch(identities);
-                }
+                    DrawSkipAll(eligible.Count);
 
-                foreach (var contact in eligible)
-                    DrawRateRow(contact);
+                    if (Ratings != null)
+                    {
+                        var identities = new List<CharacterIdentity>(eligible.Count);
+                        foreach (var c in eligible)
+                            identities.Add(c.Identity);
+                        Ratings.Prefetch(identities);
+                    }
 
-                DrawRatingStatusLine();
+                    foreach (var contact in eligible)
+                        DrawRateRow(contact);
+
+                    DrawRatingStatusLine();
+                });
+
+                ImGui.Dummy(new Vector2(0, 12));
             }
 
             DrawRecentPlayers();
@@ -714,7 +799,7 @@ namespace PfPresets
         /// </summary>
         private void DrawSkipAll(int waiting)
         {
-            ImGui.Indent(8);
+            ImGui.Indent(HoverRowTextInset);
 
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(TextMuted, waiting == 1 ? "1 person to rate" : $"{waiting} people to rate");
@@ -745,9 +830,6 @@ namespace PfPresets
             if (recent == null || recent.Count == 0)
                 return;
 
-            ImGui.Dummy(new Vector2(0, 6));
-            ImGui.Indent(8);
-
             // How many of them are on screen is a fact about the list, not about the people in it,
             // and search finds anyone below the cut anyway - so it lives on the heading's "?"
             // rather than as a line of its own.
@@ -761,14 +843,14 @@ namespace PfPresets
                         + "here - search for them by name."
                     : null);
 
-            ImGui.Unindent(8);
-            ImGui.Dummy(new Vector2(0, 2));
-
             clickedProfile = null;
             recentRatingBatch.Clear();
 
-            foreach (var entry in recent)
-                DrawRecentPlayerRow(entry);
+            DrawListCard(() =>
+            {
+                foreach (var entry in recent)
+                    DrawRecentPlayerRow(entry);
+            });
 
             // One request for the rows the reader can actually see, after they have all been
             // drawn. Prefetch skips anything already fresh, so a list held still costs nothing
@@ -879,7 +961,13 @@ namespace PfPresets
             // The same height as a vote row above it. The two lists are one column - one at 32px
             // and one at 42px read as a list and a footnote, and the earlier players are not a
             // footnote.
-            DrawHoverRow($"recent{entry.Key}", rightEdge =>
+            // Inset past the job icon, which is what leads the row - see DrawRowIdentity for where
+            // that width comes from.
+            float identityInset;
+            using (UiRowNameFont.Push())
+                identityInset = 8f + ImGui.GetTextLineHeight() + 10f + 9f;
+
+            DrawHoverRow($"recent{entry.Key}", separatorInset: identityInset, body: rightEdge =>
             {
                 Vector2 start = ImGui.GetCursorScreenPos();
 
@@ -1173,7 +1261,7 @@ namespace PfPresets
                 return;
 
             ImGui.Dummy(new Vector2(0, 4));
-            ImGui.Indent(8);
+            ImGui.Indent(HoverRowTextInset);
             ImGui.PushTextWrapPos(ImGui.GetWindowWidth() - 24);
             ImGui.TextColored(AccentYellow, ratingStatusMessage);
             ImGui.PopTextWrapPos();
@@ -1182,28 +1270,33 @@ namespace PfPresets
 
         private void DrawRatingSearchBar()
         {
-            const float barHeight = 52f;
+            // THE SAME BAR THE RECRUIT TAB HAS, from the same two numbers.
+            //
+            // This was 52px tall holding a 36px field while Recruit was 64 holding 40, so the two
+            // searches sat at different heights and started at different distances from the top of
+            // their tab - which is visible the moment you switch between them.
+            const float barHeight = ToolbarHeight;
 
             Vector2 origin = ImGui.GetCursorScreenPos();
             float width = ImGui.GetWindowWidth();
             float winX = ImGui.GetWindowPos().X;
 
-            float controlY = origin.Y + (barHeight - ButtonHeight) * 0.5f;
-            ImGui.SetCursorScreenPos(new Vector2(winX + 12f, controlY));
+            float controlY = origin.Y + (barHeight - ToolbarButtonHeight) * 0.5f;
+            ImGui.SetCursorScreenPos(new Vector2(winX + SearchBarInset, controlY));
 
             // The same field the Recruit toolbar uses, and for the same reason it exists as a
             // shared widget at all: two searches that look different are two searches to learn.
             if (DrawSearchFieldSubmit("SearchPlayer", "Search someone you've met, or Name@World",
-                    ref ratingSearchInput, width - 24f, ButtonHeight))
+                    ref ratingSearchInput, width - SearchBarInset * 2f, ToolbarButtonHeight))
             {
                 RunPlayerSearch();
             }
 
             RefreshSearchSuggestions();
 
+            // No rule under it, matching the Recruit toolbar. The search sits on the ground and
+            // the cards below it are separated by the gap, not by a line across the tab.
             ImGui.SetCursorScreenPos(new Vector2(winX, origin.Y + barHeight));
-            DrawRuleStrong();
-            ImGui.SetCursorScreenPos(new Vector2(winX + 8f, origin.Y + barHeight + 8f));
         }
         private void RefreshSearchSuggestions()
         {

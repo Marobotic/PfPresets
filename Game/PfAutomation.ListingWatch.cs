@@ -130,6 +130,26 @@ namespace PfPresets
             if (disposed || openPartyFinder == null)
                 return;
 
+            // TAKEN EVERY FRAME, AHEAD OF THE THROTTLE BELOW.
+            //
+            // This is the only moment our own listing's real countdown exists - while its detail
+            // window is open - and it was never being taken at all: CaptureListingTimeLeft had no
+            // callers, so ComputeTimeLeft always fell through to counting an hour down from when
+            // recruitment was first seen. That estimate is close on a listing this client watched
+            // go up and pure guesswork on one it inherited from a plugin reload, and either way it
+            // was the only figure the card ever showed.
+            //
+            // Cheap enough to sit outside the watch throttle: it reads one field off an agent that
+            // is already resolved, and bails immediately unless the listing on screen is ours.
+            try
+            {
+                CaptureListingTimeLeft();
+            }
+            catch (Exception)
+            {
+                // A memory read for a convenience is never worth taking the plugin down.
+            }
+
             long now = Environment.TickCount64;
 
             // Nothing is reading the listing, so nothing needs fetching. This is the check that
@@ -356,8 +376,28 @@ namespace PfPresets
                 : DateTime.UtcNow - capturedLeaderAt < ListingLifetime;
         }
 
-        /// <summary>What's left of the captured listing's hour, counted down from the moment it was
-        /// read, or null when it carried no countdown worth trusting.</summary>
+        /// <summary>The last reading of LastViewedListing.TimeLeft, and the moment it was taken.
+        ///
+        /// Both, because one without the other is what made the countdown wrong. See below.</summary>
+        private uint lastSeenListingSeconds;
+        private DateTime lastSeenListingAt;
+
+        /// <summary>
+        /// What's left of the captured listing's hour, or null when it carried no countdown worth
+        /// trusting.
+        ///
+        /// THE READING AND THE MOMENT IT WAS TAKEN HAVE TO COME FROM THE SAME INSTANT.
+        ///
+        /// This used to read TimeLeft live on every call and then age it by the time since
+        /// capturedLeaderAt - the moment the listing was first captured, minutes earlier. The
+        /// game's field is not frozen while a detail window is open; it ticks down. So the elapsed
+        /// time was being subtracted twice: once by the game, once by us. With the listing window
+        /// open beside the plugin, the game read "54 minutes remaining" and the card said 52.
+        ///
+        /// Re-stamping on change is what fixes it. While the window is open the value moves, so the
+        /// stamp keeps up and the answer is whatever the game just said. Once the window closes the
+        /// value stops moving, the stamp stops being renewed, and ageing from it is exactly right.
+        /// </summary>
         internal unsafe TimeSpan? CapturedListingTimeLeft()
         {
             var agent = AgentLookingForGroup.Instance();
@@ -368,7 +408,13 @@ namespace PfPresets
             if (frozen == 0 || frozen > ListingLifetime.TotalSeconds)
                 return null;
 
-            return TimeSpan.FromSeconds(frozen) - (DateTime.UtcNow - capturedLeaderAt);
+            if (frozen != lastSeenListingSeconds)
+            {
+                lastSeenListingSeconds = frozen;
+                lastSeenListingAt = DateTime.UtcNow;
+            }
+
+            return TimeSpan.FromSeconds(frozen) - (DateTime.UtcNow - lastSeenListingAt);
         }
 
         private void NoteCapturedListing(ulong leaderId)

@@ -150,8 +150,8 @@ namespace PfPresets
 
         /// <summary>
         /// Forces an imported preset into a state the rest of the plugin can trust: fresh identity,
-        /// eight slots, and every numeric field inside the range its UI allows. A share code is just
-        /// bytes someone pasted, so nothing in it is assumed to be in range.
+        /// a workable number of slots, and every numeric field inside the range its UI allows. A
+        /// share code is just bytes someone pasted, so nothing in it is assumed to be in range.
         /// </summary>
         private static PfPresetData Sanitize(PfPresetData p)
         {
@@ -187,10 +187,14 @@ namespace PfPresets
             if (string.IsNullOrEmpty(p.PrivatePartyPassword))
                 p.FormPrivateParty = false;
 
-            // Exactly eight slots, each with a valid role and no bits set for jobs we don't know.
+            // One to eight slots, each with a valid role and no bits set for jobs we don't know.
+            //
+            // Not padded to eight any more: a light-party preset legitimately carries four, and
+            // filling the rest in would put four unfillable openings on the listing. An empty list
+            // is the one case with nothing to preserve, so it takes the shape for the content.
             var slots = p.Slots ?? new();
-            while (slots.Count < 8)
-                slots.Add(new RoleSlot { SlotIndex = slots.Count, Role = RoleType.Free });
+            if (slots.Count == 0)
+                slots = DutyComposition.DefaultFor(p.DutyCategoryId, p.DutyName);
             if (slots.Count > 8)
                 slots = slots.Take(8).ToList();
             for (int i = 0; i < slots.Count; i++)

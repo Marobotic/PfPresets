@@ -64,25 +64,38 @@ namespace PfPresets
         public string? CommentRaw { get; set; } = null;
 
         // ── Role Slots ────────────────────────────────────────────
-        /// <summary>The 8 role slots of a normal party.</summary>
+        /// <summary>
+        /// The seats this listing is recruiting for - as many as the party has, no more.
+        ///
+        /// Not always eight. A dungeon preset carries four, Crystalline Conflict carries two, and
+        /// selecting a duty reshapes the list through <see cref="DutyComposition"/>. Anything
+        /// reading this must go by <c>Slots.Count</c> rather than assuming.
+        ///
+        /// A preset that has never had a duty picked starts as a full party rather than eight open
+        /// seats: "two tanks, two healers, four damage" is at worst a shape you edit, whereas eight
+        /// free slots is a listing that asks for nothing in particular.
+        /// </summary>
         [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
-        public List<RoleSlot> Slots { get; set; } = new()
-        {
-            new RoleSlot { SlotIndex = 0, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 1, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 2, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 3, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 4, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 5, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 6, Role = RoleType.Free },
-            new RoleSlot { SlotIndex = 7, Role = RoleType.Free },
-        };
+        public List<RoleSlot> Slots { get; set; } = DutyComposition.FullParty();
 
         // ── Role Options ──────────────────────────────────────────
         /// <summary>Mirrors the in-game "Seek Job Distributions" option. On by default: it's what
         /// most listings want, and it fills around whoever is already in your party. Existing
         /// presets keep whatever they were saved with - this only affects newly created ones.</summary>
         public bool AutoAdjustRoles { get; set; } = true;
+
+        /// <summary>
+        /// Whether this preset actually hands its composition to the game client.
+        ///
+        /// <see cref="AutoAdjustRoles"/> alone is not enough: the option only means anything for
+        /// the three categories in <see cref="DutyComposition.SupportsAutoAdjust"/>, and presets
+        /// saved before that restriction existed still carry it set on dungeons and roulettes.
+        /// Reading the stored flag through here rather than directly means such a preset behaves
+        /// the same as one made today, instead of quietly ignoring its own slots.
+        /// </summary>
+        [JsonIgnore]
+        public bool UsesAutoAdjust =>
+            AutoAdjustRoles && DutyComposition.SupportsAutoAdjust(DutyCategoryId);
 
         /// <summary>
         /// Widens one melee slot to accept casters as well - the "fake melee" seat that a double

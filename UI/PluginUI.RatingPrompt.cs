@@ -109,7 +109,10 @@ namespace PfPresets
             if (pfAutomation.IsInDuty())
                 return;
 
-            if (promptRows.Count == 0)
+            // Whatever is left AFTER the server has had its say. A prompt whose whole roster turns
+            // out to have opted out closes itself rather than sitting there with no rows in it.
+            var visibleRows = VisiblePromptRows();
+            if (visibleRows.Count == 0)
             {
                 promptEncounter = null;
                 return;
@@ -130,6 +133,9 @@ namespace PfPresets
 
             if (Ratings != null)
             {
+                // The whole roster, not just the visible rows - this IS the lookup that decides
+                // which of them are visible, so asking only about the ones already passing would
+                // never learn anything new about the rest.
                 var identities = new List<CharacterIdentity>(promptRows.Count);
                 foreach (var c in promptRows)
                     identities.Add(c.Identity);
@@ -163,7 +169,7 @@ namespace PfPresets
                 {
                     try
                     {
-                        DrawPromptBody(encounter, promptRows);
+                        DrawPromptBody(encounter, visibleRows);
                     }
                     finally
                     {
@@ -187,6 +193,11 @@ namespace PfPresets
         {
             foreach (var contact in promptRows)
             {
+                // Rows the server has since told us are not rateable are not waiting for anything,
+                // so they cannot be what is keeping the window open.
+                if (!PromptRowVisible(contact))
+                    continue;
+
                 var state = StateFor(contact.Identity);
                 if (!state.Done || RowExitProgress(state) < 1f)
                     return false;
@@ -202,16 +213,33 @@ namespace PfPresets
                 return;
             }
 
-            ImGui.TextColored(TextPrimary, "Rate your group");
+            // THE TITLE IS SET IN THE PLUGIN'S OWN FACE. It was a bare TextColored, which draws in
+            // whatever ImGui's current font is - Dalamud's, not Roboto - so the one window that
+            // opens on its own after a duty was the one window whose heading did not match the
+            // plugin it belongs to.
+            const float closeBtn = 28f;
+            Vector2 titleAt = ImGui.GetCursorScreenPos();
 
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(), PromptWidth - 44f));
-            if (DrawGlyphButton(FontAwesomeIcon.Times, "PromptClose", new Vector2(22, 20), TextMuted))
+            using (UiHeadingFont.Push())
+            {
+                float lineH = ImGui.GetTextLineHeight();
+                ImGui.GetWindowDrawList().AddText(
+                    new Vector2(titleAt.X, titleAt.Y + (closeBtn - lineH) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(Ink), "Rate your group");
+            }
+
+            // The same close control the sheets use - a rounded square with the cross set at icon
+            // size inside it. It was a 22x20 ImGui button, which at the theme's 10px frame rounding
+            // is a lozenge, carrying a glyph from Dalamud's icon font at Dalamud's size: a fat grey
+            // pill with an oversized X in it, which is exactly what it looked like.
+            ImGui.SetCursorScreenPos(new Vector2(titleAt.X + PromptWidth - 28f - closeBtn, titleAt.Y));
+            if (DrawIconSquareButton(FontAwesomeIcon.Times, "PromptClose", closeBtn))
                 SkipPrompt(encounter);
             if (ImGui.IsItemHovered())
                 PaddedTooltip("Skip. This duty won't ask again.");
 
-            ImGui.Dummy(new Vector2(0, 6));
+            ImGui.SetCursorScreenPos(new Vector2(titleAt.X, titleAt.Y + closeBtn));
+            ImGui.Dummy(new Vector2(0, Space.Gap));
 
             var shown = DrawAllianceTabs(rows);
 
@@ -225,8 +253,23 @@ namespace PfPresets
                 ImGui.PopTextWrapPos();
             }
 
-            ImGui.Dummy(new Vector2(0, 2));
-            if (DrawSecondaryButton("Skip##PromptSkip", new Vector2(-1, ButtonHeight)))
+            ImGui.Dummy(new Vector2(0, Space.Tight));
+
+            // TWO ANSWERS, EQUAL WIDTHS. "Everyone was fine" is what most of these end in, and it
+            // was six separate presses to say it while walking away from a duty took one. The pair
+            // is sized like a sheet's footer for the same reason that is: they are two answers to
+            // one question, and a design that makes one of them wide and the other a full-width bar
+            // has decided on the player's behalf.
+            float half = (ImGui.GetContentRegionAvail().X - Space.Gap) * 0.5f;
+            var btn = new Vector2(half, ButtonHeight);
+
+            if (DrawPrimaryButton("Upvote all##PromptUpAll", btn))
+                UpvoteAllRemaining(shown);
+            if (ImGui.IsItemHovered())
+                PaddedTooltip("Give everyone still listed an upvote.");
+
+            ImGui.SameLine(0, Space.Gap);
+            if (DrawSecondaryButton("Skip##PromptSkip", btn))
                 SkipPrompt(encounter);
         }
 
@@ -269,7 +312,7 @@ namespace PfPresets
                 ImGui.PushStyleColor(ImGuiCol.Text, on ? TextPrimary : TextMuted);
                 ImGui.PushStyleColor(ImGuiCol.Border, on ? AccentBlue : BorderDefault);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
 
                 // The count is how many are still unrated there, so you can see where the
                 // remaining work is without clicking through.
@@ -289,8 +332,14 @@ namespace PfPresets
             return groups[pick];
         }
 
-        /// <summary>The people from one duty who can still be rated, cooldown included. Same rule
-        /// as the Ratings tab, so the two can't disagree about who is rateable.</summary>
+        /// <summary>
+        /// The people from one duty who can still be rated.
+        ///
+        /// It claimed to use the same rule as the Ratings tab and did not: the tab dropped anybody
+        /// the server had marked hidden, and this only checked the cooldown - so a player who had
+        /// opted out was absent from one list and offered an up and a down arrow in the other. Both
+        /// go through RatingService.IsRateableNow now, which is the rule.
+        /// </summary>
         private List<Contact> EligibleInEncounter(string encounterId)
         {
             var candidates = Encounters?.EligibleInEncounter(encounterId) ?? new List<Contact>();
@@ -300,10 +349,46 @@ namespace PfPresets
             var result = new List<Contact>(candidates.Count);
             foreach (var c in candidates)
             {
-                if (Ratings.LocalCooldownUntil(c.Identity) == null)
+                if (Ratings.IsRateableNow(c.Identity))
                     result.Add(c);
             }
             return result;
+        }
+
+        /// <summary>
+        /// Whether a row the prompt is already holding should still be drawn.
+        ///
+        /// ASKED EVERY FRAME, not once when the window opened. The roster is sent to the server and
+        /// the answers come back over the next second or so; a list filtered only at open is
+        /// filtered before most of those answers exist, which is exactly how an opted-out player
+        /// ended up with two arrows beside their name. Asked per frame, their row is there for a
+        /// moment and then is not.
+        ///
+        /// A row that has already been rated stays: it is mid-way through its exit animation, and
+        /// yanking it would replace a graceful collapse with a disappearance.
+        /// </summary>
+        private bool PromptRowVisible(Contact contact)
+        {
+            if (Ratings == null)
+                return true;
+
+            var state = StateFor(contact.Identity);
+            if (state.Done || state.Sending || contact.Member.Rated)
+                return true;
+
+            return Ratings.IsRateableNow(contact.Identity);
+        }
+
+        /// <summary>The rows still worth showing, out of everything the prompt opened with.</summary>
+        private List<Contact> VisiblePromptRows()
+        {
+            var visible = new List<Contact>(promptRows.Count);
+            foreach (var c in promptRows)
+            {
+                if (PromptRowVisible(c))
+                    visible.Add(c);
+            }
+            return visible;
         }
 
         /// <summary>
@@ -337,6 +422,33 @@ namespace PfPresets
 
         /// <summary>Marks the duty skipped so it never prompts again, and closes the window. The
         /// people in it remain votable from the Ratings tab until the window closes.</summary>
+        /// <summary>
+        /// Upvotes every row still waiting for an answer.
+        ///
+        /// Only the ones on screen: an alliance raid is split across three tabs, and a button on
+        /// one tab that quietly rated the other sixteen people would be the plugin voting on your
+        /// behalf for people you have not looked at.
+        ///
+        /// The list is copied before it is walked - casting a rating marks a row done, which is
+        /// what the collapse animation reads, and mutating what you are iterating is how that ends
+        /// in an exception mid-frame.
+        /// </summary>
+        private void UpvoteAllRemaining(List<Contact> rows)
+        {
+            foreach (var contact in new List<Contact>(rows))
+            {
+                var identity = contact.Identity;
+                if (identity == null)
+                    continue;
+
+                var state = StateFor(identity);
+                if (state.Done || state.Sending || contact.Member.Rated)
+                    continue;
+
+                CastRating(contact, identity, state, VoteDirection.Up);
+            }
+        }
+
         private void SkipPrompt(DutyEncounter encounter)
         {
             Encounters?.Dismiss(encounter.Id);

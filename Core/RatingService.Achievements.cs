@@ -417,15 +417,19 @@ namespace PfPresets
         /// <summary>
         /// Hearts a post.
         ///
-        /// Applied here the moment it is pressed and never taken back, because the server answers
-        /// the same whatever it decides to do underneath - stored, held until the account is known,
-        /// or dropped. Guessing at which from the client would produce a heart that flickered off a
-        /// second after somebody gave it, which is worse than the small chance of being optimistic.
-        /// The next read tells the truth either way.
+        /// Applied here the moment it is pressed, because a button that waits on a round trip
+        /// before it moves feels broken on a bad connection. What is new is that the server's reply
+        /// is now believed: a heart is one per post per connection, so this press can legitimately
+        /// be refused - an alt reaching for a heart the main already cast - and the optimistic
+        /// state has to be put back when that happens. <see cref="ApplyReaction"/> is where that
+        /// lands, for both directions.
         /// </summary>
         public void Heart(AchievementPost post)
         {
-            if (post.Hearted || string.IsNullOrEmpty(post.Id))
+            // HeartLocked is somebody else's heart on this connection. The button does not offer
+            // it, so this is the second lock rather than the first - worth keeping anyway, because
+            // the feed can be re-read between the draw and the click.
+            if (post.Hearted || post.HeartLocked || string.IsNullOrEmpty(post.Id))
                 return;
 
             if (!reacting.TryAdd(post.Id + "#heart", 0))
@@ -438,7 +442,10 @@ namespace PfPresets
             {
                 try
                 {
-                    await api.HeartAsync(post.Id).ConfigureAwait(false);
+                    var result = await api.HeartAsync(post.Id).ConfigureAwait(false);
+
+                    if (result.IsOk && result.Value != null)
+                        ApplyReaction(post, result.Value, optimisticHearted: true);
                 }
                 catch (Exception ex)
                 {
@@ -449,6 +456,77 @@ namespace PfPresets
                     reacting.TryRemove(post.Id + "#heart", out _);
                 }
             });
+        }
+
+        /// <summary>
+        /// Takes back a heart this character cast.
+        ///
+        /// Only ever the owner's own. A heart from another character on the same connection is
+        /// <see cref="AchievementPost.HeartLocked"/>, and the whole point of that flag is that it
+        /// cannot be undone from here - otherwise the one-per-connection rule would be trivially
+        /// defeated by hearting on the main and unhearting on an alt.
+        /// </summary>
+        public void Unheart(AchievementPost post)
+        {
+            if (!post.Hearted || post.HeartLocked || string.IsNullOrEmpty(post.Id))
+                return;
+
+            if (!reacting.TryAdd(post.Id + "#heart", 0))
+                return;
+
+            post.Hearted = false;
+            post.Hearts = Math.Max(0, post.Hearts - 1);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.UnheartAsync(post.Id).ConfigureAwait(false);
+
+                    if (result.IsOk && result.Value != null)
+                        ApplyReaction(post, result.Value, optimisticHearted: false);
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Unheart failed: {ex.Message}");
+                }
+                finally
+                {
+                    reacting.TryRemove(post.Id + "#heart", out _);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Reconciles a post with what the heart route actually did.
+        ///
+        /// The count is only taken when the server sends one - see the note on
+        /// <see cref="AchievementReactResponse.Hearts"/>. When it does not, the optimistic ±1 is
+        /// left in place and corrected on the next read, which is what the feed did for its whole
+        /// first year and is still fine.
+        ///
+        /// <paramref name="optimisticHearted"/> is what this client already drew, so the count can
+        /// be walked back by exactly the one it added when the server disagrees, rather than being
+        /// guessed at from a state that has since changed.
+        /// </summary>
+        private static void ApplyReaction(AchievementPost post, AchievementReactResponse reply,
+            bool optimisticHearted)
+        {
+            post.HeartLocked = reply.HeartLocked;
+
+            if (reply.Hearts is int authoritative)
+            {
+                post.Hearts = Math.Max(0, authoritative);
+                post.Hearted = reply.Hearted;
+                return;
+            }
+
+            if (reply.Hearted == optimisticHearted)
+                return;
+
+            // Refused, and no count to fall back on: undo the ±1 this client applied.
+            post.Hearts = Math.Max(0, post.Hearts + (optimisticHearted ? -1 : 1));
+            post.Hearted = reply.Hearted;
         }
 
         /// <summary>
@@ -574,6 +652,79 @@ namespace PfPresets
             if (string.IsNullOrEmpty(evidence))
                 return;
 
+            // QUEUED, NOT SENT. See TickPendingDuties - nothing leaves the machine while the
+            // player is in combat, and the sealed payload is built here because this is the moment
+            // the encounter is whole.
+            lock (pendingDutyGate)
+                pendingDuties.Enqueue(evidence);
+        }
+
+        // ── Filing a duty, out of combat ──────────────────────────
+
+        /// <summary>
+        /// Whether the player is fighting something right now. Supplied by the plugin, which owns
+        /// the game's condition flags; the rating service has no business holding them for anything
+        /// else. Null - in a build or a test that never sets it - reads as "not in combat", which
+        /// is the behaviour this had before the gate existed.
+        /// </summary>
+        public Func<bool>? InCombat { get; set; }
+
+        private readonly object pendingDutyGate = new();
+        private readonly Queue<string> pendingDuties = new();
+
+        /// <summary>True while a send is in flight, so the tick does not start a second one.</summary>
+        private bool dutyPostInFlight;
+
+        /// <summary>When the next attempt may happen. Moved forward on a failure so a server that
+        /// is down is not hammered once a frame.</summary>
+        private DateTime nextDutyPostUtc = DateTime.MinValue;
+
+        private static readonly TimeSpan DutyPostRetryDelay = TimeSpan.FromSeconds(20);
+
+        /// <summary>
+        /// Sends one filed duty, if there is one waiting and the player is not fighting.
+        ///
+        /// COMBAT HAS PRIORITY OVER EVERYTHING HERE. A duty is filed the moment it ends, and a duty
+        /// can end with the player still in combat - walking out mid-pull, a wipe that is still
+        /// resolving, an alliance raid where one party is fighting while another finishes. Firing a
+        /// request there spends network and a thread pool slot on something nobody is waiting for,
+        /// during the one part of the game where frame time is the whole experience.
+        ///
+        /// So the payload waits. It is already sealed, it does not expire in any hurry, and the
+        /// player will be out of combat within a minute or two of any of those cases. If combat
+        /// starts again while a request is in flight, that request finishes - it is a few hundred
+        /// bytes and cancelling it would only mean sending it twice - but nothing new is started
+        /// until the fight is over.
+        ///
+        /// Called every frame from the plugin's framework update. Cheap by design: a lock, a count
+        /// and two comparisons on the overwhelmingly common path where there is nothing to send.
+        /// </summary>
+        public void TickPendingDuties()
+        {
+            if (dutyPostInFlight || DateTime.UtcNow < nextDutyPostUtc)
+                return;
+
+            // Asked before the lock is taken, because it is the cheap question and it is false for
+            // almost every frame the plugin is ever running.
+            lock (pendingDutyGate)
+            {
+                if (pendingDuties.Count == 0)
+                    return;
+            }
+
+            if (InCombat?.Invoke() == true)
+                return;
+
+            string evidence;
+            lock (pendingDutyGate)
+            {
+                if (pendingDuties.Count == 0)
+                    return;
+                evidence = pendingDuties.Dequeue();
+            }
+
+            dutyPostInFlight = true;
+
             _ = Task.Run(async () =>
             {
                 try
@@ -589,12 +740,33 @@ namespace PfPresets
                         applyNextRead = true;
                         feedReadAt = DateTime.MinValue;
                     }
+                    else if (!result.IsOk)
+                    {
+                        // PUT BACK, NOT DROPPED. A duty that fails to file is a duty no vote out of
+                        // it can ever be checked against, which is the failure this whole path
+                        // exists to prevent - and the usual reason to fail is the network being
+                        // briefly unavailable, which is exactly the case worth retrying.
+                        Requeue(evidence);
+                    }
                 }
                 catch (Exception ex)
                 {
                     log.Debug($"[Ratings] Achievement post failed: {ex.Message}");
+                    Requeue(evidence);
+                }
+                finally
+                {
+                    dutyPostInFlight = false;
                 }
             });
+        }
+
+        private void Requeue(string evidence)
+        {
+            lock (pendingDutyGate)
+                pendingDuties.Enqueue(evidence);
+
+            nextDutyPostUtc = DateTime.UtcNow + DutyPostRetryDelay;
         }
 
         /// <summary>

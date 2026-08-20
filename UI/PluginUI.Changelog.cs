@@ -163,32 +163,41 @@ namespace PfPresets
         /// permanent seat in the strip alongside the things people use every session overstates
         /// how often it matters.
         /// </summary>
-        private void DrawChangelogWindow()
+        private void DrawChangelogSheet()
         {
             if (!isChangelogVisible)
+            {
+                CloseSheet();
                 return;
+            }
 
-            ImGui.SetNextWindowSize(new Vector2(460, 420), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSizeConstraints(new Vector2(380, 240), new Vector2(760, 900));
-
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(14, 12));
+            if (!BeginSheet("Changelog", "What's new", 620f))
+                return;
 
             try
             {
-                if (ImGui.Begin("PF Analysis - What's new###PfPresetsChangelog", ref isChangelogVisible,
-                        ImGuiWindowFlags.NoCollapse))
+                if (BeginSheetBody(0f))
                 {
-                    for (int i = 0; i < Changelog.Length; i++)
-                        DrawChangelogVersion(Changelog[i], i);
+                    try
+                    {
+                        for (int i = 0; i < Changelog.Length; i++)
+                            DrawChangelogVersion(Changelog[i], i);
+
+                        ImGui.Dummy(new Vector2(0, 8));
+                    }
+                    finally
+                    {
+                        EndSheetBody();
+                    }
+                }
+                else
+                {
+                    EndSheetBody();
                 }
             }
             finally
             {
-                ImGui.End();
-                ImGui.PopStyleVar(2);
-                ImGui.PopStyleColor();
+                EndSheet();
             }
         }
 
@@ -205,7 +214,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.Button, open ? BgCardExpanded : BgCard);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, BorderHover);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
 
             if (ImGui.Button($"##ver{entry.Version}", new Vector2(width, headerH)))
                 changelogOpen = open ? -1 : index;

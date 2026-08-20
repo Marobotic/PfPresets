@@ -16,12 +16,31 @@ namespace PfPresets
         /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.
         /// Deliberately the same number in the ratings and non-ratings builds: the v2 and v3 fields
         /// are inert data, so a config written by one build must load cleanly in the other.</summary>
-        public const int CurrentVersion = 5;
+        public const int CurrentVersion = 7;
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
 
         // ── UI Preferences ────────────────────────────────────────
+
+        /// <summary>
+        /// Which of the two fixed windows to draw. See <see cref="DeviceLayout"/> for why there are
+        /// only two and why neither can be resized.
+        ///
+        /// Portrait by default, including for people upgrading from the resizable window. The wide
+        /// layout is better on a big monitor and worse on every other one, and a plugin that opens
+        /// at 1180px on a 1080p screen with the game behind it has covered the game.
+        /// </summary>
+        public DeviceLayout Device { get; set; } = DeviceLayout.Portrait;
+
+        /// <summary>
+        /// Dead: the window has a fixed size and nothing writes these any more.
+        ///
+        /// Kept as properties so an existing config file still round-trips - Dalamud deserialises
+        /// into this class, and a member that vanishes takes its saved value with it the first time
+        /// the config is written back. They cost two ints and they mean a downgrade to an older
+        /// build finds its window where it left it.
+        /// </summary>
         public int PanelWidth { get; set; } = 980;
         public int PanelHeight { get; set; } = 640;
 
@@ -57,6 +76,20 @@ namespace PfPresets
         /// you keep somebody else's. Turning one off is no reason to lose the other.
         /// </summary>
         public bool ShowSaveListingButton { get; set; } = true;
+
+        /// <summary>
+        /// Whether a preset for content this character has not unlocked hides what it is for.
+        ///
+        /// Off by default, and deliberately so. A locked preset is still yours - you wrote it, and
+        /// on the alt that has the fight unlocked it is the one you want - so the normal state is
+        /// to show it in full with the duty marked as locked. On it goes the other way: the name is
+        /// replaced with "(Locked duty)" and locked content stops appearing in the duty picker at
+        /// all, for anyone who would rather not be reminded of what they have not got to yet.
+        ///
+        /// Neither setting changes what can be posted. A locked preset cannot be applied either
+        /// way, because the game will not take it.
+        /// </summary>
+        public bool HideLockedDuties { get; set; } = false;
 
         /// <summary>
         /// Whether a listing you are viewing shows its leader's community score beside their name.
@@ -350,6 +383,39 @@ namespace PfPresets
         public bool TrackEncounters { get; set; } = true;
 
         /// <summary>
+        /// Whether to show the extra detail the game already has about a listing you open.
+        ///
+        /// Reads the structure the client fills in to draw the listing window - the jobs sitting in
+        /// each slot, the leader, the comment - and shows the parts the window leaves out. Nothing
+        /// is fetched and nobody is asked; it is on this machine already.
+        ///
+        /// Turns itself off while PFRadar is running. Both hook the same game function, and the
+        /// second hook onto one function is how unload order starts to matter.
+        /// </summary>
+        public bool ListingDetailsEnabled { get; set; } = true;
+
+        // ListingDetailsAutoLookup WAS DECLARED HERE AND IS GONE (2026-08-17).
+        //
+        // It was added for an auto-lookup that was then deliberately not built - the progression
+        // button is a button precisely so that browsing the party finder does not fire a network
+        // call about every stranger whose listing you open. Nothing ever read the setting, so it
+        // was a switch in the config file that could not do anything, which is worse than no switch.
+
+        /// <summary>
+        /// Whether this character is published to the party finder while it is in a listing.
+        ///
+        /// WHAT IT SENDS IS ONLY YOU: your name, world and job, filed against the listing's leader
+        /// so other plugin users looking at that listing can see you are in it. Nothing about
+        /// anybody else in your party is sent - they have not agreed to be published and there is
+        /// no way to ask them - and the server refuses a report that names a different character
+        /// than the one signed in.
+        ///
+        /// The report is withdrawn when the listing ends, and the server forgets it within the hour
+        /// either way. Turning this off stops sending and removes what is up.
+        /// </summary>
+        public bool PfCrowdsourceEnabled { get; set; } = true;
+
+        /// <summary>
         /// Override for the rating server, for development and for anyone self-hosting. Empty
         /// means the built-in endpoint.
         ///
@@ -479,25 +545,103 @@ namespace PfPresets
                 Version = 5;
             }
 
+            // v5 -> v6: presets learned how big a party the duty actually fields, and auto-adjust
+            // became an option only trials, raids and high-end duties get. Saved presets predate
+            // both, so every one of them is checked against the two rules here rather than left to
+            // be discovered wrong: a dungeon preset still advertising eight seats posts four
+            // openings nobody can fill, and one still carrying auto-adjust ignores its own slots
+            // while greying out the editor you would fix them in.
+            //
+            // Deliberately built compositions survive - see DutyComposition.Normalize for exactly
+            // what is and is not overwritten.
+            if (Version < 6)
+            {
+                int autoCleared = 0, reshaped = 0;
+                foreach (var preset in Presets)
+                {
+                    bool hadAuto = preset.AutoAdjustRoles;
+                    int hadSeats = preset.Slots?.Count ?? 0;
+
+                    if (!DutyComposition.Normalize(preset))
+                        continue;
+
+                    if (hadAuto && !preset.AutoAdjustRoles) autoCleared++;
+                    if ((preset.Slots?.Count ?? 0) != hadSeats) reshaped++;
+                }
+                log.Information($"[Migration] v5 -> v6: cleared auto-adjust on {autoCleared} preset(s), resized {reshaped}.");
+                Version = 6;
+            }
+
+            // v6 -> v7: the mentor roulette is entered alone, so a listing for it is one nobody can
+            // join - the plugin stopped offering it and the presets already written for it go too.
+            //
+            // DELETED RATHER THAN REPOINTED. A preset is for a duty; with the duty gone there is
+            // nothing left of it worth keeping, and silently aiming it at some other roulette would
+            // be worse than removing it - the next time it was applied it would post something
+            // nobody chose. The names are logged so it is possible to see what went.
+            if (Version < 7)
+            {
+                var doomed = Presets.Where(DutyDataHelper.IsMentorRoulette).ToList();
+
+                foreach (var preset in doomed)
+                    Presets.Remove(preset);
+
+                if (doomed.Count > 0)
+                    log.Information("[Migration] v6 -> v7: removed "
+                        + $"{doomed.Count} mentor roulette preset(s): "
+                        + string.Join(", ", doomed.Select(p => $"\"{p.Name}\"")));
+
+                Version = 7;
+            }
+
             log.Information($"[Migration] Configuration upgraded from v{startVersion} to v{Version}.");
             Save();
         }
 
         // ── CRUD Operations ───────────────────────────────────────
 
-        public PfPresetData AddPreset(string? name = null)
+        /// <summary>
+        /// Builds a preset and does NOT keep it.
+        ///
+        /// The editor opens on one of these. Pressing "New preset" used to call
+        /// <see cref="AddPreset"/>, which added the thing to the list and wrote it to disk before
+        /// a single field had been filled in - so the preset appeared behind the sheet immediately,
+        /// and a session that ended without touching Cancel left it there for good. Cancelling
+        /// deleted it again, which is a repair rather than a design: nothing should have to be
+        /// unmade because a window was opened.
+        ///
+        /// Nothing is saved until <see cref="CommitNewPreset"/>.
+        /// </summary>
+        public PfPresetData CreateDetachedPreset(string? name = null) => new()
         {
-            var preset = new PfPresetData
+            Name = name ?? $"Preset {Presets.Count + 1}",
+            LangJapanese = true,
+            LangEnglish = true,
+            LangGerman = true,
+            LangFrench = true,
+        };
+
+        /// <summary>Keeps a preset built by <see cref="CreateDetachedPreset"/>. This is the moment
+        /// it becomes real: it joins the list, counts towards the tally, and reaches disk.</summary>
+        public void CommitNewPreset(PfPresetData preset)
+        {
+            if (Presets.Any(p => p.Id == preset.Id))
             {
-                Name = name ?? $"Preset {Presets.Count + 1}",
-                LangJapanese = true,
-                LangEnglish = true,
-                LangGerman = true,
-                LangFrench = true,
-            };
+                Save();
+                return;
+            }
+
             Presets.Add(preset);
             CountPresetCreated();
             Save();
+        }
+
+        /// <summary>Builds a preset and keeps it in one step, for callers with nothing to fill in
+        /// first.</summary>
+        public PfPresetData AddPreset(string? name = null)
+        {
+            var preset = CreateDetachedPreset(name);
+            CommitNewPreset(preset);
             return preset;
         }
 
@@ -509,6 +653,10 @@ namespace PfPresets
             int suffix = 2;
             while (Presets.Any(p => p.Name.Equals(preset.Name, StringComparison.OrdinalIgnoreCase)))
                 preset.Name = $"{baseName} ({suffix++})";
+
+            // A share code can carry either of the mistakes the v6 migration repairs, since it may
+            // well have been exported by a build from before this.
+            DutyComposition.Normalize(preset);
 
             Presets.Add(preset);
             CountPresetCreated();

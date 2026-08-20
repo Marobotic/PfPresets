@@ -23,22 +23,30 @@ namespace PfPresets
     public partial class PluginUI
     {
         /// <summary>
-        /// Roboto, embedded, at the two sizes the banner needs.
+        /// The banner's two faces, at the sizes it needs them.
         ///
         /// Not SetWindowFontScale, which stretches the baked 12px bitmap glyphs and made the
         /// number visibly pixelated. Not the game's Jupiter face either - that is FFXIV's own HUD
-        /// numeral face and reads as borrowed chrome here. Roboto is what the mockup was set in,
-        /// so the score and its label are set in it too.
+        /// numeral face and reads as borrowed chrome here.
+        ///
+        /// Both semibold: this is the largest figure in the plugin and the caption that names it,
+        /// and a 54px number set in the body weight looks like it was left at a default.
         /// </summary>
         private IFontHandle? scoreFont;
         private IFontHandle? labelFont;
 
         /// <summary>The figure's size, named so the card's measured height and the face it is
         /// drawn in cannot drift apart.</summary>
+        // Fifty-four. The digit reads as 34px of ink because this face sets its figures a little
+        // under cap height - which is exactly the 34px the reference shows.
         private const float ScorePx = 54f;
 
-        private IFontHandle ScoreFont => Font(ref scoreFont, ScorePx);
-        private IFontHandle LabelFont => Font(ref labelFont, 11f);
+        /// <summary>The job mark beside a character's name on their card.</summary>
+        private const float ProfileJobMarkSize = 26f;
+
+        private IFontHandle ScoreFont =>
+            Font(ref scoreFont, ScorePx, FontWeight.SemiBold, userText: false, gameGlyphs: false);
+        private IFontHandle LabelFont => Font(ref labelFont, 11f, FontWeight.SemiBold, userText: false);
 
         /// <summary>
         /// An opted-out player's card: who they are, and the one sentence.
@@ -92,8 +100,9 @@ namespace PfPresets
 
             dl.ChannelsSetCurrent(0);
             var cardMax = new Vector2(cardMin.X + cardWidth, cardMin.Y + cardHeight);
-            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
-            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                Radius.Card, ImDrawFlags.None, 1f);
             dl.ChannelsMerge();
 
             ImGui.Dummy(new Vector2(0, 8));
@@ -189,7 +198,7 @@ namespace PfPresets
         }
 
         // Card geometry, in one place so the band, the columns and the content can't disagree.
-        private const float CardPad = 14f;
+        private const float CardPad = CardPadding;
 
         /// <summary>Who the card was drawn for last, and on which frame - the two facts needed to
         /// tell "still open" from "opened again".</summary>
@@ -253,7 +262,10 @@ namespace PfPresets
             Ratings?.EnsureClearsLoaded(who, Worlds?.GetFfLogsRegion(who.World));
             var clears = Ratings?.ClearsFor(who);
 
-            ImGui.Dummy(new Vector2(0, 8));
+            // NO LEADING SPACER. There was an 8px Dummy here, which with ImGui's own item spacing
+            // put the card twelve pixels below the one in the column beside it - two cards under
+            // two headings at the same height, starting at different heights. The heading above
+            // already ends with its own gap; a second one belongs to nobody.
 
             // No Back button on your own card: it isn't somewhere you navigated to, it is what
             // the tab shows when there is nothing else to do.
@@ -325,8 +337,9 @@ namespace PfPresets
 
             dl.ChannelsSetCurrent(0);
             var cardMax = new Vector2(cardMin.X + cardWidth, cardMin.Y + cardHeight);
-            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field));
-            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                Radius.Card, ImDrawFlags.None, 1f);
 
             dl.ChannelsMerge();
         }
@@ -355,12 +368,12 @@ namespace PfPresets
             Vector2 headerPos = ImGui.GetCursorScreenPos();
             float headerRight = headerPos.X + ImGui.GetContentRegionAvail().X - CardPad;
 
+            // The caption moved OUT of the card - see DrawProfilePane. What it named is what the
+            // whole card is, and a heading belongs above the thing it heads, the same way the list
+            // headings in the column beside it do. The line it occupied stays, because the site
+            // marks sit on it.
             using (UiCaptionFont.Push())
-            {
-                float lineH = ImGui.GetTextLineHeight();
-                DrawTrackedCaps(dl, headerPos, IsSelf(who) ? "Your profile" : "Looked up", Dim);
-                ImGui.Dummy(new Vector2(ImGui.GetContentRegionAvail().X, lineH));
-            }
+                ImGui.Dummy(new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight()));
 
             DrawProfileSiteLinks(who, headerPos.Y, headerRight);
 
@@ -409,9 +422,12 @@ namespace PfPresets
 
                 if (hasJob)
                 {
-                    DrawJobIconInline(jobId, nameHeight);
+                    // 26px, from the mockup - a hair LARGER than the 24px name beside it, which is
+                    // not a proportion a line height ever produces. The mark is the first thing the
+                    // card says about somebody and it is sized to be read, not to fit.
+                    DrawJobIconInline(jobId, ProfileJobMarkSize);
                     ImGui.SameLine(0, 8);
-                    room -= nameHeight + 8f;
+                    room -= ProfileJobMarkSize + 8f;
                 }
 
                 ImGui.TextColored(Ink, Fit(DisplayName(who.Name), room));
@@ -472,6 +488,8 @@ namespace PfPresets
             var dl = ImGui.GetWindowDrawList();
             float capX = numberPos.X + numberW + 12f;
 
+            // Caption size against the 54px figure, which is the contrast the mockup draws: the
+            // number is the card, and the two words beside it are its unit.
             using (UiCaptionFont.Push())
             {
                 float capH = ImGui.GetTextLineHeight();
@@ -581,8 +599,10 @@ namespace PfPresets
         /// </summary>
         private void DrawProfileSiteLinks(CharacterIdentity who, float rowY, float right)
         {
-            const float iconSize = 20f;
-            const float gap = 6f;
+            // Big enough to be aimed at. They were 20px squares, which is smaller than the text
+            // beside them and half the 44px a tap target is supposed to be.
+            const float iconSize = 28f;
+            const float gap = 8f;
 
             // Right to left, so the rightmost is the last drawn and the row grows leftwards from
             // the card's edge whatever the icon size ends up being.
@@ -644,7 +664,7 @@ namespace PfPresets
             var dl = ImGui.GetWindowDrawList();
 
             dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + barHeight),
-                ImGui.ColorConvertFloat4ToU32(Field));
+                ImGui.ColorConvertFloat4ToU32(Field), barHeight * 0.5f);
 
             bool rated = rating != null && !rating.OptedOut && rating.Count > 0
                 && rating.Upvotes + rating.Downvotes > 0;
@@ -656,7 +676,7 @@ namespace PfPresets
                 // rather than as an empty widget that failed to draw.
                 float filled = MathF.Max(share * width, share > 0f ? 2f : 0f);
                 dl.AddRectFilled(p, new Vector2(p.X + filled, p.Y + barHeight),
-                    ImGui.ColorConvertFloat4ToU32(NetScoreColor(rating.Score)));
+                    ImGui.ColorConvertFloat4ToU32(NetScoreColor(rating.Score)), barHeight * 0.5f);
             }
 
             ImGui.Dummy(new Vector2(width, barHeight));

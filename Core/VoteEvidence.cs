@@ -28,10 +28,25 @@ namespace PfPresets
     {
         private static readonly byte[] EvidenceKey = Convert.FromHexString("6041965aaee0ba93c46ea3f1e407be24dfab2e53962765961cab50014681eeee");
 
-        private void BuildClearEvidence(DutyEncounter encounter, ref string evidence)
+        partial void BuildClearEvidence(DutyEncounter encounter, ref string evidence)
         {
             CharacterIdentity me = api.LocalIdentity;
-            if (encounter == null || me == null || !me.IsValid || string.IsNullOrWhiteSpace(encounter.DutyName))
+
+            // A NAMELESS DUTY IS STILL A ROOM WITH PEOPLE IN IT.
+            //
+            // This used to give up when DutyName was blank, and giving up here is total: no sealed
+            // payload means PostAchievement returns without calling the server, so no duty is filed,
+            // so nothing exists for a vote to be checked against - and every vote cast out of that
+            // duty is held forever, with nothing on either side to say why. Meanwhile
+            // BuildVoteEvidence has never required the name, so the vote itself sealed perfectly.
+            // One missing string, and the vote and the thing that justifies it stopped agreeing.
+            //
+            // The name comes from a lookup that returns empty on any failure, so this fired for
+            // ordinary reasons - content whose row could not be resolved, or a duty picked up after
+            // a plugin reload. The server does not need it: it names the fight for the feed and
+            // nothing else, and a duty it cannot name is simply not posted. The roster is the part
+            // that matters, and that is present either way.
+            if (encounter == null || me == null || !me.IsValid)
             {
                 return;
             }
@@ -82,7 +97,7 @@ namespace PfPresets
             }
         }
 
-        private void BuildSettingEvidence(string kind, ref string evidence)
+        partial void BuildSettingEvidence(string kind, ref string evidence)
         {
             CharacterIdentity me = api.LocalIdentity;
             if (me != null && me.IsValid && !string.IsNullOrEmpty(kind))
@@ -103,7 +118,7 @@ namespace PfPresets
             }
         }
 
-        private void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence)
+        partial void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence)
         {
             CharacterIdentity me = api.LocalIdentity;
             DutyEncounter encounter = encounters.LatestWith(target);

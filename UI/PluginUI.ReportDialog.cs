@@ -56,35 +56,40 @@ namespace PfPresets
             reportAnonymous = false;
         }
 
-        private void DrawReportDialog()
+        private void DrawReportSheet()
         {
             var identity = reportTarget;
             if (identity == null)
+            {
+                CloseSheet();
+                return;
+            }
+
+            if (!BeginSheet("Report", "Report", 460f))
                 return;
 
-            bool open = true;
-
-            // Not a confirmation, so it isn't AskConfirm - but it is a dialog, so it uses the same
-            // chrome. That style stack is shared with every other plugin; having one place that
-            // pushes and pops it is what stops a mismatch corrupting everyone's UI.
-            if (BeginDialog("Report", "PfPresetsReport", 360f, ref open))
+            try
             {
-                try
+                if (BeginSheetBody(0f))
                 {
-                    DrawReportBody(identity);
+                    try
+                    {
+                        DrawReportBody(identity);
+                    }
+                    finally
+                    {
+                        EndSheetBody();
+                    }
                 }
-                finally
+                else
                 {
-                    EndDialog();
+                    EndSheetBody();
                 }
             }
-            else
+            finally
             {
-                EndDialog();
+                EndSheet();
             }
-
-            if (!open)
-                reportTarget = null;
         }
 
         private void DrawReportBody(CharacterIdentity identity)

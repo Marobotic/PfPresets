@@ -16,8 +16,8 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
-        private const float CardPadX = 14f;
-        private const float CardPadY = 12f;
+        private const float CardPadX = CardPadding;
+        private const float CardPadY = CardPadding;
         private const float CardRowGap = 7f;
 
         /// <summary>Space above the party section. Larger than a normal row gap because the block
@@ -59,7 +59,7 @@ namespace PfPresets
         {
 #if PFP_RATINGS
             if (ShowsEmbeddedParty(snap))
-                return PartyMemberCount(snap.DutyName, snap.DutyRowId) * (HoverRowHeight() + 1f);
+                return PartyMemberCount(snap.DutyName, snap.DutyRowId) * (HoverRowHeight() + HoverRowGap);
 #endif
             return 0f;
         }
@@ -76,16 +76,6 @@ namespace PfPresets
         /// count, and the card would reserve one height and draw another.
         /// </summary>
         private static float CommentWidth() => ImGui.GetContentRegionAvail().X - 4f - (CardPadX * 2f);
-
-        /// <summary>
-        /// Splits a listing comment into at most <see cref="CommentMaxLines"/> lines.
-        ///
-        /// Breaks on spaces so words stay whole, and ellipsises the last line rather than letting
-        /// it run under the card border - ImGui clips instead of wrapping, so an overlong comment
-        /// used to simply lose its tail with no sign there was more.
-        /// </summary>
-        private static List<string> WrapComment(string comment, float width) =>
-            WrapCommentToLines(comment, width, CommentMaxLines);
 
         /// <summary>
         /// <see cref="WrapComment"/> with the line cap as an argument, so the preset rows - which
@@ -152,13 +142,20 @@ namespace PfPresets
                 }
                 else
                 {
-                    h += line;                          // duty
+                    // Only when the draw pass will actually print it - the header takes the fight's
+                    // name whenever it has one, and a line reserved for something that is no longer
+                    // drawn is a card an empty row too tall.
+                    // One line either way: the fight when the header could not take it, or who
+                    // owns the listing when it could. Both, never - see the draw pass.
+                    if (!HeaderNamesDuty(snap) || ShowsLeaderLine(snap))
+                        h += line;                      // duty, or the leader
 
                     // However many lines the comment actually wraps to, measured the same way
-                    // the draw pass will wrap it.
-                    int commentLines = WrapComment(snap.Comment, CommentWidth()).Count;
+                    // the draw pass will wrap it - in the comment's own face, which is not the one
+                    // the rest of the card is set in. See CommentFont.
+                    int commentLines = WrapCommentInFace(snap.Comment, CommentWidth(), CommentMaxLines).Count;
                     if (commentLines > 0)
-                        h += CardRowGap + (line * commentLines);
+                        h += CardRowGap + (CommentLineHeight() * commentLines);
 
 #if PFP_RATINGS
                     // Only when the rows are actually drawn. It used to reserve a seat-strip's
@@ -259,21 +256,62 @@ namespace PfPresets
         {
             var (title, accent, glyph) = DescribeActivity(snap);
 
-            DrawGlyphAt(glyph, new Vector2(left, y + (line - 14f) * 0.5f), 14f, accent);
+            // THE DUTY'S OWN ICON WHERE THERE IS A DUTY, the status glyph where there is not.
+            //
+            // The header carried a bullhorn, a tick or a door - a picture of the STATE, which the
+            // words beside it and the colour they are set in were already saying twice over. The
+            // one thing on this card that a picture can say faster than text is which kind of
+            // content this is, and the preset rows in the list beside it have been drawing exactly
+            // that icon from the same sheet all along.
+            //
+            // Sized to the header line rather than to the glyph's 14px: a game icon is art with its
+            // own margins and comes out visibly smaller than a FontAwesome glyph at the same box.
+            const float mark = 18f;
+            uint dutyIcon = GetCategoryIcon(
+                dutyDataHelper.GetCategoryIdForDuty(snap.DutyRowId, snap.DutyName));
+
+            if (dutyIcon != 0 && TryGetIconHandle(dutyIcon, out var dutyHandle))
+            {
+                var markMin = new Vector2(left, y + (line - mark) * 0.5f);
+                dl.AddImage(dutyHandle, markMin, new Vector2(markMin.X + mark, markMin.Y + mark));
+            }
+            else
+            {
+                DrawGlyphAt(glyph, new Vector2(left, y + (line - 14f) * 0.5f), 14f, accent);
+            }
 
             float cursor = right;
 
             // Laid out from the right edge inward so a long title can never displace them.
             if (snap.IsRecruiting && !snap.DetailsUnavailable && snap.TimeLeft.HasValue)
             {
+                // AN ESTIMATE SAYS SO. The game only reports a listing's real remaining time while
+                // its detail window is open, so most of the time this is the plugin counting down
+                // from when it last saw the listing go up - which drifts, and drifts most on
+                // somebody else's listing where we may never have seen it start. It was printed as
+                // a flat "41m" either way, and a number with no qualifier is a claim.
                 string time = FormatTimeLeft(snap.TimeLeft.Value);
+                if (!snap.TimeLeftIsExact)
+                    time = "~" + time;
+
                 Vector2 ts = ImGui.CalcTextSize(time);
-                dl.AddText(new Vector2(cursor - ts.X, y),
-                    ImGui.ColorConvertFloat4ToU32(TextMuted), time);
+                var timeAt = new Vector2(cursor - ts.X, y);
+                dl.AddText(timeAt, ImGui.ColorConvertFloat4ToU32(TextMuted), time);
 
                 float iconX = cursor - ts.X - 17f;
                 DrawGlyphAt(FontAwesomeIcon.Clock, new Vector2(iconX, y + (line - 12f) * 0.5f),
                     12f, TextMuted);
+
+                if (IsMouseOver(new Vector2(iconX, y), new Vector2(cursor, y + line)))
+                {
+                    PaddedTooltip(snap.TimeLeftIsExact
+                        ? "Time left on the listing, read from the game."
+                        : "Estimated from when the listing was last seen.\n\n"
+                            + "The game only reports the real figure while a listing's\n"
+                            + "detail window is open, so this is a countdown rather than\n"
+                            + "a reading. A listing expires an hour after it goes up.");
+                }
+
                 cursor = iconX - 16f;
             }
 
@@ -372,11 +410,48 @@ namespace PfPresets
         /// </summary>
         private void DrawCardActionRow(RecruitmentSnapshot snap, float left, float right, ref float y)
         {
-            float leaveLeft = DrawProgressActionSlot(snap, left, y)
-                ? left + CardActionWidth + CardActionGap
-                : left;
-
+            float slot = CardActionSlotWidth(snap, left, right, out float leaveLeft);
+            DrawProgressActionSlot(snap, left, y, slot);
             DrawLeaveOrDisband(snap, leaveLeft, right, ref y);
+        }
+
+        /// <summary>
+        /// How wide each button in the card's action row gets, and where the row's second button
+        /// starts.
+        ///
+        /// The row fills the card and splits evenly between whatever is in it. Update progress used
+        /// to take a fixed 150px off the left and the rest was pinned to 150 as well, so a card
+        /// twice that wide carried two small buttons and a stretch of nothing - and which buttons
+        /// there are changes with the state, so the empty stretch changed size as you played.
+        /// </summary>
+        private float CardActionSlotWidth(RecruitmentSnapshot snap, float left, float right,
+            out float secondLeft, bool hasSecondary = false)
+        {
+            float room = MathF.Max(90f, right - left);
+            bool progress = HasCardProgressAction(snap, hasSecondary);
+
+            if (!progress)
+            {
+                secondLeft = left;
+                return room;
+            }
+
+            float slot = (room - CardActionGap) * 0.5f;
+            secondLeft = left + slot + CardActionGap;
+            return slot;
+        }
+
+        /// <param name="hasSecondary">Whether the row already carries two actions of its own -
+        /// Queue to duty beside Disband. When it does, Update progress is dropped rather than
+        /// squeezed in as a third: three buttons across a column this narrow are three labels too
+        /// short to read, and the per-player Fetch on each row covers the same ground.</param>
+        private bool HasCardProgressAction(RecruitmentSnapshot snap, bool hasSecondary = false)
+        {
+#if PFP_RATINGS
+            return !hasSecondary && HasProgressAction(snap.DutyRowId, PartyPlayers().Count);
+#else
+            return false;
+#endif
         }
 
         /// <summary>
@@ -387,12 +462,12 @@ namespace PfPresets
         /// One helper for both card bodies. Wiring it into only one of them is exactly how it
         /// ended up paired on the idle card and stranded on the recruiting one.
         /// </summary>
-        private bool DrawProgressActionSlot(RecruitmentSnapshot snap, float left, float y)
+        private bool DrawProgressActionSlot(RecruitmentSnapshot snap, float left, float y, float width)
         {
 #if PFP_RATINGS
             // Progress lookups only exist in the build that has the rating service behind them.
             ImGui.SetCursorScreenPos(new Vector2(left, y));
-            return DrawProgressAction(new Vector2(CardActionWidth, CardButtonH),
+            return DrawProgressAction(new Vector2(width, CardButtonH),
                 snap.DutyName, snap.DutyRowId, PartyPlayers());
 #else
             return false;
@@ -496,23 +571,40 @@ namespace PfPresets
                 return;
             }
 
-            // ── Duty ──
-            ClippedText(dl, snap.DutyName, left, right, y, line, AccentBlue);
-            y += line;
+            // ── Duty, or whose listing this is ──
+            //
+            // The header carries the fight whenever there is one to carry, so this line is either
+            // the fight (when the header could not take it) or, on somebody else's recruitment,
+            // the name of whoever owns it. Never both, and never the same string twice.
+            if (!HeaderNamesDuty(snap))
+            {
+                ClippedText(dl, snap.DutyName, left, right, y, line, AccentBlue);
+                y += line;
+            }
+            else if (ShowsLeaderLine(snap))
+            {
+                ClippedText(dl, $"{DisplayName(snap.LeaderName)} is recruiting",
+                    left, right, y, line, Dim);
+                y += line;
+            }
 
             // ── Comment ──
             // Always one line. Wrapping made every block below it move, which is half the reason
             // the card never looked settled.
-            var commentLines = WrapComment(snap.Comment, right - left);
+            var commentLines = WrapCommentInFace(snap.Comment, right - left, CommentMaxLines);
             if (commentLines.Count > 0)
             {
                 y += CardRowGap;
                 float commentTop = y;
 
-                foreach (string commentLine in commentLines)
+                float commentLine_ = CommentLineHeight();
+                using (CommentFont.Push())
                 {
-                    ClippedCommentLine(dl, commentLine, left, right, y, line, TextPrimary);
-                    y += line;
+                    foreach (string commentLine in commentLines)
+                    {
+                        ClippedCommentLine(dl, commentLine, left, right, y, commentLine_, TextPrimary);
+                        y += commentLine_;
+                    }
                 }
 
                 // The whole block hovers, not just the last line, and always offers the full text -
@@ -537,9 +629,11 @@ namespace PfPresets
             // Update progress leads the row here too. It was only wired into the idle card, so
             // while a listing was actually up - the state this card exists for - the two buttons
             // still sat on different lines at different sizes.
-            float actionLeft = DrawProgressActionSlot(snap, left, y)
-                ? left + CardActionWidth + CardActionGap
-                : left;
+            // Queue to duty is the one state that already needs two buttons of its own, so the
+            // row is told about it before it works out how many it is placing.
+            bool twoActions = snap.IsLeader && snap.IsPartyFull;
+            float slot = CardActionSlotWidth(snap, left, right, out float actionLeft, twoActions);
+            DrawProgressActionSlot(snap, left, y, slot);
 
             // Which action belongs here is a function of state, not of who's leading. The old
             // version offered "End Recruitment" inside a duty, with no party, and at 8 of 8 -
@@ -574,28 +668,46 @@ namespace PfPresets
         private const float CardActionWidth = 150f;
         private const float CardActionGap = 8f;
 
+        /// <summary>
+        /// The mark for a card action, chosen from what the action is called.
+        ///
+        /// Keyed on the label because the labels are already how this function dispatches its
+        /// clicks - see the chain at the bottom of DrawCardAction - and adding a second parameter
+        /// that had to be kept in step with the first would be one more thing to get out of step.
+        /// </summary>
+        private static FontAwesomeIcon ActionIcon(string label) => label switch
+        {
+            "End Recruitment" => FontAwesomeIcon.StopCircle,
+            "Leave Party" => FontAwesomeIcon.SignOutAlt,
+            "Disband Party" or "Disband" => FontAwesomeIcon.UserSlash,
+            "Queue to duty" => FontAwesomeIcon.Hourglass,
+            "Load Details" => FontAwesomeIcon.Search,
+            _ => FontAwesomeIcon.Play,
+        };
+
         private void DrawCardAction(RecruitmentSnapshot snap, string label,
             float left, float right, ref float y, string tooltip, bool isDestructive,
             string? secondary = null, string? secondaryTooltip = null)
         {
-            // The same width as every other card action. Disband beside End Recruitment used to be
-            // sized from its own text, so the same act was a different button depending on which
-            // row it appeared in.
-            float secondaryW = secondary != null ? CardActionWidth : 0f;
-            float gap = secondary != null ? 6f : 0f;
-
-            // Sized to the action, not to the card. A full-width Leave Party was the widest control
-            // on screen, which made walking out of a party look like the card's main purpose; it is
-            // now the same width as Apply preset, which is the button it should be measured
-            // against. Still clamped to the room available, for a narrow window.
-            float w = MathF.Max(90f, MathF.Min(CardActionWidth, right - left - secondaryW - gap));
+            // THE ROW OF ACTIONS FILLS THE CARD, SPLIT EVENLY.
+            //
+            // Both buttons used to be pinned to a fixed 150px so they would match Apply preset in
+            // the list beside them - which stopped being a comparison worth making once the card
+            // moved into a column of its own. What it left was End Recruitment and Disband huddled
+            // against the left edge of a card twice their width, with the rest of the row empty.
+            //
+            // Equal halves when there are two, the whole width when there is one. They are the
+            // card's actions; the card is what they are actions on.
+            float gap = secondary != null ? CardActionGap : 0f;
+            float room = MathF.Max(90f, right - left);
+            float w = secondary != null ? (room - gap) * 0.5f : room;
+            float secondaryW = secondary != null ? room - gap - w : 0f;
 
             ImGui.SetCursorScreenPos(new Vector2(left, y));
 
             var size = new Vector2(w, CardButtonH);
-            bool clicked = isDestructive
-                ? DrawDangerFilledButton($"{label}##CardAction", size)
-                : DrawPrimaryButton($"{label}##CardAction", size);
+            bool clicked = DrawActionButton(ActionIcon(label), label, "CardAction", size,
+                isDestructive ? ActionStyle.Danger : ActionStyle.Primary);
 
             if (ImGui.IsItemHovered())
                 PaddedTooltip(tooltip);
@@ -603,8 +715,8 @@ namespace PfPresets
             if (secondary != null)
             {
                 ImGui.SetCursorScreenPos(new Vector2(left + w + gap, y));
-                bool second = DrawDangerFilledButton($"{secondary}##CardActionSecond",
-                    new Vector2(secondaryW, CardButtonH));
+                bool second = DrawActionButton(ActionIcon(secondary), secondary, "CardActionSecond",
+                    new Vector2(secondaryW, CardButtonH), ActionStyle.Danger);
 
                 if (ImGui.IsItemHovered() && secondaryTooltip != null)
                     PaddedTooltip(secondaryTooltip);
@@ -684,7 +796,7 @@ namespace PfPresets
         private static void DrawRaisedCard(ImDrawListPtr dl, Vector2 min, Vector2 max,
             RecruitmentSnapshot snap)
         {
-            const float radius = 8f;
+            const float radius = Radius.Card;
 
             // Soft drop shadow, approximated with stacked translucent rects - no blurred texture
             // needed and it costs a handful of quads.
@@ -702,21 +814,79 @@ namespace PfPresets
 
             dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), radius);
 
-            // A hairline along the top edge reads as a lit surface rather than a drawn outline.
-            // Nothing else: no ring, no rail. State is already carried by the header's icon and
-            // its role chip, and a coloured edge on top of that was one signal too many.
-            dl.AddLine(new Vector2(min.X + radius, min.Y + 0.5f), new Vector2(max.X - radius, min.Y + 0.5f),
-                ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.05f)), 1f);
+            // The whole edge, not just the top one. A lit top hairline was the old way of saying
+            // "raised surface" and it only reads as that from directly above; the same white at the
+            // same weight all the way round is what every other card in the plugin wears now.
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                radius, ImDrawFlags.None, 1f);
         }
 
-        private static (string Title, Vector4 Color, FontAwesomeIcon Glyph) DescribeActivity(
+        /// <summary>
+        /// Whether the snapshot carries a duty name worth printing.
+        ///
+        /// "None" is the game's own answer for a listing with no duty attached, and it arrives as
+        /// that literal string rather than as an empty one - so every check for a usable duty name
+        /// has to exclude it, and there were three of them written out separately.
+        /// </summary>
+        private static bool HasRealDutyName(RecruitmentSnapshot snap)
+            => !string.IsNullOrWhiteSpace(snap.DutyName)
+               && !snap.DutyName.Equals("None", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether the header's title already contains the fight's name, so the body knows not to
+        /// print it a second time.
+        ///
+        /// Kept beside HasRealDutyName rather than derived from DescribeActivity's output, because
+        /// the measure pass has to ask this BEFORE anything is drawn and DescribeActivity is where
+        /// the drawing happens. The one rule they share is the one written here: a leader's own
+        /// listing is titled after the fight, somebody else's is titled after them.
+        /// </summary>
+        private static bool HeaderNamesDuty(RecruitmentSnapshot snap) => HasRealDutyName(snap);
+
+        /// <summary>
+        /// Whether the card should say whose listing this is, under the fight's name.
+        ///
+        /// Only for somebody else's recruitment. On our own the buttons say it - End Recruitment is
+        /// not a thing offered to a passenger - and a line reading "you are recruiting" under a card
+        /// headed with the fight you are recruiting for is the card talking to itself.
+        /// </summary>
+        private static bool ShowsLeaderLine(RecruitmentSnapshot snap)
+            => snap.IsRecruiting && !snap.IsLeader
+               && !string.IsNullOrWhiteSpace(snap.LeaderName);
+
+        private (string Title, Vector4 Color, FontAwesomeIcon Glyph) DescribeActivity(
             RecruitmentSnapshot snap)
         {
             if (snap.IsRecruiting)
             {
-                return snap.IsLeader
-                    ? ("Your Recruitment", AccentGreen, FontAwesomeIcon.Bullhorn)
-                    : ("Party Recruitment", AccentBlue, FontAwesomeIcon.Bullhorn);
+                // NAMED, when the name is known.
+                //
+                // "Your Recruitment" is a label for the card, not information - the card is the
+                // only thing on the tab and its buttons already say whose listing it is. What
+                // somebody wants off this line is which fight is up, and that was a second line
+                // underneath in a different colour while the header spent itself on a heading.
+                //
+                // The unnamed forms stay for a listing whose duty has not resolved yet, and they
+                // still carry leader-or-not, because with no fight to name that is the only thing
+                // left worth saying.
+                bool named = HasRealDutyName(snap);
+
+                if (snap.IsLeader)
+                    return (named ? $"Recruiting for {snap.DutyName}" : "Your Recruitment",
+                        AccentGreen, FontAwesomeIcon.Bullhorn);
+
+                // THE FIGHT ON TOP, WHOSE IT IS UNDERNEATH.
+                //
+                // Both facts belong on this card and the order was the wrong way round: the header
+                // is the biggest text on the surface and it was spending that on a stranger's name,
+                // with the fight - the thing you are deciding about - relegated to a smaller line
+                // below it. Which duty it is decides whether you care at all; whose listing it is
+                // matters once you already do.
+                //
+                // So the header takes the duty here exactly as it does on our own listing, and the
+                // leader moves to the line beneath. See DrawLeaderLine.
+                return (named ? snap.DutyName : "Party Recruitment",
+                    AccentBlue, FontAwesomeIcon.Bullhorn);
             }
 
             if (snap.Activity == PfActivity.InQueue)
@@ -730,10 +900,7 @@ namespace PfPresets
 
             if (snap.Activity == PfActivity.InDuty)
             {
-                string title = !string.IsNullOrWhiteSpace(snap.DutyName)
-                    && !snap.DutyName.Equals("None", StringComparison.OrdinalIgnoreCase)
-                    ? $"In {snap.DutyName}"
-                    : "In a duty";
+                string title = HasRealDutyName(snap) ? $"In {snap.DutyName}" : "In a duty";
                 return (title, AccentYellow, FontAwesomeIcon.DoorClosed);
             }
 
@@ -748,8 +915,7 @@ namespace PfPresets
             // and the line underneath was already saying so. The header announced an option that
             // was not available while the fight's own progress was listed directly beneath it.
             if (snap.Activity is PfActivity.Idle or PfActivity.InPartyNotLeader
-                && !string.IsNullOrWhiteSpace(snap.DutyName)
-                && !snap.DutyName.Equals("None", StringComparison.OrdinalIgnoreCase))
+                && HasRealDutyName(snap))
             {
                 return ($"Prepping for {snap.DutyName}", AccentGreen, FontAwesomeIcon.CheckCircle);
             }

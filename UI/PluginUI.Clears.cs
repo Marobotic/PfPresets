@@ -182,18 +182,24 @@ namespace PfPresets
         }
 
         /// <summary>Width of a pill, measured the same way it is drawn - one function so the two
-        /// cannot disagree and leave a row overhanging the card.</summary>
+        /// cannot disagree and leave a row overhanging the card.
+        ///
+        /// THE PILLS CARRY THE ROW SIZE, NOT THE CAPTION SIZE. They were set at caption, matching
+        /// the heading above them, which made the fight names the smallest text on the profile -
+        /// and they are its content, not its labelling. The totem or glyph at the head of each pill
+        /// is measured from the line height, so it grows with them and nothing else has to change.
+        /// </summary>
         private float MeasurePill(string sectionKey, ClearedFight fight)
         {
             float w = PillPadX * 2f;
 
-            using (UiCaptionFont.Push())
+            using (UiPillFont.Push())
             {
                 w += MarkWidth(sectionKey, fight, ImGui.GetTextLineHeight()) + 5f;
                 w += ImGui.CalcTextSize(fight.Label).X;
 
                 if (fight.HasParse)
-                    w += 5f + ImGui.CalcTextSize(ParseLabel(fight.Percentile)).X + 6f;
+                    w += 5f + ImGui.CalcTextSize(ParseLabel(fight.Percentile)).X;
             }
 
             return w;
@@ -224,6 +230,19 @@ namespace PfPresets
                 return ImGui.CalcTextSize(FontAwesomeIcon.Crown.ToIconString()).X;
         }
 
+        /// <summary>
+        /// The pill for a clear nobody logged.
+        ///
+        /// A shade below the lowest bracket and flatter than it - the grey of a sub-25 parse still
+        /// carries a little blue, because it is a bracket and belongs to the scale. This carries
+        /// none, because "no log" is not a bad parse; it is the absence of one, and it should read
+        /// as the row being quiet rather than as a seventh colour in the run.
+        ///
+        /// It was white, which put the one pill with nothing to say at the top of the page's
+        /// contrast order.
+        /// </summary>
+        private static readonly Vector4 NoParseFill = ColorFromHex("#2b2e34");
+
         /// <summary>"98%", and "100%" without a decimal point that would only ever read as noise.</summary>
         private static string ParseLabel(double percentile) => $"{Math.Floor(percentile):0}%";
 
@@ -233,7 +252,7 @@ namespace PfPresets
             Vector2 pos = ImGui.GetCursorScreenPos();
 
             float lineH;
-            using (UiCaptionFont.Push())
+            using (UiPillFont.Push())
                 lineH = ImGui.GetTextLineHeight();
 
             float height = lineH + PillPadY * 2f;
@@ -243,10 +262,20 @@ namespace PfPresets
 
             var max = new Vector2(pos.X + pillWidth, pos.Y + height);
 
-            // Only cleared fights reach this - see DrawPillRow - so there is one appearance to
-            // draw and no "absent" state to design around.
-            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(hovered ? Raised : Field));
-            dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
+            // THE PILL IS THE PARSE. A clear with a log carries its bracket's colour as the whole
+            // fill; a clear with no log carries a neutral one. Only cleared fights reach this - see
+            // DrawPillRow - so there is no "absent" state to design around, and the two states left
+            // say the only thing that separates them: whether anybody logged it.
+            //
+            // A real pill, rounded to half its height. It was a square-cornered box called a pill.
+            Vector4 fill = fight.HasParse ? ParseColor(fight.Percentile) : NoParseFill;
+            Vector4 onFill = ReadableOn(fill);
+            float corner = height * 0.5f;
+
+            if (hovered)
+                fill = Lighten(fill, 0.12f);
+
+            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(fill), corner);
 
             float x = pos.X + PillPadX;
             float iconW = MarkWidth(sectionKey, fight, lineH);
@@ -269,34 +298,31 @@ namespace PfPresets
                     // bracket at a glance and the number is confirmation rather than the only
                     // signal. A totem is left alone - it is artwork, and tinting it would only
                     // muddy something already recognisable.
-                    var tint = fight.HasParse ? ParseColor(fight.Percentile) : Dim;
-
                     dl.AddText(new Vector2(x + (iconW - gs.X) * 0.5f, pos.Y + (height - gs.Y) * 0.5f),
-                        ImGui.ColorConvertFloat4ToU32(tint), glyph);
+                        ImGui.ColorConvertFloat4ToU32(onFill), glyph);
                 }
             }
 
             x += iconW + 5f;
 
-            using (UiCaptionFont.Push())
+            using (UiPillFont.Push())
             {
                 dl.AddText(new Vector2(x, pos.Y + PillPadY),
-                    ImGui.ColorConvertFloat4ToU32(Ink), fight.Label);
+                    ImGui.ColorConvertFloat4ToU32(onFill), fight.Label);
 
                 if (fight.HasParse)
                 {
                     x += ImGui.CalcTextSize(fight.Label).X + 5f;
 
                     string parse = ParseLabel(fight.Percentile);
-                    Vector2 ps = ImGui.CalcTextSize(parse);
 
-                    // The chip sits on its own darker ground so the parse colour is legible at any
-                    // band - the greys and greens of a low parse disappear against the pill fill.
-                    var chipMin = new Vector2(x, pos.Y + 2f);
-                    var chipMax = new Vector2(x + ps.X + 6f, max.Y - 2f);
-                    dl.AddRectFilled(chipMin, chipMax, ImGui.ColorConvertFloat4ToU32(Ground));
-                    dl.AddText(new Vector2(x + 3f, pos.Y + PillPadY),
-                        ImGui.ColorConvertFloat4ToU32(ParseColor(fight.Percentile)), parse);
+                    // No chip behind it any more. The number used to sit on its own dark ground
+                    // because the parse colour had to be legible against a neutral pill - now the
+                    // pill IS the colour, and a second surface inside it would be one more edge
+                    // saying nothing. It is set at three-quarter strength so the fight's name
+                    // stays the first thing read.
+                    dl.AddText(new Vector2(x, pos.Y + PillPadY),
+                        ImGui.ColorConvertFloat4ToU32(onFill with { W = 0.75f }), parse);
                 }
             }
 
@@ -345,7 +371,11 @@ namespace PfPresets
             if (width <= 0f)
                 return;
 
-            DrawRuleHair(12f, 8f);
+            // NO RULE ABOVE THIS. The line and its refresh button say when the clears above them
+            // were read and offer to read them again - they are the footnote to that list, not a
+            // section after it. A divider between the two made the footnote look like a separate
+            // thing the card had also been given.
+            ImGui.Dummy(new Vector2(0, 10f));
 
             const float buttonSize = 26f;
             Vector2 rowStart = ImGui.GetCursorScreenPos();
@@ -375,7 +405,12 @@ namespace PfPresets
             // The button sits at the right edge of the card, on the same line.
             ImGui.SetCursorScreenPos(new Vector2(rowStart.X + width - buttonSize, rowStart.Y));
 
-            bool blocked = pending || cooling > TimeSpan.Zero;
+            // The whole-client budget, shown as a disabled button rather than enforced as a refusal
+            // after the press. A control that looks available and then declines teaches people to
+            // press it again, which is the behaviour this limit exists to stop.
+            TimeSpan budget = Ratings?.ClearsBudgetWait() ?? TimeSpan.Zero;
+
+            bool blocked = pending || cooling > TimeSpan.Zero || budget > TimeSpan.Zero;
 
             if (DrawIconButton($"##clears{who.Key}", buttonSize, FontAwesomeIcon.Redo, blocked)
                 && !blocked)
@@ -387,11 +422,14 @@ namespace PfPresets
             {
                 PaddedTooltip(pending
                     ? "They're on the queue. This can take a minute."
-                    : cooling > TimeSpan.Zero
-                        ? $"Checked recently - can be read again in {ShortWait(cooling)}.\n\n"
-                          + "Clears are shared: once anyone fetches them,\neveryone sees the same answer."
-                        : "Fetch their clears from Tomestone and FFLogs.\n\n"
-                          + "Sends their name to both sites. The answer is stored\nfor everyone, and can be refreshed once an hour.");
+                    : budget > TimeSpan.Zero
+                        ? $"That's a lot of lookups - available again in {ShortWait(budget)}.\n\n"
+                          + "Ten every five minutes, across everyone you look up."
+                        : cooling > TimeSpan.Zero
+                            ? $"Checked recently - can be read again in {ShortWait(cooling)}.\n\n"
+                              + "Clears are shared: once anyone fetches them,\neveryone sees the same answer."
+                            : "Fetch their clears from Tomestone and FFLogs.\n\n"
+                              + "Sends their name to both sites. The answer is stored\nfor everyone, and can be refreshed once an hour.");
             }
         }
 
@@ -411,10 +449,27 @@ namespace PfPresets
             bool hovered = ImGui.IsItemHovered() && !disabled;
             bool clicked = ImGui.IsItemClicked() && !disabled;
 
+            // THE SAME LIFT THE SITE MARKS HAVE, from the same easing. This button sits on the same
+            // card as those three and does the same kind of thing - a small square you press - so
+            // one of them rising under the cursor while the other only changed colour read as two
+            // different classes of control.
+            float t = HoverLift(id, hovered);
+            pos = new Vector2(pos.X, pos.Y - 2f * t);
             var max = new Vector2(pos.X + size, pos.Y + size);
 
-            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(hovered ? Raised : Field));
-            dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(hovered ? Accent : RuleHair), 0f, 0, 1f);
+            // The same corner as the site marks beside it, worked out the same way - a share of
+            // the side rather than a fixed number, so the two stay in proportion at any size.
+            float corner = size * 0.28f;
+
+            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(hovered ? Raised : Field), corner);
+
+            if (t > 0f)
+                dl.AddRect(new Vector2(pos.X - 1f, pos.Y - 1f), new Vector2(max.X + 1f, max.Y + 1f),
+                    ImGui.ColorConvertFloat4ToU32(Accent with { W = 0.25f * t }),
+                    corner + 1f, ImDrawFlags.None, 1f);
+
+            dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(hovered ? Accent : RuleHair),
+                corner, ImDrawFlags.None, 1f);
 
             var tint = disabled ? Faint with { W = 0.45f } : hovered ? Accent : Dim;
 

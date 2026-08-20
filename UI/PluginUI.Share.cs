@@ -56,6 +56,9 @@ namespace PfPresets
                 shareExportCode = string.Empty;
                 isShareExportVisible = false;
             }
+
+            if (isShareExportVisible)
+                OpenSheet(SheetKind.ShareExport);
         }
 
         private void OpenShareImport()
@@ -64,150 +67,166 @@ namespace PfPresets
             shareImportError = string.Empty;
             shareImportSuccess = string.Empty;
             isShareImportVisible = true;
+            OpenSheet(SheetKind.ShareImport);
         }
 
         // ══════════════════════════════════════════════════════════
-        //  EXPORT WINDOW
+        //  EXPORT SHEET
         // ══════════════════════════════════════════════════════════
 
-        private void DrawShareExportWindow()
+        private void DrawShareExportSheet()
         {
-            if (!isShareExportVisible) return;
+            if (!isShareExportVisible)
+            {
+                CloseSheet();
+                return;
+            }
 
-            ImGui.SetNextWindowSize(new Vector2(430, 250), ImGuiCond.FirstUseEver);
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
-            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
+            if (!BeginSheet("ShareExport", "Share preset", 340f))
+                return;
 
-            bool open = isShareExportVisible;
             try
             {
-                if (ImGui.Begin("Share Preset##PfPresetsShareExport", ref open, ImGuiWindowFlags.NoCollapse))
+                if (BeginSheetBody(0f))
                 {
-                    isShareExportVisible = open;
-
-                    DrawSectionLabel("SHARE CODE");
-                    ImGui.TextColored(TextSecondary, $"Anyone can paste this into PF Analysis to get \"{shareExportPresetName}\".");
-                    ImGui.Dummy(new Vector2(0, 6));
-
-                    // Read-only so the code can be selected and copied by hand but never edited into
-                    // something that no longer decodes.
-                    PushFramedInput();
-                    ImGui.InputTextMultiline(
-                        "##ShareExportCode",
-                        ref shareExportCode,
-                        ShareCodeBufferSize,
-                        new Vector2(-1, 90),
-                        ImGuiInputTextFlags.ReadOnly);
-                    PopFramedInput();
-
-                    ImGui.Dummy(new Vector2(0, 8));
-
-                    if (DrawPrimaryButton("Copy to clipboard##ShareExportCopy", new Vector2(190, ButtonHeight)))
+                    try
                     {
-                        ImGui.SetClipboardText(shareExportCode);
-                        shareExportCopiedAt = ImGui.GetTime();
-                    }
+                        DrawSectionLabel("SHARE CODE");
+                        ImGui.PushTextWrapPos(0);
+                        ImGui.TextColored(TextSecondary,
+                            $"Anyone can paste this into PF Analysis to get \"{shareExportPresetName}\".");
+                        ImGui.PopTextWrapPos();
+                        ImGui.Dummy(new Vector2(0, 8));
 
-                    ImGui.SameLine(0, 8);
-                    if (DrawSecondaryButton("Close##ShareExportClose", new Vector2(110, ButtonHeight)))
-                        isShareExportVisible = false;
-
-                    // Transient confirmation next to the button.
-                    if (shareExportCopiedAt > 0 && ImGui.GetTime() - shareExportCopiedAt < CopiedFeedbackSeconds)
-                    {
-                        ImGui.SameLine(0, 10);
-                        ImGui.AlignTextToFramePadding();
-                        ImGui.TextColored(AccentGreen, "Copied!");
-                    }
-                }
-            }
-            finally
-            {
-                ImGui.End();
-                ImGui.PopStyleVar(4);
-                ImGui.PopStyleColor(2);
-            }
-        }
-
-        // ══════════════════════════════════════════════════════════
-        //  IMPORT WINDOW
-        // ══════════════════════════════════════════════════════════
-
-        private void DrawShareImportWindow()
-        {
-            if (!isShareImportVisible) return;
-
-            ImGui.SetNextWindowSize(new Vector2(430, 280), ImGuiCond.FirstUseEver);
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
-            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
-
-            bool open = isShareImportVisible;
-            try
-            {
-                if (ImGui.Begin("Import Preset##PfPresetsShareImport", ref open, ImGuiWindowFlags.NoCollapse))
-                {
-                    isShareImportVisible = open;
-
-                    DrawSectionLabel("PASTE A SHARE CODE");
-                    ImGui.TextColored(TextSecondary, "Paste a PF Analysis code below, or pull one straight\nfrom your clipboard.");
-                    ImGui.Dummy(new Vector2(0, 6));
-
-                    PushFramedInput();
-                    if (ImGui.InputTextMultiline(
-                            "##ShareImportInput",
-                            ref shareImportInput,
+                        // Read-only so the code can be selected and copied by hand but never edited
+                        // into something that no longer decodes.
+                        PushFramedInput();
+                        ImGui.InputTextMultiline(
+                            "##ShareExportCode",
+                            ref shareExportCode,
                             ShareCodeBufferSize,
-                            new Vector2(-1, 80)))
-                    {
-                        // Typing again clears the previous result so stale feedback never sits under
-                        // a code the user has since changed.
-                        shareImportError = string.Empty;
-                        shareImportSuccess = string.Empty;
+                            new Vector2(-1, 96),
+                            ImGuiInputTextFlags.ReadOnly);
+                        PopFramedInput();
+
+                        ImGui.Dummy(new Vector2(0, 10));
+
+                        bool justCopied = shareExportCopiedAt > 0
+                            && ImGui.GetTime() - shareExportCopiedAt < CopiedFeedbackSeconds;
+
+                        // The button says so itself rather than growing a "Copied!" beside it. On a
+                        // 460px sheet there is no room for a third thing on that row, and the label
+                        // changing under the cursor is the clearer confirmation anyway.
+                        if (DrawPrimaryButton(
+                                justCopied ? "Copied!##ShareExportCopy" : "Copy to clipboard##ShareExportCopy",
+                                new Vector2(-1, ButtonHeight)))
+                        {
+                            ImGui.SetClipboardText(shareExportCode);
+                            shareExportCopiedAt = ImGui.GetTime();
+                        }
                     }
-                    PopFramedInput();
-
-                    ImGui.Dummy(new Vector2(0, 8));
-
-                    if (DrawPrimaryButton("Import##ShareImportGo", new Vector2(120, ButtonHeight)))
-                        TryImportShareCode(shareImportInput);
-
-                    ImGui.SameLine(0, 8);
-                    if (DrawNeutralButton("From clipboard##ShareImportClipboard", new Vector2(190, ButtonHeight)))
+                    finally
                     {
-                        string clip = ReadClipboard();
-                        shareImportInput = clip;
-                        TryImportShareCode(clip);
+                        EndSheetBody();
                     }
-
-                    ImGui.Dummy(new Vector2(0, 6));
-
-                    if (!string.IsNullOrEmpty(shareImportError))
-                    {
-                        ImGui.PushTextWrapPos(0);
-                        ImGui.TextColored(AccentRed, shareImportError);
-                        ImGui.PopTextWrapPos();
-                    }
-                    else if (!string.IsNullOrEmpty(shareImportSuccess))
-                    {
-                        ImGui.PushTextWrapPos(0);
-                        ImGui.TextColored(AccentGreen, shareImportSuccess);
-                        ImGui.PopTextWrapPos();
-                    }
+                }
+                else
+                {
+                    EndSheetBody();
                 }
             }
             finally
             {
-                ImGui.End();
-                ImGui.PopStyleVar(4);
-                ImGui.PopStyleColor(2);
+                EndSheet();
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  IMPORT SHEET
+        // ══════════════════════════════════════════════════════════
+
+        private void DrawShareImportSheet()
+        {
+            if (!isShareImportVisible)
+            {
+                CloseSheet();
+                return;
+            }
+
+            if (!BeginSheet("ShareImport", "Import preset", 360f))
+                return;
+
+            try
+            {
+                if (BeginSheetBody(0f))
+                {
+                    try
+                    {
+                        DrawSectionLabel("PASTE A SHARE CODE");
+                        ImGui.PushTextWrapPos(0);
+                        ImGui.TextColored(TextSecondary,
+                            "Paste a PF Analysis code below, or pull one straight from your clipboard.");
+                        ImGui.PopTextWrapPos();
+                        ImGui.Dummy(new Vector2(0, 8));
+
+                        PushFramedInput();
+                        if (ImGui.InputTextMultiline(
+                                "##ShareImportInput",
+                                ref shareImportInput,
+                                ShareCodeBufferSize,
+                                new Vector2(-1, 86)))
+                        {
+                            // Typing again clears the previous result so stale feedback never sits
+                            // under a code the user has since changed.
+                            shareImportError = string.Empty;
+                            shareImportSuccess = string.Empty;
+                        }
+                        PopFramedInput();
+
+                        ImGui.Dummy(new Vector2(0, 10));
+
+                        float half = (ImGui.GetContentRegionAvail().X - 8f) * 0.5f;
+
+                        if (DrawPrimaryButton("Import##ShareImportGo", new Vector2(half, ButtonHeight)))
+                            TryImportShareCode(shareImportInput);
+
+                        ImGui.SameLine(0, 8);
+                        if (DrawNeutralButton("From clipboard##ShareImportClipboard",
+                                new Vector2(half, ButtonHeight)))
+                        {
+                            string clip = ReadClipboard();
+                            shareImportInput = clip;
+                            TryImportShareCode(clip);
+                        }
+
+                        ImGui.Dummy(new Vector2(0, 8));
+
+                        if (!string.IsNullOrEmpty(shareImportError))
+                        {
+                            ImGui.PushTextWrapPos(0);
+                            ImGui.TextColored(AccentRed, shareImportError);
+                            ImGui.PopTextWrapPos();
+                        }
+                        else if (!string.IsNullOrEmpty(shareImportSuccess))
+                        {
+                            ImGui.PushTextWrapPos(0);
+                            ImGui.TextColored(AccentGreen, shareImportSuccess);
+                            ImGui.PopTextWrapPos();
+                        }
+                    }
+                    finally
+                    {
+                        EndSheetBody();
+                    }
+                }
+                else
+                {
+                    EndSheetBody();
+                }
+            }
+            finally
+            {
+                EndSheet();
             }
         }
 

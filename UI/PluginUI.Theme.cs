@@ -7,11 +7,12 @@ using Dalamud.Interface.ManagedFontAtlas;
 namespace PfPresets
 {
     /// <summary>
-    /// The plugin's visual language: a flat, ruled, near-black system where structure comes from
-    /// alignment and dividers rather than from decoration.
+    /// The plugin's visual language: a soft, near-black system modelled on a phone, where structure
+    /// comes from grouped rounded surfaces rather than from ruled lines.
     ///
     /// Three rules the rest of the UI is built on:
-    ///   - Nothing is rounded. Every rounding style var is zero, everywhere.
+    ///   - Nothing is square. Every corner in the plugin comes off <see cref="Radius"/>, and a
+    ///     literal 0f passed as a rounding argument is a bug, not a style.
     ///   - One accent, chosen by the player, and it is the only accent in the chrome. Role and vote
     ///     colours are data, not chrome, and never follow it.
     ///   - No colour-only meaning: anything carrying state also carries a word or a shape.
@@ -22,21 +23,143 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
+        // ══════════════════════════════════════════════════════════
+        //  RADIUS
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// The corner scale. Every rounded thing in the plugin picks a step from here; nothing
+        /// invents its own number.
+        ///
+        /// The steps are not arbitrary and they are not a gradient: each one belongs to a layer of
+        /// the layout, and the layers nest. A chip inside a card inside a sheet has to look smaller
+        /// than what contains it or the whole stack reads as one blurry mass, which is the one way a
+        /// rounded design goes wrong that a square one cannot.
+        /// </summary>
+        internal static class Radius
+        {
+            /// <summary>The phone's screen. Deliberately enormous - it is the single strongest
+            /// signal that this window is meant to be held rather than dragged around.</summary>
+            public const float Screen = 30f;
+
+            /// <summary>The tablet's screen. A tablet's corners are gentler than a phone's, at both
+            /// the real hardware and here.</summary>
+            public const float ScreenWide = 18f;
+
+            /// <summary>A modal sheet: the surface that slides up over the body.</summary>
+            public const float Sheet = 18f;
+
+            /// <summary>A card - a grouped block of content sitting on the ground.</summary>
+            public const float Card = 12f;
+
+            /// <summary>Buttons, inputs, and the containers segmented pills sit in.</summary>
+            public const float Control = 10f;
+
+            /// <summary>Icon buttons, menu rows, the app mark, and the pills inside a segmented
+            /// control - anything one step in from a Control.</summary>
+            public const float Small = 8f;
+
+            /// <summary>A job or role tile.</summary>
+            public const float Tile = 7f;
+
+            /// <summary>Chips, badges, and the help marker.</summary>
+            public const float Chip = 6f;
+
+            /// <summary>Fully round. ImGui clamps rounding to half the shorter side, so any number
+            /// past that is a capsule - the toggle track and its knob, and nothing else.</summary>
+            public const float Pill = 999f;
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  LAYOUT
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// The spacing scale. Every gutter, gap and pad in the plugin comes off one of these.
+        ///
+        /// They existed already, one per file, under seven different names - FeedMargin 14,
+        /// RatingsGutter 12, BodyGutter 12, SectionInset 6, ListCardPad 6, CardPad 14, CardPadY 12.
+        /// None of them was wrong on its own and no two tabs agreed, so the Clears feed sat two
+        /// pixels further in than Recruit and the profile card's rows were half the inset of the
+        /// card beside them. That is not a thing anybody can see and name; it is the reason a
+        /// layout "feels off" without anybody being able to say why.
+        ///
+        /// Four steps, and a tab that needs a fifth is a tab doing something the others do not.
+        /// </summary>
+        internal static class Space
+        {
+            /// <summary>Inside a chip, between an icon and its label - the smallest real gap.</summary>
+            public const float Tight = 8f;
+
+            /// <summary>Between two cards in a list, and between a heading and what it heads.</summary>
+            public const float Gap = 10f;
+
+            /// <summary>The margin a tab keeps at its own edges, and between two columns.</summary>
+            public const float Gutter = 12f;
+
+            /// <summary>Padding inside a card, between its edge and its contents.</summary>
+            public const float Card = 14f;
+        }
+
+        /// <summary>Padding inside any card. Named separately because it is read far more often
+        /// than it is set, and <c>Space.Card</c> at a call site reads as a gap rather than as the
+        /// card's own inset.</summary>
+        private const float CardPadding = Space.Card;
+
+        /// <summary>
+        /// The height of a control on a tab's toolbar - the search field and the buttons beside it.
+        ///
+        /// A step taller than a button inside a card, because a toolbar is the top of a surface and
+        /// the first thing on it. Every tab with a toolbar uses this one, so the Recruit search and
+        /// the profile search are the same control at the same size rather than two searches to
+        /// learn.
+        /// </summary>
+        private const float ToolbarButtonHeight = 40f;
+
+        /// <summary>The toolbar's full height, control plus the air above and below it.</summary>
+        private const float ToolbarHeight = ToolbarButtonHeight + Space.Gutter * 2f;
+
         // ── Colour tokens ─────────────────────────────────────────
-        private static readonly Vector4 Ground = ColorFromHex("#171614");        // window background
-        private static readonly Vector4 Panel = ColorFromHex("#1b1a17");         // header, rail, footer
-        private static readonly Vector4 Field = ColorFromHex("#211f1d");         // inputs, closed dropdowns
-        private static readonly Vector4 Raised = ColorFromHex("#262421");        // hover fill
-        private static readonly Vector4 RuleStrong = ColorFromHex("#34312e");    // 2px section dividers
-        private static readonly Vector4 RuleHair = ColorFromHex("#2b2926");      // 1px row dividers
-        private static readonly Vector4 BorderControl = ColorFromHex("#4a4642"); // input / outline borders
-        private static readonly Vector4 Ink = ColorFromHex("#f4f1ee");           // primary text
-        private static readonly Vector4 Dim = ColorFromHex("#a09b95");           // secondary text
-        private static readonly Vector4 Faint = ColorFromHex("#6f6a65");         // help text, placeholders
+        //
+        // TRUE BLACK, and three greys above it. The palette used to be a warm near-black - #171614
+        // ground, #1b1a17 panel - which is a fine scheme and the wrong one for a design shaped like
+        // a phone. A phone's dark mode is neutral and it starts at zero, and the whole point of
+        // starting at zero is that everything above it reads as a surface with a height: the ground
+        // is nothing, the chrome sits just off it, and the cards sit on top of both.
+        //
+        // Read them as a stack, because that is what they are:
+        //   Ground  #000000  nothing. The window's background, and the gaps between cards.
+        //   Panel   #141416  the chrome - sidebar, header, tab bar, footer. Barely off the ground.
+        //   Field   #1c1c1e  a surface you can put something on: cards, inputs, closed dropdowns.
+        //   Raised  #2c2c2e  the same surface, lifted - hover, and the card for a first clear.
+        private static readonly Vector4 Ground = ColorFromHex("#000000");        // window background
+        private static readonly Vector4 Panel = ColorFromHex("#141416");         // header, rail, footer
+        private static readonly Vector4 Field = ColorFromHex("#1c1c1e");         // cards, inputs
+        private static readonly Vector4 Raised = ColorFromHex("#2c2c2e");        // hover fill
+        private static readonly Vector4 RuleStrong = ColorFromHex("#38383a");    // 2px section dividers
+        private static readonly Vector4 RuleHair = ColorFromHex("#2c2c2e");      // 1px row dividers
+        private static readonly Vector4 BorderControl = ColorFromHex("#48484a"); // input / outline borders
+
+        /// <summary>
+        /// The hairline around a card.
+        ///
+        /// White at 12% rather than a grey from the stack above, and the difference matters on a
+        /// palette built out of near-blacks: a fixed grey has to be picked against one background
+        /// and is then wrong on every other, while a translucent white lifts whatever it is drawn
+        /// over by the same amount. The same line reads correctly on a card sitting on the ground,
+        /// on the sidebar, and inside a sheet - which is three places the plugin puts cards.
+        /// </summary>
+        private static readonly Vector4 CardBorder = ColorFromHex("#ffffff1f");
+
+        // The text tones came up with the ground. They were warm greys chosen against a warm
+        // near-black; on true black the darkest of them was help text nobody could read.
+        private static readonly Vector4 Ink = ColorFromHex("#f5f5f7");           // primary text
+        private static readonly Vector4 Dim = ColorFromHex("#a8a8ad");           // secondary text
+        private static readonly Vector4 Faint = ColorFromHex("#7c7c82");         // help text, placeholders
 
         /// <summary>Text drawn on top of an accent fill. Always the ground colour, never white: the
         /// accent is picked by the player and some of the offered ones are light.</summary>
-        private static readonly Vector4 OnAccent = ColorFromHex("#171614");
+        private static readonly Vector4 OnAccent = ColorFromHex("#000000");
 
         /// <summary>Ko-fi, and destructive actions. Nothing else may use it, so the donate button
         /// never competes with Apply preset.</summary>
@@ -173,6 +296,22 @@ namespace PfPresets
 
         /// <summary>Blend towards white in linear space, so the result keeps its hue instead of
         /// washing out the way a straight sRGB lerp does.</summary>
+        /// <summary>
+        /// Ink that can be read on a given fill - the near-black or the near-white, whichever the
+        /// fill is further from.
+        ///
+        /// The parse brackets run from a very light green through mid orange and pink to a dark
+        /// blue, so no single text colour works across them: white on #1eff00 is unreadable and
+        /// black on #0070ff is worse. Relative luminance decides it, weighted the way the eye
+        /// weights the channels rather than as a flat average - green carries most of the
+        /// brightness, and a flat average calls the green bracket dark.
+        /// </summary>
+        private static Vector4 ReadableOn(Vector4 fill)
+        {
+            float luma = 0.2126f * fill.X + 0.7152f * fill.Y + 0.0722f * fill.Z;
+            return luma > 0.55f ? Ground : Ink;
+        }
+
         private static Vector4 Lighten(Vector4 c, float amount) => MixLinear(c, 1f, amount);
 
         /// <summary>Blend towards black in linear space.</summary>
@@ -200,12 +339,32 @@ namespace PfPresets
         // Nothing in the UI is allowed below HelpPx: help text is the whole reason a setting is
         // decidable, and 10px help is help nobody reads.
 
-        private const float PersonPx = 24f;    // a character's own name on their card
-        private const float CaptionPx = 13f;   // the small caps caption over it
-        private const float TitlePx = 19f;
+        // Every size below is the mockup's, in the mockup's pixels.
+        //
+        // A character's own name on their card, and on the recruit tab's solo card - one token, so
+        // the two cannot drift apart. The job mark beside it is set from the mockup separately: it
+        // is 26px there, slightly LARGER than the 24px name, which is not something a line height
+        // would ever produce on its own.
+        private const float PersonPx = 24f;
+        private const float CaptionPx = 12f;   // the small caps caption over it
+        /// <summary>
+        /// A PAGE TITLE. One number for every one of them.
+        ///
+        /// The name of whatever you are looking at - Recruit, My Profile, Clears, Vote, Settings -
+        /// wherever the plugin writes it. A section heading inside the page is a step down from
+        /// this, and a row inside a section a step down again; change it here and every title moves
+        /// together.
+        ///
+        /// Sixteen, measured off the reference: the title's caps come out ten pixels of ink there,
+        /// and this face puts a cap at about 0.71 of the size.
+        /// </summary>
+        private const float TitlePx = 16f;
         private const float HeadingPx = 16f;   // list section headings
-        private const float NamePx = 15f;
-        private const float RowNamePx = 15f;   // a person's name in a list row
+        private const float NamePx = 16f;
+        // A person's name in a list row, and the one face in the scale set larger than its
+        // neighbour on purpose: it is what the eye runs down a party list looking for, and at the
+        // same size as everything else the list read as a block of text rather than as people.
+        private const float RowNamePx = 16f;
         private const float BodyPx = 13f;
         private const float LabelPx = 11f;
         private const float HelpPx = 11.5f;
@@ -215,18 +374,57 @@ namespace PfPresets
         private IFontHandle? uiPersonFont, uiCaptionFont, uiTitleFont, uiHeadingFont, uiNameFont, uiRowNameFont, uiBodyFont,
             uiLabelFont, uiHelpFont;
 
-        private IFontHandle UiPersonFont => Font(ref uiPersonFont, PersonPx);
-        private IFontHandle UiCaptionFont => Font(ref uiCaptionFont, CaptionPx);
-        private IFontHandle UiTitleFont => Font(ref uiTitleFont, TitlePx);
-        private IFontHandle UiHeadingFont => Font(ref uiHeadingFont, HeadingPx);
-        private IFontHandle UiNameFont => Font(ref uiNameFont, NamePx);
+        // WEIGHT IS PART OF THE SCALE, not something a caller chooses at the draw site. A face is
+        // either something being read (regular) or something being scanned - a heading, a label, a
+        // name, a figure (semibold) - and which of those a given size is has been decided here once
+        // rather than argued about in twenty files.
+        private IFontHandle UiPersonFont => Font(ref uiPersonFont, PersonPx, FontWeight.SemiBold);
+        private IFontHandle UiCaptionFont => Font(ref uiCaptionFont, CaptionPx, FontWeight.SemiBold);
+        private IFontHandle UiTitleFont => Font(ref uiTitleFont, TitlePx, FontWeight.SemiBold);
+        private IFontHandle UiHeadingFont => Font(ref uiHeadingFont, HeadingPx, FontWeight.SemiBold);
+        private IFontHandle UiNameFont => Font(ref uiNameFont, NamePx, FontWeight.SemiBold);
         private IFontHandle UiRowNameFont => Font(ref uiRowNameFont, RowNamePx);
+
+        /// <summary>The clear pills on a profile: a fight's name is content, so it is set at the
+        /// same size as a name in any other list rather than at caption size.</summary>
+        private IFontHandle UiPillFont => Font(ref uiPillFont, RowNamePx);
+        private IFontHandle? uiPillFont;
+
+
+
+        /// <summary>A segment's label, a step under body size - the mockup sets these at 12 against
+        /// a 13px page, so a segmented control reads as a control rather than as a line of text.
+        /// </summary>
+        private IFontHandle UiSegmentFont => Font(ref uiSegmentFont, SegmentPx, FontWeight.SemiBold);
+        private IFontHandle? uiSegmentFont;
+        private const float SegmentPx = 12f;
         private IFontHandle UiBodyFont => Font(ref uiBodyFont, BodyPx);
-        private IFontHandle UiLabelFont => Font(ref uiLabelFont, LabelPx);
+
+        // The only two in the scale that never draw a player's words - chips, badges, version
+        // strings and section labels are all ours - so they skip the game-glyph fallback.
+        private IFontHandle UiLabelFont
+            => Font(ref uiLabelFont, LabelPx, FontWeight.SemiBold, userText: false);
         private IFontHandle UiHelpFont => Font(ref uiHelpFont, HelpPx);
+
+        // ── Icons ─────────────────────────────────────────────────
+
+        /// <summary>Icon sizes, set against the text they sit beside rather than inherited from
+        /// Dalamud's shared handle. Small goes with body copy and inside inputs; Row is for the
+        /// action buttons on a list row, which are 26px squares.</summary>
+        private const float IconSmallPx = 12f;
+        private const float IconRowPx = 13f;
+
+        private IFontHandle? iconSmallFont, iconRowFont;
+
+        private IFontHandle UiIconSmall => IconFont(ref iconSmallFont, IconSmallPx);
+        private IFontHandle UiIconRow => IconFont(ref iconRowFont, IconRowPx);
 
         private void DisposeScaleFonts()
         {
+            iconSmallFont?.Dispose();
+            iconRowFont?.Dispose();
+            iconSmallFont = iconRowFont = null;
+
             uiPersonFont?.Dispose();
             uiCaptionFont?.Dispose();
             uiTitleFont?.Dispose();
@@ -313,9 +511,10 @@ namespace PfPresets
         /// <summary>
         /// Pushes the theme's shared ImGui colours and style vars so every plugin window matches.
         ///
-        /// The style vars are half the design: ImGui's defaults round every frame, and a system
-        /// built on rules and alignment falls apart the moment a control has soft corners. Button
-        /// labels are pushed flush left here too, once, rather than in every button.
+        /// The style vars are half the design. ImGui's own defaults round a little, at one value for
+        /// everything; this pushes the real scale, so a combo box and a card and a scrollbar are not
+        /// all curved by the same three pixels. Button labels are pushed flush left here too, once,
+        /// rather than in every button.
         /// </summary>
         private static ThemeScope PushPluginTheme()
         {
@@ -350,19 +549,31 @@ namespace PfPresets
                 (ImGuiCol.ButtonHovered, Raised),
                 (ImGuiCol.ButtonActive, Raised),
                 (ImGuiCol.NavHighlight, Accent),
+
+                // THE RESIZE GRIP IS ERASED, not merely unused.
+                //
+                // Every window the plugin opens carries NoResize, which is supposed to be the end
+                // of it - and there is still a grip in the bottom-right corner of the recruit tab.
+                // Wherever it is coming from (a child, a Dalamud wrapper, a build difference), a
+                // grip on a window with a fixed size is a control that lies about what it does, and
+                // three transparent colours settle it whatever the cause. Nothing else in the
+                // plugin uses these.
+                (ImGuiCol.ResizeGrip, new Vector4(0, 0, 0, 0)),
+                (ImGuiCol.ResizeGripHovered, new Vector4(0, 0, 0, 0)),
+                (ImGuiCol.ResizeGripActive, new Vector4(0, 0, 0, 0)),
             };
             foreach (var (col, value) in colors)
                 ImGui.PushStyleColor(col, value);
 
             (ImGuiStyleVar Var, float Value)[] scalars =
             {
-                (ImGuiStyleVar.FrameRounding, 0f),
-                (ImGuiStyleVar.WindowRounding, 0f),
-                (ImGuiStyleVar.ChildRounding, 0f),
-                (ImGuiStyleVar.PopupRounding, 0f),
-                (ImGuiStyleVar.GrabRounding, 0f),
-                (ImGuiStyleVar.TabRounding, 0f),
-                (ImGuiStyleVar.ScrollbarRounding, 0f),
+                (ImGuiStyleVar.FrameRounding, Radius.Control),
+                (ImGuiStyleVar.WindowRounding, Radius.Sheet),
+                (ImGuiStyleVar.ChildRounding, Radius.Card),
+                (ImGuiStyleVar.PopupRounding, Radius.Control),
+                (ImGuiStyleVar.GrabRounding, Radius.Pill),
+                (ImGuiStyleVar.TabRounding, Radius.Small),
+                (ImGuiStyleVar.ScrollbarRounding, Radius.Pill),
             };
             foreach (var (v, value) in scalars)
                 ImGui.PushStyleVar(v, value);
@@ -381,18 +592,42 @@ namespace PfPresets
         }
 
         /// <summary>Pushes the standard bordered-input style. Balance with <see cref="PopFramedInput"/>.</summary>
+        /// <summary>
+        /// The look every dropdown and text field in the plugin wears.
+        ///
+        /// A FIELD IS TALLER THAN ITS TEXT. ImGui's default frame padding is a few pixels, which
+        /// puts a combo's words hard against its own border and leaves a control the height of one
+        /// line of type - so the fields came out shorter than the buttons beside them and the row
+        /// they shared looked ragged. Twelve across and eight down gives a 36px field, which is the
+        /// height everything else on these sheets is.
+        ///
+        /// The popup a combo opens is styled with it: same corner, same border, and padding of its
+        /// own so the first item is not touching the edge it drops out of.
+        /// </summary>
         private static void PushFramedInput()
         {
             ImGui.PushStyleColor(ImGuiCol.FrameBg, Field);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, Raised);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, Raised);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderControl);
+            ImGui.PushStyleColor(ImGuiCol.PopupBg, Panel);
+            ImGui.PushStyleColor(ImGuiCol.Header, Raised);
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Raised);
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, BorderControl);
+
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(12f, 8f));
+            ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding, Radius.Control);
+            ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, 1f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6f, 6f));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(6f, 4f));
         }
 
         private static void PopFramedInput()
         {
-            ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor(2);
+            ImGui.PopStyleVar(7);
+            ImGui.PopStyleColor(8);
         }
 
         /// <summary>
@@ -420,7 +655,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, AccentHover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, AccentPressed);
             ImGui.PushStyleColor(ImGuiCol.Text, OnAccent);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
@@ -440,15 +675,195 @@ namespace PfPresets
         /// </summary>
         private static bool DrawSecondaryButton(string label, Vector2 size)
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#2f2c28"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#3a3733"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#443f3a"));
+            ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#2c2c2e"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#3a3a3c"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#48484a"));
             ImGui.PushStyleColor(ImGuiCol.Text, Ink);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
             ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(4);
+            return clicked;
+        }
+
+        /// <summary>
+        /// A square icon button: a rounded fill with the glyph set at icon size inside it.
+        ///
+        /// The plugin had three of these written out by hand - the sheets' close, the checklist's,
+        /// and the rating prompt's - and only the first two matched, because the third reached for
+        /// a plain ImGui.Button and got the theme's 10px frame rounding on a 22x20 rect (a lozenge)
+        /// with a glyph from Dalamud's shared icon font (too big for it). One implementation, so a
+        /// cross is a cross wherever it is offered.
+        /// </summary>
+        private bool DrawIconSquareButton(FontAwesomeIcon icon, string id, float size)
+        {
+            Vector2 p = ImGui.GetCursorScreenPos();
+
+            ImGui.InvisibleButton($"##{id}", new Vector2(size, size));
+            bool hot = ImGui.IsItemHovered();
+            bool clicked = ImGui.IsItemClicked();
+
+            var dl = ImGui.GetWindowDrawList();
+            dl.AddRectFilled(p, new Vector2(p.X + size, p.Y + size),
+                ImGui.ColorConvertFloat4ToU32(hot ? Raised : Field), Radius.Small);
+
+            string glyph = icon.ToIconString();
+            using (UiIconRow.Push())
+            {
+                Vector2 gs = ImGui.CalcTextSize(glyph);
+                dl.AddText(new Vector2(p.X + (size - gs.X) * 0.5f, p.Y + (size - gs.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(hot ? Ink : Dim), glyph);
+            }
+
+            return clicked;
+        }
+
+        // ── Navigation rows ───────────────────────────────────────
+
+        /// <summary>The height of a row in a list of destinations.</summary>
+        private const float NavRowHeight = 38f;
+
+        /// <summary>The gap under one. Measured off the settings list, which is the one the
+        /// sidebar is read against.</summary>
+        private const float NavRowGap = 10f;
+
+        /// <summary>
+        /// One row in a list of destinations: an icon, a name, and a fill when it is the one you
+        /// are on. The sidebar's tabs and the settings list's pages are both this.
+        ///
+        /// ONE FUNCTION, BECAUSE TWO COPIES DID NOT STAY IDENTICAL AND WERE NEVER GOING TO.
+        ///
+        /// They were written twice with the same numbers in both - 38 tall, a 2px Dummy after - and
+        /// still came out visibly different, because a Dummy's real height is its own plus ImGui's
+        /// item spacing, and the sidebar zeroes item spacing for its hand-written layout while the
+        /// settings list does not. Same constant, 2px in one column and 10px in the other. Three
+        /// rounds of "matching" them by adjusting the numbers could not fix that, because the
+        /// numbers were already the same.
+        ///
+        /// So the gap is advanced ABSOLUTELY rather than by a spacer, which takes item spacing out
+        /// of the answer entirely, and there is one copy of it rather than two.
+        /// </summary>
+        /// <param name="rowMin">The row's top-left in screen space, so a caller can hang a badge or
+        /// a chip off it without recomputing the geometry.</param>
+        private bool DrawNavRow(string id, FontAwesomeIcon icon, string label, bool active,
+            float width, out Vector2 rowMin)
+        {
+            Vector2 p = ImGui.GetCursorScreenPos();
+            rowMin = p;
+
+            var dl = ImGui.GetWindowDrawList();
+
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0, 0, 0, 0));
+            bool clicked = ImGui.Button($"##nav{id}", new Vector2(width, NavRowHeight));
+            ImGui.PopStyleColor(3);
+
+            bool hovered = ImGui.IsItemHovered();
+
+            if (active || hovered)
+                dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + NavRowHeight),
+                    ImGui.ColorConvertFloat4ToU32(active ? Raised : Field), Radius.Small);
+
+            // Inactive rows sit at Dim, not Faint. Faint is the help-text tone and on a panel it
+            // reads as disabled - navigation that looks switched off is navigation nobody finds.
+            Vector4 colour = active || hovered ? Ink : Dim;
+
+            using (UiIconRow.Push())
+            {
+                string glyph = icon.ToIconString();
+                Vector2 gs = ImGui.CalcTextSize(glyph);
+                dl.AddText(new Vector2(p.X + 12f, p.Y + (NavRowHeight - gs.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(active ? Accent : colour), glyph);
+            }
+
+            using (UiBodyFont.Push())
+            {
+                Vector2 ts = ImGui.CalcTextSize(label);
+                dl.AddText(new Vector2(p.X + 36f, p.Y + (NavRowHeight - ts.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(colour), Fit(label, width - 44f));
+            }
+
+            // Placed, not spaced - see the note above.
+            ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + NavRowHeight + NavRowGap));
+
+            return clicked;
+        }
+
+        /// <summary>Which of the plugin's button styles an action wears.</summary>
+        private enum ActionStyle
+        {
+            /// <summary>The one thing this surface is for. Accent fill.</summary>
+            Primary,
+
+            /// <summary>Something that ends or removes. Red fill.</summary>
+            Danger,
+
+            /// <summary>Everything else. Grey fill.</summary>
+            Secondary,
+        }
+
+        /// <summary>
+        /// A card's action button: an icon and a word, centred together, in one of three fills.
+        ///
+        /// ONE HELPER BECAUSE THERE WERE FOUR WAYS TO DRAW THIS. End Recruitment was a bare label
+        /// flush left; Leave duty was a bare label; Update progress had an icon from Dalamud's
+        /// shared font, noticeably heavier than the words beside it, hung off a hand-written
+        /// centring call. Three buttons that do the same kind of thing, laid out three different
+        /// ways, on two rows a few pixels apart.
+        ///
+        /// Every one of them is icon-then-label, centred as a pair, with the icon at the size of
+        /// the text rather than at whatever Dalamud's handle happens to be. That is what makes a
+        /// row of them read as a row rather than as a collection.
+        ///
+        /// Drawn over the button rather than passed as its label because ImGui cannot mix the icon
+        /// font and the text font in one string.
+        /// </summary>
+        private bool DrawActionButton(FontAwesomeIcon icon, string label, string id, Vector2 size,
+            ActionStyle style, bool enabled = true)
+        {
+            Vector2 at = ImGui.GetCursorScreenPos();
+
+            if (!enabled)
+                ImGui.BeginDisabled();
+
+            bool clicked = style switch
+            {
+                ActionStyle.Primary => DrawPrimaryButton($"##{id}", size),
+                ActionStyle.Danger => DrawDangerFilledButton($"##{id}", size),
+                _ => DrawSecondaryButton($"##{id}", size),
+            };
+
+            if (!enabled)
+                ImGui.EndDisabled();
+
+            Vector4 ink = style == ActionStyle.Primary ? OnAccent : Ink;
+            DrawIconLabelCentered(icon, label, at, size, ink, enabled ? 1f : 0.5f, UiIconSmall);
+
+            return clicked && enabled;
+        }
+
+        /// <summary>
+        /// The small icon buttons that sit on a card - edit, share, the kebab on a preset row.
+        ///
+        /// A TONE OF THEIR OWN, and this is the whole reason the helper exists. They used to be
+        /// ordinary secondary buttons at #2c2c2e, which is exactly the colour a card turns when the
+        /// mouse is over it - so the moment you reached for one of them the three buttons dissolved
+        /// into the row and you were aiming at nothing. Sitting a step above the card's hover state
+        /// keeps them visible in both, which is the one thing a control on a hoverable surface has
+        /// to do.
+        /// </summary>
+        private static bool DrawRowActionButton(string label, Vector2 size)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#38383a"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#48484a"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#545456"));
+            ImGui.PushStyleColor(ImGuiCol.Text, Ink);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Small);
+            bool clicked = ImGui.Button(label, size);
+            ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
             return clicked;
         }
@@ -480,7 +895,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, AccentAlpha(0.28f));
             ImGui.PushStyleColor(ImGuiCol.Text, Accent);
             ImGui.PushStyleColor(ImGuiCol.Border, Accent);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
@@ -503,9 +918,9 @@ namespace PfPresets
         {
             ImGui.PushStyleColor(ImGuiCol.Button, Ink);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#ffffff"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#d9d5d0"));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#d8d8dc"));
             ImGui.PushStyleColor(ImGuiCol.Text, Ground);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
@@ -527,7 +942,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Lighten(KoFi, 0.12f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(KoFi, 0.15f));
             ImGui.PushStyleColor(ImGuiCol.Text, Ink);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
@@ -550,7 +965,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Lighten(KoFi, 0.12f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(KoFi, 0.15f));
             ImGui.PushStyleColor(ImGuiCol.Text, Ink);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
@@ -558,6 +973,73 @@ namespace PfPresets
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
             return clicked;
+        }
+
+        /// <summary>
+        /// A segmented control: two to four mutually exclusive choices in one track, the chosen one
+        /// filled with the accent.
+        ///
+        /// This is what replaced the dropdowns on the settings surfaces. A combo box for three
+        /// options hides two of them behind a click and tells you nothing about what else is on
+        /// offer until you open it; segmented, all of them are readable at once and choosing one is
+        /// a single press. Above four it stops being a fair trade - the segments get too narrow to
+        /// hold their own labels - and the caller keeps its dropdown.
+        /// </summary>
+        /// <returns>True on the frame a different segment was chosen.</returns>
+        private bool DrawSegmentedControl(string id, string[] options, ref int value, float width)
+        {
+            const float trackPad = 3f;
+            const float segH = 30f;
+            float trackH = segH + trackPad * 2f;
+
+            Vector2 origin = ImGui.GetCursorScreenPos();
+            var dl = ImGui.GetWindowDrawList();
+
+            dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + trackH),
+                ImGui.ColorConvertFloat4ToU32(Field), Radius.Control);
+            dl.AddRect(origin, new Vector2(origin.X + width, origin.Y + trackH),
+                ImGui.ColorConvertFloat4ToU32(BorderControl), Radius.Control, ImDrawFlags.None, 1f);
+
+            float segW = (width - trackPad * 2f) / options.Length;
+            bool changed = false;
+
+            for (int i = 0; i < options.Length; i++)
+            {
+                var min = new Vector2(origin.X + trackPad + segW * i, origin.Y + trackPad);
+                var max = new Vector2(min.X + segW, min.Y + segH);
+
+                ImGui.SetCursorScreenPos(min);
+                ImGui.InvisibleButton($"##seg{id}{i}", new Vector2(segW, segH));
+                bool hot = ImGui.IsItemHovered();
+
+                if (ImGui.IsItemClicked() && value != i)
+                {
+                    value = i;
+                    changed = true;
+                }
+
+                bool active = value == i;
+
+                if (active)
+                    dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
+                else if (hot)
+                    dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
+
+                using (UiSegmentFont.Push())
+                {
+                    // Ellipsised, not clipped. A segment is sized by division rather than by its
+                    // label, so the longest word decides nothing and any of them can overrun.
+                    string shown = Fit(options[i], segW - 12f);
+                    Vector2 ts = ImGui.CalcTextSize(shown);
+                    dl.AddText(new Vector2(min.X + (segW - ts.X) * 0.5f, min.Y + (segH - ts.Y) * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(active ? OnAccent : hot ? Ink : Dim), shown);
+                }
+            }
+
+            ImGui.SetCursorScreenPos(origin);
+            ImGui.Dummy(new Vector2(width, trackH));
+
+            return changed;
         }
 
         /// <summary>
@@ -573,35 +1055,100 @@ namespace PfPresets
         /// </summary>
         private bool DrawSearchField(string id, string hint, ref string value, float width,
             float height = ButtonHeight)
-            => DrawSearchFieldCore(id, hint, ref value, width, height, ImGuiInputTextFlags.None);
+            => DrawSearchFieldCore(id, hint, ref value, width, height, ImGuiInputTextFlags.None,
+                out _);
+
+        /// <summary>
+        /// The search field with a clear button on its right end, shown only while there is
+        /// something to clear.
+        /// </summary>
+        /// <param name="cleared">True on the frame the cross was pressed. The value is already
+        /// empty by then.</param>
+        private bool DrawSearchFieldClearable(string id, string hint, ref string value, float width,
+            out bool cleared, float height = ButtonHeight)
+            => DrawSearchFieldCore(id, hint, ref value, width, height, ImGuiInputTextFlags.None,
+                out cleared, allowClear: true);
 
         private bool DrawSearchFieldCore(string id, string hint, ref string value, float width,
-            float height, ImGuiInputTextFlags flags)
+            float height, ImGuiInputTextFlags flags, out bool cleared, bool allowClear = false)
         {
+            cleared = false;
+
             Vector2 origin = ImGui.GetCursorScreenPos();
             var dl = ImGui.GetWindowDrawList();
 
             float glyphW;
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            using (UiIconSmall.Push())
                 glyphW = ImGui.CalcTextSize(FontAwesomeIcon.Search.ToIconString()).X;
 
-            float inset = 10f + glyphW + 8f;
+            float inset = 12f + glyphW + 8f;
+            bool showClear = allowClear && value.Length > 0;
 
+            // The cross gets exactly the padding the field already keeps on that side, so the
+            // point where ImGui clips the text is the point where the button starts - a wider
+            // target would sit over the tail of a long query.
+            float trailing = showClear ? inset : 0f;
+
+            // PUSHED AFTER THE FRAME STYLE, NOT BEFORE IT.
+            //
+            // PushFramedInput sets a frame padding of its own so that plain fields and dropdowns
+            // come out the right height. ImGui takes the last value pushed, so doing it in the
+            // other order threw this field's inset away and started the text at 12px - directly
+            // under the magnifier, which is what put the icon on top of the word.
+            PushFramedInput();
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(inset, (height - ImGui.GetTextLineHeight()) * 0.5f));
-            PushFramedInput();
-            ImGui.SetNextItemWidth(width);
-            bool changed = ImGui.InputTextWithHint($"##{id}", hint, ref value, 128, flags);
-            PopFramedInput();
-            ImGui.PopStyleVar();
 
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            ImGui.SetNextItemWidth(width);
+            bool changed = ImGui.InputTextWithHint($"##{id}", hint, ref value,
+                128, flags);
+
+            ImGui.PopStyleVar();
+            PopFramedInput();
+
+            // The magnifier at icon-small, not at Dalamud's shared size. It was bigger than the
+            // placeholder beside it, which made the field look like a button with a badge on it.
+            using (UiIconSmall.Push())
             {
                 string glyph = FontAwesomeIcon.Search.ToIconString();
                 Vector2 gs = ImGui.CalcTextSize(glyph);
-                dl.AddText(new Vector2(origin.X + 10f, origin.Y + (height - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Faint), glyph);
+
+                // Centred on the glyph's ink rather than on its line box. A FontAwesome glyph does
+                // not fill its em, so halving the line height leaves it sitting low - which is the
+                // other half of why this looked off.
+                DrawTextCentredOnInk(glyph,
+                    new Vector2(origin.X + 12f + gs.X * 0.5f, origin.Y + height * 0.5f), Faint);
             }
+
+            if (!showClear)
+                return changed;
+
+            // Submitted AFTER the input, which is what makes it clickable at all: ImGui tests the
+            // most recently submitted item in a window first, so a button laid over a text field
+            // has to come second or the field swallows the press.
+            var clearMin = new Vector2(origin.X + width - trailing, origin.Y);
+            ImGui.SetCursorScreenPos(clearMin);
+            ImGui.InvisibleButton($"##{id}clear", new Vector2(trailing, height));
+            bool hot = ImGui.IsItemHovered();
+
+            if (ImGui.IsItemClicked())
+            {
+                value = string.Empty;
+                cleared = true;
+                changed = true;
+            }
+
+            using (UiIconSmall.Push())
+            {
+                string glyph = FontAwesomeIcon.Times.ToIconString();
+                Vector2 gs = ImGui.CalcTextSize(glyph);
+                dl.AddText(new Vector2(clearMin.X + (trailing - gs.X) * 0.5f,
+                        clearMin.Y + (height - gs.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(hot ? Ink : Faint), glyph);
+            }
+
+            if (hot)
+                PaddedTooltip("Clear the search");
 
             return changed;
         }
@@ -613,19 +1160,20 @@ namespace PfPresets
         private bool DrawSearchFieldSubmit(string id, string hint, ref string value, float width,
             float height = ButtonHeight)
             => DrawSearchFieldCore(id, hint, ref value, width, height,
-                ImGuiInputTextFlags.EnterReturnsTrue);
+                ImGuiInputTextFlags.EnterReturnsTrue, out _);
 
         /// <summary>
         /// Uppercase text with letter-spacing, drawn a character at a time.
         ///
-        /// ImGui has no tracking and the bundled face has no bold, so both are done by hand: each
-        /// glyph is advanced by an extra fraction of the font size, and weight is faked by drawing
-        /// the run twice a hair apart. Shipping a second font file for one heading is a worse trade
-        /// than a sub-pixel double-strike.
+        /// ImGui has no tracking, so it is done by hand: each glyph is advanced by an extra fraction
+        /// of the font size. Weight used to be done by hand here too - the run was drawn twice,
+        /// 0.6px apart, because the bundled face had no bold. It does now (see FontWeight), and a
+        /// double-strike over a real semibold is a smear, so it is gone. Push a semibold handle
+        /// around the call if the heading wants weight.
         /// </summary>
         /// <returns>The width the run occupied, so callers can lay out beside it.</returns>
         private static float DrawTrackedCaps(ImDrawListPtr dl, Vector2 pos, string text,
-            Vector4 colour, float tracking = 0.1f, bool bold = true)
+            Vector4 colour, float tracking = 0.1f)
         {
             string shown = text.ToUpperInvariant();
             uint col = ImGui.ColorConvertFloat4ToU32(colour);
@@ -636,9 +1184,6 @@ namespace PfPresets
             {
                 string glyph = c.ToString();
                 dl.AddText(new Vector2(x, pos.Y), col, glyph);
-                if (bold)
-                    dl.AddText(new Vector2(x + 0.6f, pos.Y), col, glyph);
-
                 x += ImGui.CalcTextSize(glyph).X + extra;
             }
 
@@ -678,10 +1223,123 @@ namespace PfPresets
         /// </summary>
         private void DrawSectionLabel(string label)
         {
-            DrawRuleStrong(padBelow: 8f);
+            // NO RULE, like every other heading in the plugin. This one is a FIELD label - it names
+            // the input under it inside a form, which is why it keeps the accent and the small caps
+            // while a tab's heading is the quieter tracked caps of DrawListHeading. Two roles, two
+            // looks, and neither of them draws a line any more.
             using (UiLabelFont.Push())
                 ImGui.TextColored(Accent, label.ToUpperInvariant());
             ImGui.Dummy(new Vector2(0, 6));
+        }
+
+        // ── Settings sections ─────────────────────────────────────
+
+        private ImDrawListPtr settingsCardDl;
+        private Vector2 settingsCardMin;
+        private float settingsCardWidth;
+
+        /// <summary>
+        /// Opens a settings section: the heading, then a card for the rows under it.
+        ///
+        /// The Settings tab was the one surface still built the old way - accent labels over a 2px
+        /// rule, rows on the bare ground - so it read as a different plugin from the three tabs
+        /// beside it. Grouped rounded cards under grey caps headings is what every other tab does
+        /// here, and what the system this design is modelled on does with settings specifically.
+        ///
+        /// Imperative rather than a lambda because the sections are long, branch several times, and
+        /// indent and unindent inside their own conditionals; wrapping each one in a closure would
+        /// have meant re-indenting several hundred lines to change where a background is painted.
+        /// Always pair with <see cref="EndSettingsSection"/>.
+        /// </summary>
+        private void BeginSettingsSection(string label)
+        {
+            // THE ACCENT, at label size in tracked caps - the mockup sets every settings heading
+            // that way, and it is what divides one group of rows from the next.
+            DrawSectionLabel(label);
+
+            settingsCardDl = ImGui.GetWindowDrawList();
+            settingsCardDl.ChannelsSplit(2);
+            settingsCardDl.ChannelsSetCurrent(1);
+
+            settingsCardMin = ImGui.GetCursorScreenPos();
+
+            // A real margin off the right, not a hairline of one. The card ran to the very edge of
+            // the page, which put its rounded corner and its border against the panel's own and,
+            // on a page long enough to scroll, underneath the scrollbar.
+            settingsCardWidth = ImGui.GetContentRegionAvail().X - SettingsPageMargin;
+
+            // MEASURED FROM THE CURSOR, NOT FROM A GROUP.
+            //
+            // This used to wrap the section in BeginGroup/EndGroup and take the height from
+            // GetItemRectSize. That works while everything inside flows; the rows here place
+            // themselves in screen space, and a group whose contents set the cursor rather than
+            // advancing it cannot be relied on to report the height they used - which is how a
+            // card ends up drawn a few pixels tall, or not visibly at all. The rows all advance the
+            // cursor by an exact amount, so the distance it travels IS the height.
+            settingsCardTop = settingsCardMin.Y;
+
+            ImGui.Dummy(new Vector2(settingsCardWidth, SettingsCardPadY));
+            ImGui.Indent(CardPadding);
+        }
+
+        /// <summary>Room above the first row and below the last, inside the card.</summary>
+        private const float SettingsCardPadY = 8f;
+
+        /// <summary>The page's own margin: how far a card stops short of the panel edge.</summary>
+        private const float SettingsPageMargin = 18f;
+
+        private float settingsCardTop;
+
+        private void EndSettingsSection()
+        {
+            ImGui.Unindent(CardPadding);
+            ImGui.Dummy(new Vector2(settingsCardWidth, SettingsCardPadY));
+
+            float cardHeight = ImGui.GetCursorScreenPos().Y - settingsCardTop;
+
+            settingsCardDl.ChannelsSetCurrent(0);
+            var cardMax = new Vector2(settingsCardMin.X + settingsCardWidth,
+                                      settingsCardMin.Y + cardHeight);
+            settingsCardDl.AddRectFilled(settingsCardMin, cardMax,
+                ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
+            settingsCardDl.AddRect(settingsCardMin, cardMax,
+                ImGui.ColorConvertFloat4ToU32(CardBorder), Radius.Card, ImDrawFlags.None, 1f);
+            settingsCardDl.ChannelsMerge();
+
+            ImGui.Dummy(new Vector2(0, Space.Gutter + 6f));
+        }
+
+        /// <summary>
+        /// The help mark at the end of a settings row: an 18px square with a hairline, a 5px
+        /// corner and a question mark in it, from the mockup.
+        ///
+        /// Placed from its left edge, immediately after the words it belongs to. Out at the end of
+        /// the row it read as a third column of its own, sitting a long way from the sentence it
+        /// was marking.
+        /// </summary>
+        private void DrawRowHelpMark(string id, string explanation, Vector2 centreLeft)
+        {
+            const float side = 18f;
+            var min = new Vector2(centreLeft.X, centreLeft.Y - side * 0.5f);
+            var max = new Vector2(min.X + side, min.Y + side);
+
+            ImGui.SetCursorScreenPos(min);
+            ImGui.InvisibleButton($"##help{id}", new Vector2(side, side));
+            bool hot = ImGui.IsItemHovered();
+
+            var dl = ImGui.GetWindowDrawList();
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(hot ? Dim : BorderControl),
+                5f, ImDrawFlags.None, 1f);
+
+            using (UiLabelFont.Push())
+            {
+                Vector2 ts = ImGui.CalcTextSize("?");
+                dl.AddText(new Vector2(min.X + (side - ts.X) * 0.5f, min.Y + (side - ts.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(hot ? Ink : Dim), "?");
+            }
+
+            if (hot)
+                WrappedTooltip(explanation);
         }
 
         /// <summary>Gap between whatever a help marker explains and the marker itself.</summary>
@@ -694,8 +1352,7 @@ namespace PfPresets
         /// of prose with the controls buried in it. Behind the marker, the surface reads as a list
         /// of settings again and the sentence is one hover away for anyone who wants it.
         ///
-        /// Square, like every other box in the plugin - it was the last round thing in a design
-        /// with no rounding anywhere else, including the radius argument of AddRect.
+        /// Rounded at the chip step, like every other small box in the plugin.
         ///
         /// Drawn rather than composed from ImGui's own widgets: a button sized down this far still
         /// reserves a frame's worth of padding around itself, which would push the marker off the
@@ -712,9 +1369,10 @@ namespace PfPresets
             var max = new Vector2(origin.X + side, origin.Y + side);
             var dl = ImGui.GetWindowDrawList();
 
-            dl.AddRectFilled(origin, max, ImGui.ColorConvertFloat4ToU32(hot ? Raised : Field), 0f);
+            dl.AddRectFilled(origin, max, ImGui.ColorConvertFloat4ToU32(hot ? Raised : Field),
+                Radius.Chip);
             dl.AddRect(origin, max, ImGui.ColorConvertFloat4ToU32(hot ? Accent : BorderControl),
-                0f, ImDrawFlags.None, 1.2f);
+                Radius.Chip, ImDrawFlags.None, 1.2f);
 
             DrawGlyphCentred("?", (origin + max) * 0.5f, hot ? Ink : Dim);
 
@@ -725,6 +1383,66 @@ namespace PfPresets
         /// <summary>Side of the help square. Rounded to a whole pixel so its 1.2px border lands on
         /// the same pixel on all four sides instead of blurring on two of them.</summary>
         private static float HelpMarkSide() => MathF.Max(13f, MathF.Round(ImGui.GetTextLineHeight()));
+
+        /// <summary>
+        /// Draws a short run of text centred on a point by its INK, not by its em box.
+        ///
+        /// The string version of <see cref="DrawGlyphCentred"/>, and it exists for the same reason:
+        /// CalcTextSize measures the em box, which reserves room under the baseline for descenders
+        /// no matter whether the word has any. Centring that box drops a word like "Fetch" - all
+        /// caps-height and no tail - visibly below the middle of a small chip.
+        ///
+        /// The vertical extent is taken from the glyphs actually present, so "Fetch" is measured
+        /// from the top of the F to the baseline and "Query" from the top of the Q to the bottom of
+        /// the y. Horizontally the em box is fine and is what is used: side bearings are what keeps
+        /// letters from touching their neighbours, and stripping them would only shift the run.
+        /// </summary>
+        private static unsafe void DrawTextCentredOnInk(string text, Vector2 centre, Vector4 colour)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            var dl = ImGui.GetWindowDrawList();
+            uint col = ImGui.ColorConvertFloat4ToU32(colour);
+            Vector2 box = ImGui.CalcTextSize(text);
+
+            float top = float.MaxValue, bottom = float.MinValue;
+
+            try
+            {
+                var font = ImGui.GetFont();
+                float scale = font.FontSize > 0f ? ImGui.GetFontSize() / font.FontSize : 1f;
+
+                foreach (char c in text)
+                {
+                    if (c == ' ')
+                        continue;
+
+                    var ink = font.FindGlyph(c);
+                    if (ink == null)
+                        continue;
+
+                    top = MathF.Min(top, ink->Y0 * scale);
+                    bottom = MathF.Max(bottom, ink->Y1 * scale);
+                }
+            }
+            catch (Exception)
+            {
+                // Any binding-level surprise falls through to the em box below rather than taking
+                // the frame with it.
+            }
+
+            // Nothing measurable - a string of spaces, or a font that would not answer. The em box
+            // is the honest fallback and is what every other caller in the plugin uses.
+            if (top > bottom)
+            {
+                dl.AddText(centre - box * 0.5f, col, text);
+                return;
+            }
+
+            dl.AddText(new Vector2(centre.X - box.X * 0.5f, centre.Y - (top + bottom) * 0.5f),
+                col, text);
+        }
 
         /// <summary>
         /// Draws one glyph centred on a point by its *ink*, not by its em box.
@@ -770,6 +1488,96 @@ namespace PfPresets
             dl.AddText(centre - box * 0.5f, col, glyph);
         }
 
+        // ── iOS list rows ─────────────────────────────────────────
+
+        /// <summary>
+        /// The height of one row in a grouped list.
+        ///
+        /// Forty-four points, which is the tap target the system this design follows has used since
+        /// there were touch screens to design for. It is not a look - it is the smallest thing a
+        /// finger hits reliably - and every list in the plugin is built from it so that a settings
+        /// row, a person in the met list and a clear in the feed are all the same object at the
+        /// same size.
+        /// </summary>
+        private const float ListRowHeight = 44f;
+
+        /// <summary>
+        /// One row of a grouped list: a full-width hit target with a hover wash, laid out by the
+        /// caller from the rect it hands back.
+        ///
+        /// The cursor is left exactly where it started, so everything inside the row is placed in
+        /// screen space against <paramref name="min"/>. A row that flowed its contents would put
+        /// the control wherever the label happened to end, and a list whose switches do not line up
+        /// is the single clearest sign that a layout was not designed as a list.
+        /// </summary>
+        private bool BeginListRow(string id, float width, out Vector2 min, float? height = null)
+        {
+            float rowH = height ?? ListRowHeight;
+            min = ImGui.GetCursorScreenPos();
+
+            ImGui.InvisibleButton($"##row{id}", new Vector2(width, rowH));
+            bool clicked = ImGui.IsItemClicked();
+
+            if (ImGui.IsItemHovered())
+                ImGui.GetWindowDrawList().AddRectFilled(min,
+                    new Vector2(min.X + width, min.Y + rowH),
+                    ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
+
+            ImGui.SetCursorScreenPos(min);
+            return clicked;
+        }
+
+        /// <summary>Moves the cursor past a row drawn with <see cref="BeginListRow"/>.</summary>
+        private static void EndListRow(Vector2 min)
+            => ImGui.SetCursorScreenPos(new Vector2(min.X, min.Y + ListRowHeight));
+
+        /// <summary>
+        /// The hairline between two rows.
+        ///
+        /// IT STARTS AT THE TEXT, NOT AT THE EDGE. A separator that spans the whole card cuts the
+        /// group into slices; one that begins where the label begins reads as the rows being a list
+        /// rather than the card being divided. It runs out to the card's trailing edge, which is
+        /// the other half of the same idea - the line leads the eye along the row and off it.
+        /// </summary>
+        private static void DrawRowSeparator(ImDrawListPtr dl, Vector2 rowMin, float rowHeight,
+            float textInset, float rightEdge)
+        {
+            float y = rowMin.Y + rowHeight;
+            dl.AddRectFilled(new Vector2(rowMin.X + textInset, y), new Vector2(rightEdge, y + 1f),
+                ImGui.ColorConvertFloat4ToU32(RuleHair));
+        }
+
+        /// <summary>Room a leading selection mark takes, so a row's label knows where to start.
+        /// </summary>
+        private const float RowCheckColumn = 26f;
+
+        /// <summary>
+        /// The mark on the chosen row of a single-choice list: a tick in the accent, LEADING the
+        /// label.
+        ///
+        /// It sat at the trailing edge, which is where the system this follows puts it - and at the
+        /// width these cards run to, the mark ended up a hand's breadth from the words it belongs
+        /// to and read as a column of its own. Ahead of the label it is next to what it marks.
+        ///
+        /// A tick, not a filled circle: a radio asks you to read a control, a tick states a fact
+        /// about the row it is on, and it needs no second unchecked shape on every other option.
+        /// </summary>
+        private void DrawRowCheck(Vector2 rowMin, bool chosen)
+        {
+            if (!chosen)
+                return;
+
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                string glyph = FontAwesomeIcon.Check.ToIconString();
+                Vector2 gs = ImGui.CalcTextSize(glyph);
+                ImGui.GetWindowDrawList().AddText(
+                    new Vector2(rowMin.X + (RowCheckColumn - gs.X) * 0.5f,
+                                rowMin.Y + (ListRowHeight - gs.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(Accent), glyph);
+            }
+        }
+
         /// <summary>
         /// Puts a <see cref="DrawHelpMark"/> after whatever was just drawn, centred against it.
         ///
@@ -804,12 +1612,24 @@ namespace PfPresets
         /// land it under the heading rather than beside it.</param>
         private void DrawListHeading(string label, string? helpId = null, string? help = null)
         {
-            DrawRuleStrong(padBelow: 8f);
+            // NO RULE ABOVE IT. A heading over a list now sits on the ground with a card under it,
+            // and a full-width line above that reads as the top edge of something the section has
+            // been pushed inside - which is exactly what it looked like on the profile tab. The
+            // gap above the heading is the separation.
+            //
+            // AND THE GAP ABOVE IS THE BIGGER OF THE TWO. A heading belongs to what is under it,
+            // so it has to sit nearer to that than to whatever it is being separated from - the
+            // profile tab had it the other way round, with the two headings tucked up against the
+            // search field and floating well clear of the cards they name.
+            ImGui.Dummy(new Vector2(0, Space.Gutter));
 
             var dl = ImGui.GetWindowDrawList();
             Vector2 p = ImGui.GetCursorScreenPos();
 
-            using (UiHeadingFont.Push())
+            // Body size, a step below the tab's own name in the header above it - see
+            // DrawHeaderStrip. A section heading is a label for the block under it, not a title
+            // competing with the page's.
+            using (UiBodyFont.Push())
             {
                 float lineH = ImGui.GetTextLineHeight();
 
@@ -822,20 +1642,75 @@ namespace PfPresets
             if (helpId != null && help != null)
                 SameLineHelpDot(helpId, help);
 
-            ImGui.Dummy(new Vector2(0, 6));
+            // Half the gap above it, so the heading reads as attached to the card below rather
+            // than floating between the two.
+            ImGui.Dummy(new Vector2(0, Space.Tight - 2f));
         }
 
         /// <summary>
-        /// The square toggle that replaces every checkbox: a 34x18 track with a 14x14 knob, accent
-        /// when on, and no rounding anywhere.
+        /// Draws a block of rows onto a card, the way the profile card beside it is drawn.
+        ///
+        /// THE TWO COLUMNS HAVE TO MATCH. One of them was a card with a heading inside it and the
+        /// other was rows on the bare ground with a heading above them, which on a black background
+        /// is a card next to nothing - the list did not look like part of the same tab, and its
+        /// rows ran off the right edge with no edge to stop them.
+        ///
+        /// Height is measured rather than predicted: the card is drawn on a background channel
+        /// after the body has been laid out and its extent is known, so nothing has to be told in
+        /// advance how many rows it is about to get.
+        /// </summary>
+        private void DrawListCard(Action body)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            dl.ChannelsSplit(2);
+            dl.ChannelsSetCurrent(1);
+
+            Vector2 cardMin = ImGui.GetCursorScreenPos();
+            float cardWidth = ImGui.GetContentRegionAvail().X;
+
+            ImGui.BeginGroup();
+            try
+            {
+                ImGui.Dummy(new Vector2(cardWidth, ListCardPad));
+                body();
+                ImGui.Dummy(new Vector2(cardWidth, ListCardPad));
+            }
+            finally
+            {
+                ImGui.EndGroup();
+            }
+
+            float cardHeight = ImGui.GetItemRectSize().Y;
+
+            dl.ChannelsSetCurrent(0);
+            var cardMax = new Vector2(cardMin.X + cardWidth, cardMin.Y + cardHeight);
+            dl.AddRectFilled(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
+            dl.AddRect(cardMin, cardMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                Radius.Card, ImDrawFlags.None, 1f);
+
+            dl.ChannelsMerge();
+        }
+
+        /// <summary>Padding above and below a list card's rows. The card's own inset, like every
+        /// other card - it was 6, which made the rows sit half as far in as the profile card's
+        /// contents did in the column beside them.</summary>
+        private const float ListCardPad = CardPadding;
+
+        /// <summary>
+        /// The switch that replaces every checkbox: a 36x20 capsule track with a round 16px knob,
+        /// accent when on.
         ///
         /// Hand-drawn rather than a restyled ImGui.Checkbox because a checkbox cannot be made into a
         /// track-and-knob, and because the knob's travel is the one piece of motion in the design -
         /// it is what tells someone the click landed.
+        ///
+        /// The name says Square and the control has not been square since the phone redesign. It is
+        /// called from a dozen files by that name and renaming it would touch all of them to change
+        /// nothing; the shape lives in the numbers below, not in the identifier.
         /// </summary>
         private static bool DrawSquareToggle(string id, ref bool value)
         {
-            const float trackW = 34f, trackH = 18f, knob = 14f, inset = 2f;
+            const float trackW = 36f, trackH = 20f, knob = 16f, inset = 2f;
 
             float lineHeight = ImGui.GetTextLineHeight();
             Vector2 origin = ImGui.GetCursorScreenPos();
@@ -850,20 +1725,23 @@ namespace PfPresets
             float top = origin.Y + (height - trackH) * 0.5f;
             var dl = ImGui.GetWindowDrawList();
 
-            Vector4 track = value ? Accent : ColorFromHex("#3a3733");
+            Vector4 track = value ? Accent : ColorFromHex("#39393d");
             if (hot)
                 track = value ? AccentHover : Raised;
 
             dl.AddRectFilled(new Vector2(origin.X, top), new Vector2(origin.X + trackW, top + trackH),
-                ImGui.ColorConvertFloat4ToU32(track));
+                ImGui.ColorConvertFloat4ToU32(track), Radius.Pill);
 
             if (!value)
                 dl.AddRect(new Vector2(origin.X, top), new Vector2(origin.X + trackW, top + trackH),
-                    ImGui.ColorConvertFloat4ToU32(BorderControl), 0f, 0, 1f);
+                    ImGui.ColorConvertFloat4ToU32(BorderControl), Radius.Pill, ImDrawFlags.None, 1f);
 
+            // A true circle, not a rounded square. AddCircleFilled rather than a rect with a large
+            // radius: ImGui's rounded rect approximates each corner with a fixed number of segments,
+            // and at 16px across that reads as an octagon.
             float knobX = value ? origin.X + trackW - knob - inset : origin.X + inset;
             float knobY = top + (trackH - knob) * 0.5f;
-            dl.AddRectFilled(new Vector2(knobX, knobY), new Vector2(knobX + knob, knobY + knob),
+            dl.AddCircleFilled(new Vector2(knobX + knob * 0.5f, knobY + knob * 0.5f), knob * 0.5f,
                 ImGui.ColorConvertFloat4ToU32(value ? OnAccent : Dim));
 
             return clicked;

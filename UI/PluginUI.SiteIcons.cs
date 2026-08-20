@@ -148,20 +148,29 @@ namespace PfPresets
             uint border = ImGui.ColorConvertFloat4ToU32(
                 hovered ? accent : RuleHair);
 
-            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(Field));
+            // The corner is a share of the side, not a fixed number: these are app icons in
+            // miniature and the app-icon proportion is a bit over a quarter.
+            float corner = size * 0.28f;
+
+            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(Field), corner);
 
             // The glow, only on hover: a second rectangle a pixel out at a low alpha. Cheap, and it
             // reads as light rather than as a thicker border.
             if (t > 0f)
             {
                 uint glow = ImGui.ColorConvertFloat4ToU32(accent with { W = 0.25f * t });
-                dl.AddRect(new Vector2(pos.X - 1, pos.Y - 1), new Vector2(max.X + 1, max.Y + 1), glow, 0f, 0, 1f);
+                dl.AddRect(new Vector2(pos.X - 1, pos.Y - 1), new Vector2(max.X + 1, max.Y + 1),
+                    glow, corner + 1f, ImDrawFlags.None, 1f);
             }
 
-            dl.AddRect(pos, max, border, 0f, 0, 1f);
+            dl.AddRect(pos, max, border, corner, ImDrawFlags.None, 1f);
 
             var icon = SiteIcon(site);
-            const float inset = 3f;
+
+            // The mark nearly fills its button. These are recognised by their shape - the Lodestone
+            // crystal, the Tomestone glyph, the FFLogs mark - and shape survives being small far
+            // worse than a letterform does, so the padding is a hair rather than a margin.
+            float inset = size * 0.11f;
 
             if (icon != null)
             {

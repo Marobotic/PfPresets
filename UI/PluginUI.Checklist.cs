@@ -43,7 +43,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
             ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, Radius.Sheet);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(20, 18));
 
             // Custom header (no ImGui title bar) to match the main window's design.
@@ -60,7 +60,7 @@ namespace PfPresets
                 // ── Header: logo box + title + preset name ──
                 Vector2 logoMin = origin;
                 Vector2 logoMax = new Vector2(origin.X + 34, origin.Y + 34);
-                dl.AddRectFilled(logoMin, logoMax, ImGui.ColorConvertFloat4ToU32(ColorFromHex("#1e2a40")), 0f);
+                dl.AddRectFilled(logoMin, logoMax, ImGui.ColorConvertFloat4ToU32(Field), 0f);
                 string logoGlyph = LogoIcon.ToIconString();
                 using (pluginInterface.UiBuilder.IconFontHandle.Push())
                 {
@@ -79,11 +79,11 @@ namespace PfPresets
                 ImGui.SetCursorScreenPos(new Vector2(origin.X + innerW - closeSz, origin.Y + 4));
                 ImGui.PushStyleColor(ImGuiCol.Button, BgCard);
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#1c2230"));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#243a54"));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, Raised);
                 ImGui.PushStyleColor(ImGuiCol.Text, TextSecondary);
                 ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Small);
                 ImGui.PushFont(UiBuilder.IconFont);
                 if (ImGui.Button($"{FontAwesomeIcon.Times.ToIconString()}##CloseChecklist", new Vector2(closeSz, closeSz)))
                     pfAutomation.DismissChecklist();
@@ -107,7 +107,7 @@ namespace PfPresets
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#c75446"));
                 ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
                 if (ImGui.Button("##KofiChecklist", kofiSize))
                     Dalamud.Utility.Util.OpenLink("https://ko-fi.com/marobotic");
                 ImGui.PopStyleVar(2);
@@ -175,11 +175,11 @@ namespace PfPresets
         {
             progress = Math.Clamp(progress, 0f, 1f);
             var dl = ImGui.GetWindowDrawList();
-            const float r = 0f; // squared, like every other corner in the plugin
+            const float r = Radius.Pill; // a capsule, like every other progress bar in the plugin
             Vector2 max = new Vector2(pos.X + width, pos.Y + height);
 
             // Track
-            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex("#141b27")), r);
+            dl.AddRectFilled(pos, max, ImGui.ColorConvertFloat4ToU32(Panel), r);
             dl.AddRect(pos, max, ImGui.ColorConvertFloat4ToU32(BorderDefault), r, ImDrawFlags.None, 1f);
 
             // Fill (kept at least a full pill width so even early progress reads as rounded)

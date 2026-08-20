@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.ManagedFontAtlas;
 
 namespace PfPresets
 {
@@ -29,6 +30,40 @@ namespace PfPresets
         /// </summary>
         private static readonly Vector4 AutoTranslateOpenTint = ColorFromHex("#7fbf5f");
         private static readonly Vector4 AutoTranslateCloseTint = ColorFromHex("#c1584f");
+
+        /// <summary>
+        /// THE ONE FACE A LISTING COMMENT IS EVER SET IN, and it is not the plugin's.
+        ///
+        /// A Party Finder comment is not our text. People write them with Greek letters standing in
+        /// for Latin ones, fullwidth capitals, daggers, CJK brackets, the game's own auto-translate
+        /// glyphs - anything the game's keyboard will accept. Roboto is a Latin typeface, and
+        /// chasing that with a fallback range is a guess about what someone might type next; the
+        /// range added for the last report covered most of it and still missed characters.
+        ///
+        /// Dalamud's default face already carries the whole of it, which is why the same comment
+        /// that came out as boxes on a preset card read perfectly in the editor two clicks away -
+        /// the editor draws in the default font. So every comment is set in it, everywhere, and the
+        /// two can no longer disagree.
+        ///
+        /// Pushed inside the drawing helpers rather than left to call sites: the wrap is measured
+        /// in the current face, so a caller that pushed for the draw and not the measure would wrap
+        /// to one width and paint at another.
+        /// </summary>
+        private IFontHandle CommentFont => pluginInterface.UiBuilder.DefaultFontHandle;
+
+        /// <summary>The height of one line of comment, in the face comments are set in.</summary>
+        private float CommentLineHeight()
+        {
+            using (CommentFont.Push())
+                return ImGui.GetTextLineHeight();
+        }
+
+        /// <summary>Wraps a comment in its own face, so the count matches what will be drawn.</summary>
+        private List<string> WrapCommentInFace(string comment, float width, int maxLines)
+        {
+            using (CommentFont.Push())
+                return WrapCommentToLines(comment, width, maxLines);
+        }
 
         /// <summary>One stretch of a comment drawn in a single colour.</summary>
         private readonly struct CommentRun
@@ -118,8 +153,11 @@ namespace PfPresets
         /// Draws a comment at the ImGui cursor, wrapped to a width and capped at a line count, and
         /// advances the cursor past it. For the flow-layout sites that used ImGui.TextColored.
         /// </summary>
-        private static void DrawWrappedComment(string text, float width, int maxLines, Vector4 baseColor) =>
-            DrawCommentLines(WrapCommentToLines(text, width, maxLines), baseColor, width);
+        private void DrawWrappedComment(string text, float width, int maxLines, Vector4 baseColor)
+        {
+            using (CommentFont.Push())
+                DrawCommentLines(WrapCommentToLines(text, width, maxLines), baseColor, width);
+        }
 
         /// <summary>
         /// Draws already-wrapped comment lines at the ImGui cursor and advances past them, for

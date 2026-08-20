@@ -72,6 +72,29 @@ namespace PfPresets
         public bool Cleared { get; set; }
 
         /// <summary>
+        /// Whether anybody left the party while the duty was running.
+        ///
+        /// Local bookkeeping, not part of the sealed evidence - it decides whether the duty is
+        /// recorded at all, and the server has no use for it. See DutyTracker.NoteDepartures.
+        ///
+        /// Not serialised deliberately: it is answered while the duty is live and means nothing
+        /// once it has been committed, and an old encounter file that predates it simply reads
+        /// false, which is what it would have been.
+        /// </summary>
+        [JsonIgnore]
+        public bool SawDeparture { get; set; }
+
+        /// <summary>
+        /// Whether the duty has run long enough to be worth recording, so the crossing is only
+        /// acted on once.
+        ///
+        /// Local bookkeeping like <see cref="SawDeparture"/>, and not serialised for the same
+        /// reason: by the time an encounter is committed it has passed by definition.
+        /// </summary>
+        [JsonIgnore]
+        public bool PassedMinimum { get; set; }
+
+        /// <summary>
         /// What the local player was on, captured when the duty ends.
         ///
         /// Read at the end rather than at the start because that is the job somebody will say they

@@ -481,6 +481,17 @@ namespace PfPresets
                     return;
                 }
 
+                // Checked here rather than only on the button, because /pfp apply comes in this way
+                // too. The game refuses a listing for content the character cannot enter, so this
+                // is a refusal that would happen anyway - the only question is whether it happens
+                // now, with a sentence saying why, or three windows later with nothing.
+                string? lockReason = dutyDataHelper.DescribePresetLock(preset);
+                if (lockReason != null)
+                {
+                    chatGui.Print($"[PF Analysis] Cannot apply \"{preset.Name}\": {lockReason}.");
+                    return;
+                }
+
                 var agent = AgentLookingForGroup.Instance();
                 if (agent == null)
                 {
@@ -514,7 +525,6 @@ namespace PfPresets
                     return;
                 }
 
-                // If not open, write settings and open it directly.
                 WriteSettingsToMemory(preset);
                 OpenAddonWindow();
                 chatGui.Print($"[PF Analysis] Applying preset: {preset.Name}...");
@@ -835,7 +845,8 @@ namespace PfPresets
             }
 
             // 3. Checkboxes
-            SetChecked(addon->LimitToWorldServerCheckbox, preset.LimitRecruitingToWorld);
+            SetChecked(addon->LimitToWorldServerCheckbox,
+                preset.LimitRecruitingToWorld || DutyComposition.RequiresHomeWorld(preset.DutyCategoryId));
             SetChecked(addon->OnePlayerPerJobCheckbox, preset.OnePlayerPerJob);
             SetChecked(addon->BeginnersWelcomeCheckBox, false);
             SetChecked(addon->CompletionStatusCheckBox, preset.CompletionStatusEnabled);
@@ -978,6 +989,18 @@ namespace PfPresets
             return addon->AtkUnitBase.IsVisible ? addon : null;
         }
 
+        /// <summary>
+        /// Whether one of the game's own Party Finder sub-windows is up: Recruitment Criteria, or a
+        /// listing's details.
+        ///
+        /// Both open ON TOP of the Party Finder list, and both are somewhere you have gone to do a
+        /// specific thing - set up a listing, or read one. The plugin's own way in belongs to the
+        /// list underneath, and offering it while either of these is open puts a second thing to
+        /// press beside a window that already asked you a question.
+        /// </summary>
+        public unsafe bool IsPartyFinderSubWindowOpen()
+            => GetVisibleConditionAddon() != null || GetVisibleAddon("LookingForGroupDetail") != null;
+
         /// <summary>A named addon, or null when it is not open and visible.</summary>
         private unsafe AtkUnitBase* GetVisibleAddon(string name)
         {
@@ -1038,16 +1061,30 @@ namespace PfPresets
             if (preset.DutyCategoryId > 0)
             {
                 var duty = ResolveDuty(preset);
-                if (duty != null && duty.RowId <= ushort.MaxValue)
+                if (duty != null)
                 {
-                    dutyId = (ushort)duty.RowId;
-                    pluginLog.Information($"Setting duty ID {dutyId} for duty '{duty.Name}'");
-                }
-                else if (duty != null)
-                {
-                    // Synthetic fallback entries (see DutyDataHelper) have row ids above
-                    // ushort range and must never be written to the game.
-                    pluginLog.Warning($"Duty '{duty.Name}' has synthetic row id {duty.RowId}; leaving SelectedDutyId at 0 (All duties).");
+                    // THREE ANSWERS, NOT TWO. A number means "send this"; zero means "no duty, the
+                    // whole category"; and null means "this plugin cannot encode it - leave what is
+                    // already there".
+                    //
+                    // That last one matters because the step before this one already picked the
+                    // duty out of the game's own dropdown by name, and the client filled the field
+                    // in itself while doing so. Writing a zero over that was throwing away a
+                    // correct answer the client had just given us: Crystalline Conflict and a FATE
+                    // location were being selected properly and then cleared a moment later, which
+                    // is exactly what it looked like on screen.
+                    ushort? send = DutyDataHelper.GameDutyId(duty);
+
+                    if (send == null)
+                    {
+                        pluginLog.Information($"'{duty.Name}' has no id this plugin can write; keeping the client's own selection.");
+                        return;
+                    }
+
+                    dutyId = send.Value;
+                    pluginLog.Information(dutyId != 0
+                        ? $"Setting duty ID {dutyId} for '{duty.Name}'"
+                        : $"'{duty.Name}' resolves to no duty; SelectedDutyId stays 0 (all duties in the category).");
                 }
                 else
                 {
@@ -1071,20 +1108,22 @@ namespace PfPresets
         /// </summary>
         private DutyEntry? ResolveDuty(PfPresetData preset)
         {
-            if (preset.DutyRowId != 0 && !DutyDataHelper.IsSyntheticRowId(preset.DutyRowId))
-            {
-                var byId = dutyDataHelper.GetDutyEntry(preset.DutyRowId);
-                if (byId != null)
-                    return byId;
+            // The resolution itself lives on the helper, because the preset list asks the same
+            // question every frame to work out what is locked and the two must not drift apart.
+            // What is added here is the noise: this call is about to post a listing, so a duty that
+            // could not be pinned down is worth a line in the log.
+            bool hadUsableId = preset.DutyRowId != 0
+                && !DutyDataHelper.IsSyntheticRowId(preset.DutyRowId)
+                && dutyDataHelper.GetDutyEntry(preset.DutyRowId) != null;
 
+            if (preset.DutyRowId != 0 && !DutyDataHelper.IsSyntheticRowId(preset.DutyRowId) && !hadUsableId)
                 pluginLog.Warning($"Duty row id {preset.DutyRowId} ('{preset.DutyName}') is no longer in the game data; falling back to a name lookup.");
-            }
 
-            var byName = dutyDataHelper.FindDutyByName(preset.DutyCategoryName, preset.DutyName);
-            if (byName == null)
+            var duty = dutyDataHelper.ResolvePresetDuty(preset);
+            if (duty == null)
                 pluginLog.Warning($"Duty '{preset.DutyName}' not found in category '{preset.DutyCategoryName}'. Leaving the listing's duty unset.");
 
-            return byName;
+            return duty;
         }
 
         private unsafe void WriteGeneralSettingsToMemory(PfPresetData preset)
@@ -1146,9 +1185,19 @@ namespace PfPresets
             recruitment->LanguageFlags = lang;
 
             // Party settings (Normal group type is 1 group of 8)
-            recruitment->LimitRecruitingToWorld = (byte)(preset.LimitRecruitingToWorld ? 0 : 1);
+            // Forced for the two categories that cannot cross a world - see
+            // DutyComposition.RequiresHomeWorld. Applied here as well as in the editor so a preset
+            // saved before the rule existed still posts correctly. The byte is inverted: 0 means
+            // limited.
+            bool homeWorldOnly = preset.LimitRecruitingToWorld
+                || DutyComposition.RequiresHomeWorld(preset.DutyCategoryId);
+
+            recruitment->LimitRecruitingToWorld = (byte)(homeWorldOnly ? 0 : 1);
             recruitment->OnePlayerPerJob = (byte)(preset.OnePlayerPerJob ? 1 : 0);
-            recruitment->NumberOfSlotsInMainParty = 8;
+            // As many seats as the preset recruits for. A dungeon preset carries four and a raid
+            // preset eight; writing a flat 8 advertised four phantom openings on every light-party
+            // listing, which is the same bug as padding the slot list with Omit.
+            recruitment->NumberOfSlotsInMainParty = (byte)Math.Clamp(preset.Slots.Count, 1, 8);
             recruitment->NumberOfGroups = 1;
 
             // Comment (192-byte fixed buffer, holding SeString rather than plain text - so it is
@@ -1164,7 +1213,10 @@ namespace PfPresets
 
             ulong* pSlotFlags = (ulong*)((byte*)&agent->StoredRecruitmentInfo + OffsetSlotFlags);
 
-            if (preset.AutoAdjustRoles)
+            // UsesAutoAdjust, not the raw flag: presets saved before the option was restricted to
+            // trials/raids/high-end still carry it on dungeons, and honouring it there would throw
+            // away the very slots they were written with.
+            if (preset.UsesAutoAdjust)
             {
                 var autoSlots = GetAutoAdjustedSlots();
                 for (int i = 0; i < 8; i++)

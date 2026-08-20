@@ -247,7 +247,48 @@ namespace PfPresets
         private readonly Dictionary<string, float> rowGlow = new();
 
         /// <summary>Height every list row uses, so the party list and Recent players match.</summary>
-        private static float HoverRowHeight() => Math.Max(ImGui.GetTextLineHeight(), 22f) + 10f;
+        /// <summary>
+        /// How tall a person's row is.
+        ///
+        /// Measured against the face the NAME is set in, not against whatever font happened to be
+        /// pushed when this was called. That is also why it is no longer static: the row was sized
+        /// off the ambient line height plus ten, which came out around thirty pixels - a name, a
+        /// job icon, a prog point and a menu button crammed into a strip barely taller than the
+        /// text in it. A person is the thing this list is made of and should be able to be pointed
+        /// at.
+        /// </summary>
+        private float HoverRowHeight()
+        {
+            float line;
+            using (UiRowNameFont.Push())
+                line = ImGui.GetTextLineHeight();
+
+            return MathF.Max(line, 22f) + 18f;
+        }
+
+        /// <summary>
+        /// The gap between one hover row and the next.
+        ///
+        /// It was a single pixel, which was right while the rows were invisible until hovered - a
+        /// list of names wants to read as a list, not as a stack of tiles. Now that the party rows
+        /// carry a fill of their own (see restColor) a one-pixel gap welds them into one block with
+        /// hairlines through it, so there is room for the boxes to be separate boxes.
+        ///
+        /// Named because it is arithmetic in four places, one of which is a height RESERVATION -
+        /// see PartySectionHeight. A gap changed in the drawing and not in the measure is a party
+        /// list that runs out of the bottom of its card.
+        /// </summary>
+        internal const float HoverRowGap = 4f;
+
+        /// <summary>
+        /// How far a hover row's text sits in from the surface it is drawn on.
+        ///
+        /// Not a number anybody chose - it falls out of the row's own geometry (6px to the row's
+        /// left edge, then 8px of padding inside it) - but anything drawn ALONGSIDE the rows has to
+        /// match it or it sits at a different left edge from every name under it. Named so the odd
+        /// lines that share a card with a list can line up with the list.
+        /// </summary>
+        internal const float HoverRowTextInset = 14f;
 
         /// <summary>
         /// A borderless list row that washes faintly on hover, the way a Windows list behaves.
@@ -257,9 +298,14 @@ namespace PfPresets
         /// <paramref name="body"/> is given the row's right edge in screen coordinates and lays
         /// itself out inward from there.
         /// </summary>
+        /// <param name="restColor">A fill the row carries all the time, not only under the cursor.
+        /// Rows on the ground do not want one - the card they sit on is already a surface, and a
+        /// second one inside it is noise. Rows that ARE the content, like the party list, do: each
+        /// person reads as their own object rather than as a line in a block of text.</param>
         private void DrawHoverRow(string id, Action<float> body, Vector4? washColor = null,
             bool forceLit = false, float? width = null, float? originX = null,
-            Action? contextMenu = null, float? height = null)
+            Action? contextMenu = null, float? height = null, Vector4? restColor = null,
+            float? separatorInset = null)
         {
             // Callers that sit beside a list of vote rows pass that list's height, so the two
             // sections of the same column don't read as two different densities.
@@ -275,10 +321,20 @@ namespace PfPresets
             Vector2 cursor = ImGui.GetCursorScreenPos();
             Vector2 origin = new Vector2(originX ?? cursor.X, cursor.Y);
 
-            var min = new Vector2(origin.X + 6f, origin.Y);
-            var max = new Vector2(min.X + rowW, origin.Y + rowH);
+            // INSET ON BOTH SIDES. It was inset six pixels on the left and ran the full width from
+            // there, so the box finished six pixels past where the surface it sits on stops - and
+            // the card clips to its own padding, which sliced the rounded right-hand corners off
+            // every row in the party list. The left edge was fine, which is what made it read as
+            // "the right side has no border radius" rather than as an overflow.
+            const float inset = 6f;
+            var min = new Vector2(origin.X + inset, origin.Y);
+            var max = new Vector2(origin.X + rowW - inset, origin.Y + rowH);
 
             bool hovered = IsMouseOver(min, max);
+
+            if (restColor.HasValue)
+                ImGui.GetWindowDrawList().AddRectFilled(min, max,
+                    ImGui.ColorConvertFloat4ToU32(restColor.Value), Radius.Small);
 
             rowGlow.TryGetValue(id, out float glow);
             float target = hovered || forceLit ? 1f : 0f;
@@ -288,12 +344,28 @@ namespace PfPresets
 
             if (glow > 0.01f)
             {
+                // Raised well past what it was. 5% white was a legible highlight over the old
+                // #211f1d card; over a #1c1c1e card sitting on true black it is about one value
+                // step and reads as nothing at all - hovering a name looked like hovering nothing.
                 var baseCol = washColor ?? new Vector4(1f, 1f, 1f, 1f);
                 var wash = new Vector4(baseCol.X, baseCol.Y, baseCol.Z,
-                    (washColor.HasValue ? 0.14f : 0.05f) * glow);
+                    (washColor.HasValue ? 0.20f : 0.10f) * glow);
                 ImGui.GetWindowDrawList().AddRectFilled(min, max,
                     ImGui.ColorConvertFloat4ToU32(wash), 5f);
             }
+
+            // THE HAIRLINE THAT MAKES A COLUMN OF ROWS A LIST.
+            //
+            // Drawn from where the row's words begin rather than from its edge, and out to the
+            // trailing edge - the same rule the settings rows follow, so the met list, the party
+            // list and a settings page are visibly the same object. A caller that ends its group
+            // passes no inset and gets none; every list passes the width of whatever leads its
+            // rows, which is a job icon in all of them.
+            if (separatorInset.HasValue)
+                ImGui.GetWindowDrawList().AddRectFilled(
+                    new Vector2(min.X + separatorInset.Value, max.Y),
+                    new Vector2(max.X, max.Y + 1f),
+                    ImGui.ColorConvertFloat4ToU32(RuleHair));
 
             ImGui.PushID(id);
             try
@@ -306,7 +378,7 @@ namespace PfPresets
                 ImGui.BeginGroup();
                 try
                 {
-                    body(min.X + rowW - 8f);
+                    body(max.X - 8f);
                 }
                 finally
                 {
@@ -329,7 +401,7 @@ namespace PfPresets
             // then calling Dummy therefore added ~4px per row that nothing had measured, which
             // compounded down the list until the last row sat under whatever came next.
             ImGui.Dummy(new Vector2(0, 0));
-            ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + rowH + 1f));
+            ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + rowH + HoverRowGap));
         }
 
         /// <summary>
@@ -389,7 +461,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, BorderDefault);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
 
             bool clicked = ImGui.Button("##rowkebab", new Vector2(w, h));
 
@@ -417,14 +489,14 @@ namespace PfPresets
             // proportionate when the name face changes size.
             float iconSize;
             using (UiRowNameFont.Push())
-                iconSize = ImGui.GetTextLineHeight() + 6f;
+                iconSize = ImGui.GetTextLineHeight() + 10f;
 
             DrawJobIconInline(jobId, iconSize);
-            ImGui.SameLine(0, 7);
+            ImGui.SameLine(0, 9);
 
             string shownName = DisplayName(name);
             string label = string.IsNullOrEmpty(world) ? shownName : $"{shownName}  @{world}";
-            float room = rightEdge - (leftEdge + iconSize + 7f) - 8f;
+            float room = rightEdge - (leftEdge + iconSize + 9f) - 8f;
 
             using (UiRowNameFont.Push())
             {
@@ -563,7 +635,7 @@ namespace PfPresets
                 }
 
                 ImGui.PushStyleColor(ImGuiCol.ChildBg, bg);
-                ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 0f);
+                ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, Radius.Card);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(RowPadX, RowPadY));
                 ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * (1f - slide));
 
@@ -620,20 +692,39 @@ namespace PfPresets
         {
             var member = contact.Member;
 
+            // EVERYTHING ON THE ROW IS CENTRED ON THE BUTTONS' LINE.
+            //
+            // The icon, the name and the up/down pair were each vertically placed by a different
+            // rule - the icon inline at text height, the name by AlignTextToFramePadding, the
+            // buttons at frame height plus four - and the three landed a couple of pixels apart.
+            // Nothing about that is visible as a bug; it just reads as a row that was never quite
+            // straightened. One mid-line, and all three are hung off it.
+            float rowH = ImGui.GetFrameHeight() + 4f;
+            float top = ImGui.GetCursorPosY();
+
             float iconSize = ImGui.GetTextLineHeight() + 4f;
+            ImGui.SetCursorPosY(top + (rowH - iconSize) * 0.5f);
             DrawJobIconInline(member.JobId, iconSize);
             ImGui.SameLine(0, 7);
 
             // Whatever the buttons don't need. Names are clipped to it rather than allowed to
             // push the controls off the edge.
-            float reserved = (ImGui.GetFrameHeight() + 4f) * 1.45f * 2f + 5f + 12f;
+            float reserved = rowH * 1.45f * 2f + 5f + 12f;
             float nameRoom = ImGui.GetContentRegionMax().X - iconSize - 7f - reserved;
 
             string label = $"{DisplayName(member.Name)}  @{member.World}";
-            ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(TextPrimary, Fit(label, nameRoom));
-            if (ImGui.IsItemHovered() && label != Fit(label, nameRoom))
-                PaddedTooltip(label);
+
+            using (UiRowNameFont.Push())
+            {
+                float lineH = ImGui.GetTextLineHeight();
+                ImGui.SetCursorPosY(top + (rowH - lineH) * 0.5f);
+                ImGui.TextColored(TextPrimary, Fit(label, nameRoom));
+                if (ImGui.IsItemHovered() && label != Fit(label, nameRoom))
+                    PaddedTooltip(label);
+            }
+
+            ImGui.SameLine(0, 0);
+            ImGui.SetCursorPosY(top);
 
             if (member.Social != SocialLink.None)
             {
@@ -710,7 +801,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, hover);
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, accent);
             ImGui.PushStyleColor(ImGuiCol.Border, border);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
 
             Vector2 pos = ImGui.GetCursorScreenPos();

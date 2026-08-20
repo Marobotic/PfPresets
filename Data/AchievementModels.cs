@@ -53,6 +53,23 @@ namespace PfPresets
         /// being held, which is the point - it looks the same to them either way.</summary>
         public bool Hearted { get; set; }
 
+        /// <summary>
+        /// A heart on this post already came from this connection, but not from this character.
+        ///
+        /// A heart is one per post per IP, which is what stops somebody walking their alts down the
+        /// feed hearting their own friend's clear eight times. The consequence is that the other
+        /// seven characters have to be told *why* the button will not move: without this they would
+        /// see an empty heart, press it, and watch it quietly do nothing - the same failure the
+        /// self-heart rule produced on the feed's first day.
+        ///
+        /// Drawn as hearted, because it is: the post genuinely has this household's heart on it.
+        /// It is only <see cref="Hearted"/> that carries the right to take it back, which is why
+        /// these are two fields and not one tri-state - the owner is the one who can undo, and
+        /// nobody else, however much the same person they happen to be.
+        /// </summary>
+        [JsonProperty("heart_locked")]
+        public bool HeartLocked { get; set; }
+
         /// <summary>Whether the one share this post gets has been used, by anybody.</summary>
         public bool Reshared { get; set; }
 
@@ -171,10 +188,34 @@ namespace PfPresets
     {
         public bool Ok { get; set; }
 
-        /// <summary>Always true. The server answers the same whether a heart was stored, held or
-        /// dropped - see the note on the heart route - so this is confirmation of receipt and not
-        /// a report on what happened.</summary>
+        /// <summary>
+        /// Whether this reader's heart is on the post now.
+        ///
+        /// This used to be "always true, confirmation of receipt", because the heart route answered
+        /// the same whatever it decided underneath. It cannot stay that way now that a heart can be
+        /// taken back: an undo whose reply is hard-coded to "hearted" tells the client the one
+        /// thing it must not believe. The route answers honestly in both directions, and the client
+        /// applies what it is told rather than what it hoped.
+        /// </summary>
         public bool Hearted { get; set; }
+
+        /// <summary>
+        /// The heart on this post belongs to a different character on this connection, so this
+        /// request changed nothing. See <see cref="AchievementPost.HeartLocked"/>.
+        /// </summary>
+        [JsonProperty("heart_locked")]
+        public bool HeartLocked { get; set; }
+
+        /// <summary>
+        /// The post's heart count as the server now has it, or null from a server that does not
+        /// send one.
+        ///
+        /// Nullable on purpose. A plain int would arrive as 0 from any server that omits the field
+        /// and the client would obediently wipe a real count to zero the moment anybody pressed the
+        /// button - the same shape of bug as the Before cursor that asked for everything older than
+        /// 1970. Null means "not told", and not-told leaves the local number alone.
+        /// </summary>
+        public int? Hearts { get; set; }
 
         /// <summary>Unlike a heart, this one is real: a post gets one share ever, and false means
         /// somebody else got there first.</summary>

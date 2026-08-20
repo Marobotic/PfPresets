@@ -212,10 +212,15 @@ namespace PfPresets
 
                 // Seats are deliberately not copied. A listing's slot masks describe the state it
                 // was in when we looked - seats already taken, roles narrowed as it filled - which
-                // is a poor thing to freeze into a reusable preset. Auto-adjust fills around
-                // whoever is actually in your party instead.
+                // is a poor thing to freeze into a reusable preset. What replaces them is the
+                // standard composition for the content, set just below; auto-adjust then takes
+                // over on top of it for the content that supports it.
                 AutoAdjustRoles = true,
             };
+
+            // The shape comes from the kind of content. Without this a copied dungeon listing
+            // would be an eight-seat preset, since auto-adjust no longer applies there to hide it.
+            preset.Slots = DutyComposition.DefaultFor(preset.DutyCategoryId, preset.DutyName);
 
             // A listing with no languages ticked can't be posted; fall back to accepting all.
             if (!preset.LangJapanese && !preset.LangEnglish && !preset.LangGerman && !preset.LangFrench)

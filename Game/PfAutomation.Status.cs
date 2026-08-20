@@ -623,6 +623,48 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// Where the player is standing, by name, or empty when the game has not said yet.
+        ///
+        /// Exposed for the Recruit tab's idle state, which has no listing and no party to describe
+        /// and so describes where you are instead. Deliberately not part of the snapshot: the
+        /// snapshot is about recruitment, and a zone name is true whether or not any of that is.
+        /// </summary>
+        public string CurrentZoneName()
+        {
+            try
+            {
+                return dutyDataHelper.GetPlaceName(clientState.TerritoryType);
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// The duty the player is standing in, by name, or empty when they are not in one.
+        ///
+        /// Asked of the duty sheet rather than the place-name sheet, which is the whole point: a
+        /// territory and the fight staged in it are different things with different names, and the
+        /// one worth saying out loud is the fight.
+        /// </summary>
+        public string CurrentDutyName()
+        {
+            try
+            {
+                if (!IsInDuty())
+                    return string.Empty;
+
+                return dutyDataHelper.GetDutyByTerritoryType(clientState.TerritoryType)?.Name
+                    ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>
         /// The duty to attribute an idle party's progress readout to.
         ///
         /// Inside a duty the current instance is authoritative and is resolved from the territory,
@@ -769,7 +811,14 @@ namespace PfPresets
             if (seconds == 0 || seconds > ListingLifetime.TotalSeconds)
                 return; // implausible; leave the estimate alone
 
-            capturedTimeLeft = TimeSpan.FromSeconds(seconds);
+            // Re-stamped every time the reading moves, for the same reason
+            // CapturedListingTimeLeft does it: the field ticks while the window is open, and a new
+            // value aged against an old stamp subtracts the same minutes twice.
+            var value = TimeSpan.FromSeconds(seconds);
+            if (capturedTimeLeft == value)
+                return;
+
+            capturedTimeLeft = value;
             capturedAt = DateTime.UtcNow;
             pluginLog.Debug($"[Status] Captured exact listing time left: {seconds}s");
         }

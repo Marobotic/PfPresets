@@ -127,13 +127,27 @@ namespace PfPresets
                 ImGui.GetContentRegionAvail().X - 12f));
             ImGui.Unindent(10);
 
-            // Kicking is impossible inside instanced content - the game refuses it - so the button
-            // isn't offered there. The only exit available in a duty is your own.
-            DrawPartyMembers(allowKick: !inDuty, width: ImGui.GetContentRegionAvail().X - 12f,
-                dutyName: snap.DutyName, dutyRowId: snap.DutyRowId);
+            // THE PANEL OWNS THE ACTION ROW INSIDE A DUTY, so the member list must not draw its
+            // own copy of Update progress underneath. Same mechanism the recruitment card uses when
+            // it embeds this list - see cardOwnsProgressAction - and for the same reason: the
+            // button belongs to exactly one row, and which row that is depends on who is drawing.
+            bool ownRow = inDuty && !pfAutomation.IsInCombat();
+            panelOwnsProgressAction = ownRow;
 
-            if (inDuty)
-                DrawLeaveDutyAction();
+            try
+            {
+                // Kicking is impossible inside instanced content - the game refuses it - so the
+                // button isn't offered there. The only exit available in a duty is your own.
+                DrawPartyMembers(allowKick: !inDuty, width: ImGui.GetContentRegionAvail().X - 12f,
+                    dutyName: snap.DutyName, dutyRowId: snap.DutyRowId);
+            }
+            finally
+            {
+                panelOwnsProgressAction = false;
+            }
+
+            if (ownRow)
+                DrawDutyActionRow(snap);
 
             ImGui.Dummy(new Vector2(0, 4));
         }
@@ -219,10 +233,61 @@ namespace PfPresets
             // statement still costs a row of the card's height, and a button that can only fail
             // is worse than no button.
             if (players.Count > 0 && ShowsProgressRow() && DutyHasProgress(dutyRowId)
-                && !cardOwnsProgressAction)
+                && !cardOwnsProgressAction && !panelOwnsProgressAction)
                 DrawProgressRow(players, dutyName, width, originX);
 
             return ImGui.GetCursorScreenPos().Y - start;
+        }
+
+        /// <summary>Set while the party panel is drawing its own action row, so the member list
+        /// leaves Update progress to it.</summary>
+        private bool panelOwnsProgressAction;
+
+        /// <summary>
+        /// The duty's action row: update the party's progress, and leave.
+        ///
+        /// ONE ROW, EQUAL HALVES, ALIGNED WITH THE MEMBER BOXES ABOVE. They were two separate
+        /// things on two separate lines - a 22px outlined chip pinned left, and a 150px filled
+        /// button pinned right, a row apart - which is two different answers to "what can I do
+        /// here" laid out as if they were unrelated. They are the same row.
+        ///
+        /// Update progress goes when there is no room for it rather than shrinking: three actions
+        /// across a column this narrow is three things too small to read, and the per-player Fetch
+        /// in each row already covers it.
+        /// </summary>
+        private void DrawDutyActionRow(RecruitmentSnapshot snap)
+        {
+            var players = PartyPlayers();
+            bool hasProgress = HasProgressAction(snap.DutyRowId, players.Count);
+
+            ImGui.Dummy(new Vector2(0, Space.Tight));
+
+            // EXACTLY THE MEMBER ROWS' RECTANGLE, worked out the same way DrawHoverRow works it
+            // out: the list is given (avail - 12) to draw in and then insets six pixels on BOTH
+            // sides of that. The buttons took the same width but only the left inset, so they
+            // finished twelve pixels past the right edge of every box above them - close enough to
+            // look like a mistake rather than a margin, which is what it was.
+            Vector2 cursor = ImGui.GetCursorScreenPos();
+            const float inset = 6f;
+            float rowW = MathF.Max(120f, ImGui.GetContentRegionAvail().X - 12f);
+            float left = cursor.X + inset;
+            float room = rowW - inset * 2f;
+            float gap = Space.Tight;
+            float w = hasProgress ? (room - gap) * 0.5f : room;
+
+            if (hasProgress)
+            {
+                ImGui.SetCursorScreenPos(new Vector2(left, cursor.Y));
+                DrawProgressAction(new Vector2(w, ButtonHeight), snap.DutyName, snap.DutyRowId, players);
+            }
+
+            var leavePos = new Vector2(hasProgress ? left + w + gap : left, cursor.Y);
+            var leaveSize = new Vector2(hasProgress ? room - w - gap : room, ButtonHeight);
+            ImGui.SetCursorScreenPos(leavePos);
+            DrawLeaveDutyButton(leaveSize);
+
+            ImGui.SetCursorScreenPos(new Vector2(cursor.X, cursor.Y + ButtonHeight));
+            ImGui.Dummy(new Vector2(rowW, 0f));
         }
 
         /// <summary>
@@ -232,31 +297,21 @@ namespace PfPresets
         /// meant to click, and a live "leave" button sitting under the cursor while you're fighting
         /// is a misclick waiting to happen.
         /// </summary>
-        private void DrawLeaveDutyAction()
+        private void DrawLeaveDutyButton(Vector2 size)
         {
-            if (pfAutomation.IsInCombat())
-                return;
-
-            ImGui.Dummy(new Vector2(0, 6));
-
-            const float w = CardActionWidth;
-            const float h = ButtonHeight;
-
-            // Right-aligned, matching every other action in the plugin.
-            ImGui.SetCursorPosX(Math.Max(10f, ImGui.GetContentRegionMax().X - w - 10f));
-
             bool can = pfAutomation.CanLeaveDuty();
-            ImGui.BeginDisabled(!can);
 
             // Red: leaving a duty costs a penalty and can't be undone, which is the same weight as
             // every other destructive action here.
-            if (DrawDangerButton("Leave duty##LeaveDuty", new Vector2(w, h)))
+            ImGui.EndDisabled();
+
+            if (DrawActionButton(FontAwesomeIcon.SignOutAlt, "Leave duty", "LeaveDuty", size,
+                    ActionStyle.Danger, can))
             {
                 AskConfirm("Leave duty", "Leave this duty?", "Yes, leave",
                     () => pfAutomation.LeaveDuty(),
                     detail: "You'll take the usual duty finder penalty.");
             }
-            ImGui.EndDisabled();
 
             if (!can && ImGui.IsItemHovered())
                 PaddedTooltip("The game won't let you leave right now.");
@@ -324,7 +379,7 @@ namespace PfPresets
                     // so spending it on "we didn't find one" tells a lie about somebody rather
                     // than declining to comment. A colour is a claim; white is the absence of one.
                     return new ProgressCell("(Cleared)",
-                        p.Percentile >= 0 ? ParseColor(p.Percentile) : TextPrimary,
+                        p.Percentile >= 0 ? ParseInk(p.Percentile) : TextPrimary,
                         "Has a logged clear of this duty."
                         + (p.Percentile >= 0
                             ? $"\n\nBest parse: {p.Percentile:0.#}% ({ParseName(p.Percentile)})"
@@ -394,8 +449,10 @@ namespace PfPresets
             // empty, and those want different things done about them.
             string why = p?.Status switch
             {
-                "noclear" => "No clear logged for this fight.\n\n"
-                    + "That is not the same as \"hasn't cleared\" - plenty of people\n"
+                "noclear" => "Nothing logged for this fight yet.\n\n"
+                    + "No kill and no pull on record, which on a new tier usually\n"
+                    + "means exactly what it looks like - they are progging it.\n\n"
+                    + "It is not the same as \"hasn't cleared\": plenty of people\n"
                     + "clear without ever uploading a log. Check again if they've\n"
                     + "logged something since.",
                 "notfound" or "unknown" => "No logs found for this character.\n\n"
@@ -412,8 +469,21 @@ namespace PfPresets
             // "yet" keeps it honestly re-checkable - a name that came back empty once often has
             // something later - so it stays a button. Provider-agnostic on purpose: whether
             // Tomestone or FFLogs came up empty is not the user's problem (see RatingService).
+            // THREE ANSWERS, NOT TWO, and the middle one was wearing the first one's clothes.
+            //
+            //   noclear   the character was found and has nothing on THIS fight - no kill, no
+            //             logged pull. That is a settled answer about somebody who is starting the
+            //             tier, and it showed as "Fetch": a button implying nobody had looked,
+            //             offered to somebody who had just looked and got a real reply. On a fresh
+            //             tier that is most of the party.
+            //   notfound  the character itself is not in the logs at all.
+            //   neither   nobody has asked yet, which is the only one that should say "Fetch".
+            bool freshProg = p?.Status is "noclear";
             bool notListed = p?.Status is "notfound" or "unknown";
-            string label = notListed ? "Not listed yet" : "Fetch";
+
+            string label = freshProg ? "Fresh prog"
+                : notListed ? "Not listed yet"
+                : "Fetch";
 
             // Offered but refused while the server is inside its own cooldown for them. It would
             // take the press either way and match it against the stored row without queueing
@@ -428,9 +498,10 @@ namespace PfPresets
                     isButton: true, disabled: true);
             }
 
-            // Muted for a name that came back empty, so it reads as a settled state rather than the
-            // inviting call-to-action a never-tried row gets.
-            return new ProgressCell(label, notListed ? TextMuted : TextSecondary, why, isButton: true);
+            // Muted for anything that came back with a real answer, so it reads as a settled state
+            // rather than the inviting call-to-action a never-tried row gets.
+            return new ProgressCell(label, freshProg || notListed ? TextMuted : TextSecondary,
+                why, isButton: true);
         }
 
         /// <summary>"4 minutes", "40 seconds" - a wait as a person would say it.</summary>
@@ -473,15 +544,30 @@ namespace PfPresets
 
             ImGui.PushStyleColor(ImGuiCol.Button, BgCardExpanded);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
-            ImGui.PushStyleColor(ImGuiCol.Text, cell.Colour);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Chip);
+
+            // THE LABEL IS DRAWN BY HAND, and this is the third attempt at centring it.
+            //
+            // ImGui's ButtonTextAlign centres the EM BOX, which runs from the font's ascent to its
+            // descent - so a word with no descender, which "Fetch" and "Retry" both are, has its
+            // visible ink sitting a couple of pixels below the middle of a 20px chip. Horizontally
+            // it was already right; vertically it was two pixels low and looked it.
+            //
+            // Measured on the ink instead, the same way DrawGlyphCentred does it for the help
+            // marker - and for the same reason, which is written out at length over there.
+            const float chipH = 20f;
+            Vector2 at = ImGui.GetCursorScreenPos();
 
             ImGui.BeginDisabled(cell.Disabled);
-            bool pressed = ImGui.Button($"{cell.Text}##prog{who.Key}", new Vector2(width, 20f));
+            bool pressed = ImGui.Button($"##prog{who.Key}", new Vector2(width, chipH));
             ImGui.EndDisabled();
 
             ImGui.PopStyleVar();
-            ImGui.PopStyleColor(3);
+            ImGui.PopStyleColor(2);
+
+            DrawTextCentredOnInk(cell.Text,
+                new Vector2(at.X + width * 0.5f, at.Y + chipH * 0.5f),
+                cell.Disabled ? cell.Colour with { W = cell.Colour.W * 0.5f } : cell.Colour);
 
             if (pressed && !cell.Disabled)
                 RequestOneProgress(who, dutyName);
@@ -656,13 +742,50 @@ namespace PfPresets
         /// </summary>
         private static Vector4 ParseColor(double percentile) => percentile switch
         {
-            >= 100 => ColorFromHex("#e5cc80"),  // gold
-            >= 99 => ColorFromHex("#e268a8"),   // pink
-            >= 95 => ColorFromHex("#ff8000"),   // orange
-            >= 75 => ColorFromHex("#a335ee"),   // purple
-            >= 50 => ColorFromHex("#0070ff"),   // blue
-            >= 25 => ColorFromHex("#1eff00"),   // green
-            _ => ColorFromHex("#999999"),       // grey
+            >= 100 => ColorFromHex("#6f5c33"),  // gold
+            >= 99 => ColorFromHex("#52354b"),   // pink
+            >= 95 => ColorFromHex("#6e4a30"),   // orange
+            >= 75 => ColorFromHex("#412a6b"),   // purple
+            >= 50 => ColorFromHex("#244085"),   // blue
+            >= 25 => ColorFromHex("#2f5140"),   // green
+            _ => ColorFromHex("#3a4250"),       // grey
+        };
+
+        /// <summary>
+        /// The parse brackets, TONED DOWN TO SURFACES YOU CAN PUT WORDS ON.
+        ///
+        /// FFLogs' own hexes are signal colours - #1eff00 and #ff8000 - meant to be read as a few
+        /// characters of text on a dark page. Behind a whole pill they are a wall of pure hue, and
+        /// nothing legible goes on top: white disappears into the green, black into the blue.
+        ///
+        /// These are the same seven brackets at the tone Tomestone uses for the same job, three of
+        /// them sampled straight off it - the plum, the indigo and the deep blue. Every one sits
+        /// between 0.04 and 0.12 relative luminance, which is 6.5:1 against white at the worst of
+        /// them and over 10:1 at most, so one light ink reads on all seven and the pills stop
+        /// competing with the text they carry.
+        ///
+        /// The ORDER is untouched: grey, green, blue, purple, orange, pink, gold, at the same
+        /// thresholds. Somebody who knows the brackets still reads the pill at a glance.
+        /// </summary>
+
+        /// <summary>
+        /// The same seven brackets as INK rather than as a surface.
+        ///
+        /// One scale cannot do both jobs. A parse drawn as three characters on the plugin's black
+        /// ground needs a light colour; a parse drawn as a whole pill needs a dark one, or nothing
+        /// can be written on it. The fills above are the dark half - these are the light half, the
+        /// same hue at the other end of the range, so a purple parse reads purple whichever form
+        /// it takes.
+        /// </summary>
+        private static Vector4 ParseInk(double percentile) => percentile switch
+        {
+            >= 100 => ColorFromHex("#ccb673"),  // gold
+            >= 99 => ColorFromHex("#c98fb4"),   // pink
+            >= 95 => ColorFromHex("#d09a6e"),   // orange
+            >= 75 => ColorFromHex("#9b86d9"),   // purple
+            >= 50 => ColorFromHex("#6f9be0"),   // blue
+            >= 25 => ColorFromHex("#6fae86"),   // green
+            _ => ColorFromHex("#8d97a8"),       // grey
         };
 
         /// <summary>The bracket's name, for the hover.</summary>
@@ -783,22 +906,37 @@ namespace PfPresets
                 + $"worth another go in {ShortWait(wait)}, as each of them falls\n"
                 + "out of that window.";
 
+        /// <summary>
+        /// Whether <see cref="DrawProgressAction"/> would draw anything, asked without drawing it.
+        ///
+        /// The card's action row divides its width between however many buttons it is about to
+        /// have, which means it has to know the count before it places the first one - and this
+        /// button is the one whose presence depends on the state of a lookup rather than on the
+        /// state of the party.
+        /// </summary>
+        private bool HasProgressAction(uint dutyRowId, int playerCount)
+            => Ratings != null && ShowsProgressRow() && DutyHasProgress(dutyRowId) && playerCount > 0;
+
         private bool DrawProgressAction(Vector2 size, string? dutyName, uint dutyRowId,
             List<PartyMemberInfo> players)
         {
-            if (Ratings == null || !ShowsProgressRow() || !DutyHasProgress(dutyRowId)
-                || players.Count == 0)
+            // Captured rather than re-read through the property. Moving the guard out to
+            // HasProgressAction took the compiler's null-flow with it, and the twenty lines below
+            // dereference this - a local the guard has proved is better than a null-forgiving `!`
+            // on every one of them.
+            var ratings = Ratings;
+            if (ratings == null || !HasProgressAction(dutyRowId, players.Count))
                 return false;
 
             string duty = dutyName ?? string.Empty;
             var party = PartyIdentities(players);
-            Ratings.EnsureProgressLoaded(duty, party);
+            ratings.EnsureProgressLoaded(duty, party);
 
-            bool loaded = Ratings.HasProgressFor(duty);
+            bool loaded = ratings.HasProgressFor(duty);
 
-            if (Ratings.ProgressQueued)
+            if (ratings.ProgressQueued)
             {
-                int waiting = Ratings.ProgressQueuedCount;
+                int waiting = ratings.ProgressQueuedCount;
                 string queued = waiting > 1 ? $"Queued · {waiting}" : "Queued";
 
                 ImGui.BeginDisabled(true);
@@ -817,20 +955,21 @@ namespace PfPresets
             // short throttle on the button itself, and the server's much longer per-character
             // window with every member already inside it.
             TimeSpan cooling = PartyRefreshWait(party);
-            bool ready = Ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
+            bool ready = ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
 
             string label = ready
-                ? "Update progress##FetchProgress"
+                ? "Update progress"
                 : cooling > TimeSpan.Zero
-                    ? $"Updated · {CompactWait(cooling)}##FetchProgress"
-                    : $"Updated · {(int)Ratings.ProgressButtonWait.TotalSeconds}s##FetchProgress";
+                    ? $"Updated · {CompactWait(cooling)}"
+                    : $"Updated · {(int)ratings.ProgressButtonWait.TotalSeconds}s";
 
-            ImGui.BeginDisabled(!ready);
-            bool pressed = DrawPrimaryButton(label, size);
-            ImGui.EndDisabled();
+            // The circular arrows are the same mark every application uses for "go and check
+            // again", and the pair is laid out by the same helper Leave duty beside it uses.
+            bool pressed = DrawActionButton(FontAwesomeIcon.SyncAlt, label, "FetchProgress", size,
+                ActionStyle.Primary, ready);
 
             if (pressed && ready)
-                Ratings.RequestPartyProgress(duty, party);
+                ratings.RequestPartyProgress(duty, party);
             else if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
                 PaddedTooltip(cooling > TimeSpan.Zero
@@ -936,7 +1075,7 @@ namespace PfPresets
                 }
             }
 
-            ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + 1f));
+            ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + HoverRowGap));
         }
 
         /// <summary>
@@ -1021,7 +1160,7 @@ namespace PfPresets
                     + "report or remember about them.");
             }
 
-            ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + 1f));
+            ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + HoverRowGap));
         }
 
         /// <summary>
@@ -1079,7 +1218,13 @@ namespace PfPresets
                 contextMenu: identity == null
                     ? null
                     : () => DrawPlayerMenuItems(identity, dutyName, dutyRowId,
-                        kick: isSelf || !canKick ? null : member));
+                        kick: isSelf || !canKick ? null : member),
+
+                // A box each. The party list is the one place in the plugin where every row is a
+                // person rather than a fact about one, and a column of names on a flat card read as
+                // a paragraph - Raised sits one step above the card under it, so each of them is
+                // an object you could point at.
+                restColor: Raised);
         }
 
         /// <summary>Room reserved at the end of every row for the menu button. Constant whether or

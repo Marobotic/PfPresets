@@ -71,6 +71,16 @@ namespace PfPresets
             if (isMainWindowVisible)
                 return;
 
+            // AND GONE WHILE THE GAME HAS A SUB-WINDOW OPEN OVER THE LIST.
+            //
+            // Recruitment Criteria and a listing's details both sit on top of the Party Finder, and
+            // "Recruit Members" stays visible behind them - so this button did too, hovering over a
+            // window that had already asked for your attention. The listing details is also where
+            // "Save as Preset" lives, and two of this plugin's buttons on screen at once, three
+            // inches apart, doing unrelated things, is the thing to avoid most of all.
+            if (pfAutomation.IsPartyFinderSubWindowOpen())
+                return;
+
             if (!pfAutomation.TryGetRecruitButtonRect(out var anchorPos, out var anchorSize))
                 return;
 
@@ -113,7 +123,7 @@ namespace PfPresets
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0f, 0f, 0f, 0f));
             ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0f, 0f, 0f, 0f));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, Radius.Control);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
             // ImGui refuses to make a top-level window smaller than style.WindowMinSize, which is
             // 32x32 by default - taller than the button we are asking for. Without this the host
@@ -136,9 +146,6 @@ namespace PfPresets
                     if (DrawPrimaryButton("##OpenPfAnalysis", size))
                     {
                         isMainWindowVisible = true;
-                        // A window reopened from here should come back the size it was left at,
-                        // not minimised to a title bar with no obvious way out.
-                        isMinimized = false;
                     }
 
                     DrawIconLabelCentered(LogoIcon, PfOpenButtonLabel, btnPos, size, JsOkText);

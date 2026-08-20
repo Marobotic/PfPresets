@@ -14,6 +14,8 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
+        /// <summary>The most seats a party can have. Presets are not this long by default any
+        /// more - a light party carries four - so this is a ceiling, not a size.</summary>
         private const int PartySlotCount = 8;
 
         private PfPresetData? editingPreset = null;
@@ -33,6 +35,11 @@ namespace PfPresets
         private bool editorAllowDoubleCaster = false;
         private bool editorNoteDoubleCaster = false;
         private bool editorLimitToWorld = false;
+
+        /// <summary>What "limit recruiting to my world" was set to before a category forced it on,
+        /// so it can be handed back when the category changes again. Null when nothing is being
+        /// held.</summary>
+        private bool? limitToWorldBeforeForce;
         private bool editorPrivateParty = false;
         private bool editorCompletionStatus = false;
         private int editorCompletionStatusType = 0;
@@ -52,6 +59,7 @@ namespace PfPresets
             editingPreset = preset;
             isNewPreset = isNew;
             isEditorWindowVisible = true;
+            OpenSheet(SheetKind.Editor);
 
             editorPresetName = preset.Name;
             editorComment = preset.Comment;
@@ -83,6 +91,37 @@ namespace PfPresets
             editorLangFrench = preset.LangFrench;
             showJobSelector = false;
             jobSelectorSlotIndex = -1;
+
+            // Whatever the last preset was forced out of does not belong to this one.
+            limitToWorldBeforeForce = null;
+        }
+
+        /// <summary>
+        /// Reshapes the slots for whatever duty is now selected.
+        ///
+        /// ON EVERY CHANGE OF DUTY, and deliberately overwriting whatever was there. Changing the
+        /// duty is changing what the listing is for, and a Crystalline Conflict preset carrying the
+        /// eight seats of the raid it used to be is wrong in a way nobody notices until the listing
+        /// is up. The composition is a starting point, not a lock - every slot is still editable
+        /// afterwards, which is the whole of the screen this runs on.
+        ///
+        /// Content this plugin has no table for still gets a full party rather than a row of blank
+        /// seats - see <see cref="DutyComposition.DefaultFor"/>.
+        /// </summary>
+        private void ApplyDefaultComposition()
+        {
+            editorSlots = DutyComposition.DefaultFor(editorDutyCategoryId, editorDutyName);
+
+            // Auto-adjust does not survive a move to content the game will not seek distributions
+            // for; the composition just written is the answer there.
+            if (!DutyComposition.SupportsAutoAdjust(editorDutyCategoryId))
+                editorAutoAdjustRoles = false;
+
+            // The selector may be open on a slot that has just changed underneath it.
+            showJobSelector = false;
+            jobSelectorSlotIndex = -1;
+
+            pfAutomation.ClearAutoAdjustCache();
         }
 
         private static RoleSlot CloneSlot(RoleSlot s)
@@ -121,16 +160,19 @@ namespace PfPresets
             editingPreset.LangGerman = editorLangGerman;
             editingPreset.LangFrench = editorLangFrench;
 
-            config.UpdatePreset(editingPreset);
+            // A new preset joins the list here and nowhere earlier, so this is the first time it
+            // is written to disk. An existing one is already in the list and only needs saving.
+            if (isNewPreset)
+                config.CommitNewPreset(editingPreset);
+            else
+                config.UpdatePreset(editingPreset);
+
             CloseEditor();
         }
 
-        private void CancelEditor()
-        {
-            if (isNewPreset && editingPreset != null)
-                config.DeletePreset(editingPreset.Id);
-            CloseEditor();
-        }
+        /// <summary>Leaves the editor without keeping anything. A new preset was never added to
+        /// the list, so there is nothing to take back out.</summary>
+        private void CancelEditor() => CloseEditor();
 
         private void CloseEditor()
         {
@@ -139,37 +181,86 @@ namespace PfPresets
             showJobSelector = false;
             jobSelectorSlotIndex = -1;
             pfAutomation.ClearAutoAdjustCache();
+
+            // Only if the editor is what is on screen. Saving a preset can be the last step of
+            // something that put another sheet up - and dropping whatever happens to be open,
+            // because this one closed, is how a sheet disappears mid-sentence.
+            if (SheetOpen(SheetKind.Editor) || SheetOpen(SheetKind.JobSelector))
+                CloseSheet();
         }
 
-        private void DrawEditorWindow()
+        /// <summary>
+        /// The preset editor, as a sheet.
+        ///
+        /// The two columns become one on the phone. This is the only body in the plugin that still
+        /// switches layout on a measurement, and it is measured against the sheet rather than the
+        /// window: a 460px phone gives each column 208px, which is narrower than the duty dropdown
+        /// that has to live in one of them.
+        /// </summary>
+        private void DrawEditorSheet()
         {
-            if (!isEditorWindowVisible || editingPreset == null) return;
-
-            ImGui.SetNextWindowSize(new Vector2(580, 650), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSizeConstraints(new Vector2(500, 520), new Vector2(750, 850));
-
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, BgOuter);
-            ImGui.PushStyleColor(ImGuiCol.Border, BorderDefault);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 12));
-
-            string title = isNewPreset ? "Create New Preset##PfPresetEditor" : $"Edit: {editingPreset.Name}##PfPresetEditor";
-            bool open = isEditorWindowVisible;
-            if (ImGui.Begin(title, ref open, ImGuiWindowFlags.NoCollapse))
+            if (!isEditorWindowVisible || editingPreset == null)
             {
-                if (!open) { CancelEditor(); }
-                else { DrawEditorContent(); }
+                CloseSheet();
+                return;
             }
-            ImGui.End();
-            ImGui.PopStyleVar(4);
-            ImGui.PopStyleColor(2);
+
+            string title = isNewPreset ? "New preset" : "Edit preset";
+
+            if (!BeginSheet("Editor", title, 700f))
+                return;
+
+            try
+            {
+                DrawEditorContent();
+            }
+            finally
+            {
+                EndSheet();
+            }
         }
+
+        /// <summary>Below this, the editor stacks its two columns instead of setting them side by
+        /// side. Measured on the sheet body, which is the phone's screen minus its padding.</summary>
+        private const float EditorSplitMinWidth = 560f;
 
         private void DrawEditorContent()
         {
+            // A false here means the body region is clipped away entirely this frame - there is
+            // nothing to draw into it, but the child still has to be closed, and the footer still
+            // has to be drawn or the sheet loses its way out.
+            if (BeginSheetBody(SheetFooterHeight))
+            {
+                try
+                {
+                    DrawEditorForm();
+                }
+                finally
+                {
+                    EndSheetBody();
+                }
+            }
+            else
+            {
+                EndSheetBody();
+            }
+
+            DrawEditorFooter();
+        }
+
+        /// <summary>Save and Cancel, on the sheet's footer.</summary>
+        private void DrawEditorFooter()
+        {
+            if (DrawSheetFooter("Save preset##SavePreset", "Cancel##CancelPreset", out bool cancelled))
+                SaveEditor();
+            else if (cancelled)
+                CancelEditor();
+        }
+
+        private void DrawEditorForm()
+        {
             float contentWidth = ImGui.GetContentRegionAvail().X;
+            bool split = contentWidth >= EditorSplitMinWidth;
 
             // Preset Name
             DrawSectionLabel("PRESET NAME");
@@ -179,14 +270,11 @@ namespace PfPresets
             PopFramedInput();
             ImGui.Dummy(new Vector2(0, 8));
 
-            float footerHeight = 46;
-            float scrollHeight = ImGui.GetContentRegionAvail().Y - footerHeight;
-            ImGui.BeginChild("EditorScroll", new Vector2(contentWidth, scrollHeight), false, ImGuiWindowFlags.None);
-
-            float halfWidth = (contentWidth - 12) / 2f;
+            float halfWidth = split ? (contentWidth - 12) / 2f : contentWidth;
 
             // ══ LEFT COLUMN ═══════════════════════════════════════
-            ImGui.BeginChild("EditorLeft", new Vector2(halfWidth, 0), false, ImGuiWindowFlags.None);
+            if (split)
+                ImGui.BeginChild("EditorLeft", new Vector2(halfWidth, 0), false, ImGuiWindowFlags.None);
 
             // Duty (Category-based)
             DrawSectionLabel("DUTY");
@@ -219,7 +307,8 @@ namespace PfPresets
             ImGui.SameLine();
             ImGui.TextColored(TextSecondary, " | Wrapped Preview:");
             ImGui.Indent(10);
-            DrawCommentLines(WrapText(editorComment, 38).Split('\n'), TextMuted);
+            using (CommentFont.Push())
+                DrawCommentLines(WrapText(editorComment, 38).Split('\n'), TextMuted);
             ImGui.Unindent(10);
             ImGui.Dummy(new Vector2(0, 6));
 
@@ -227,15 +316,56 @@ namespace PfPresets
             DrawSectionLabel("ROLES");
             DrawRoleSlotEditor();
 
-            ImGui.EndChild();
-            ImGui.SameLine(0, 12);
+            if (split)
+            {
+                ImGui.EndChild();
+                ImGui.SameLine(0, 12);
+                ImGui.BeginChild("EditorRight", new Vector2(halfWidth, 0), false, ImGuiWindowFlags.None);
+            }
+            else
+            {
+                // Stacked, so the two halves need a visible break between them - side by side the
+                // gutter did that job, and one column of eleven section labels with no seam reads
+                // as a single very long list.
+                ImGui.Dummy(new Vector2(0, 10));
+            }
 
             // ══ RIGHT COLUMN ══════════════════════════════════════
-            ImGui.BeginChild("EditorRight", new Vector2(halfWidth, 0), false, ImGuiWindowFlags.None);
 
             // Search Area
             DrawSectionLabel("SEARCH AREA");
+            // FATEs and the hunt are on your own world or they are nowhere - see
+            // DutyComposition.RequiresHomeWorld. The box is ticked and held rather than left to be
+            // unticked into a listing that cannot work.
+            //
+            // AND WHAT IT WAS SET TO IS GIVEN BACK. Forcing the box on overwrote the answer that
+            // was already in it, so a preset built with world-limiting off, briefly pointed at the
+            // hunt and pointed somewhere else again, came away limited - a setting changed by
+            // passing through a category rather than by anybody choosing it. The value is put aside
+            // on the way in and restored on the way out.
+            bool homeWorldOnly = DutyComposition.RequiresHomeWorld(editorDutyCategoryId);
+
+            if (homeWorldOnly)
+            {
+                limitToWorldBeforeForce ??= editorLimitToWorld;
+                editorLimitToWorld = true;
+            }
+            else if (limitToWorldBeforeForce is { } restored)
+            {
+                editorLimitToWorld = restored;
+                limitToWorldBeforeForce = null;
+            }
+
+            if (homeWorldOnly) ImGui.BeginDisabled();
             DrawStyledCheckbox("Limit Recruiting to World", ref editorLimitToWorld);
+            if (homeWorldOnly) ImGui.EndDisabled();
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && homeWorldOnly)
+                PaddedTooltip(
+                    $"{DutyCategories.Names[editorDutyCategoryId]} only happens where you are "
+                    + "standing.\n\nAnyone travelling from another world arrives after it, so the "
+                    + "listing stays on your own.");
+
             DrawStyledCheckbox("Form a Private Party", ref editorPrivateParty);
             if (editorPrivateParty)
             {
@@ -296,30 +426,18 @@ namespace PfPresets
 
             // Language
             DrawSectionLabel("LANGUAGE");
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8, 4));
             DrawLanguageFlag("J", ref editorLangJapanese, ColorFromHex("#cc3333"));
-            ImGui.SameLine();
+            ImGui.SameLine(0, Space.Tight);
             DrawLanguageFlag("E", ref editorLangEnglish, ColorFromHex("#3366cc"));
-            ImGui.SameLine();
+            ImGui.SameLine(0, Space.Tight);
             DrawLanguageFlag("D", ref editorLangGerman, ColorFromHex("#cc9933"));
-            ImGui.SameLine();
+            ImGui.SameLine(0, Space.Tight);
             DrawLanguageFlag("F", ref editorLangFrench, ColorFromHex("#3399cc"));
-            ImGui.PopStyleVar();
 
-            ImGui.EndChild();
-            ImGui.EndChild(); // EditorScroll
+            if (split)
+                ImGui.EndChild();
 
-            // Footer buttons
-            ImGui.Dummy(new Vector2(0, 4));
-            ImGui.GetWindowDrawList().AddLine(new Vector2(ImGui.GetWindowPos().X, ImGui.GetCursorScreenPos().Y), new Vector2(ImGui.GetWindowPos().X + ImGui.GetWindowWidth(), ImGui.GetCursorScreenPos().Y), ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
-            ImGui.Dummy(new Vector2(0, 6));
-
-            float btnWidth = (contentWidth - 12) / 2f;
-            if (DrawPrimaryButton("  Save Preset##SavePreset", new Vector2(btnWidth, ButtonHeight)))
-                SaveEditor();
-            ImGui.SameLine(0, 12);
-            if (DrawSecondaryButton("  Cancel##CancelPreset", new Vector2(btnWidth, ButtonHeight)))
-                CancelEditor();
+            ImGui.Dummy(new Vector2(0, 8));
         }
 
         /// <summary>The row id to persist for a chosen duty: real sheet ids are stable and worth
@@ -327,6 +445,47 @@ namespace PfPresets
         /// 0 and fall back to matching on the name.</summary>
         private static uint StorableRowId(uint rowId)
             => DutyDataHelper.IsSyntheticRowId(rowId) ? 0u : rowId;
+
+        /// <summary>
+        /// The duties the picker will offer for a category: all of them, or only the ones this
+        /// character has unlocked when the setting asks for that.
+        ///
+        /// The filter is here rather than in <see cref="DutyDataHelper"/> on purpose - what the
+        /// game data holds is not a matter of preference, and the helper answering differently
+        /// depending on a checkbox would make every other caller of it wrong in a way that is very
+        /// hard to see.
+        /// </summary>
+        private List<DutyEntry> OfferableDuties(string categoryName)
+        {
+            var all = dutyDataHelper.GetDutiesByType(categoryName);
+            if (!config.HideLockedDuties)
+                return all;
+
+            return all.Where(dutyDataHelper.IsDutyUnlocked).ToList();
+        }
+
+        /// <summary>
+        /// Whether a whole category is shut to this character. The answer itself belongs to
+        /// <see cref="DutyDataHelper.IsCategoryUnlocked"/>; what is here is the per-frame cache.
+        /// </summary>
+        private bool IsCategoryLocked(int categoryId)
+        {
+            if (categoryId <= 0 || categoryId >= DutyCategories.Names.Length)
+                return false;
+
+            if (categoryLockedThisFrame.TryGetValue(categoryId, out bool cached))
+                return cached;
+
+            bool locked = !dutyDataHelper.IsCategoryUnlocked(categoryId);
+
+            categoryLockedThisFrame[categoryId] = locked;
+            return locked;
+        }
+
+        /// <summary>Category id -> shut, for this frame. The category dropdown asks about all
+        /// fifteen every time it is open, and each answer walks that category's whole duty list.
+        /// </summary>
+        private readonly Dictionary<int, bool> categoryLockedThisFrame = new();
 
         // ── Duty Category Selector (matches in-game dropdown) ─────
         private void DrawDutyCategorySelector()
@@ -336,23 +495,108 @@ namespace PfPresets
             int catId = editorDutyCategoryId;
             if (catId < 0 || catId >= DutyCategories.Names.Length) catId = 0;
 
-            // Icon for the currently-selected category, drawn to the left of the dropdown.
+            string catPreview = IsCategoryLocked(catId) && !config.HideLockedDuties
+                ? $"{DutyCategories.Names[catId]}  (Locked)"
+                : DutyCategories.Names[catId];
+
+            // THE MARK GOES IN THE FIELD, BEFORE THE WORDS.
+            //
+            // It used to sit outside, a loose 18px image with the dropdown starting after it -
+            // two controls where there is one thing being chosen, and the field itself began at a
+            // different x from every other field on the sheet. The rows inside the list already
+            // read as icon-then-name; the closed field now says the same thing.
+            //
+            // BOTH DRAWN BY HAND, over an empty preview.
+            //
+            // The first attempt padded the preview string with spaces and drew the icon on top of
+            // them. A space is not a fixed width - it is whatever the face makes it - so the amount
+            // of room six of them buy depends on the font and the size, and here it bought slightly
+            // less than the picture needed: the mark landed on the first letter and the field read
+            // "(icon)uildhests".
+            //
+            // ImGui gets an empty preview and draws only the frame and its arrow. The mark and the
+            // words are then placed against the frame's own rectangle, so the gap between them is a
+            // number rather than a guess.
             uint selIcon = GetCategoryIcon(catId);
-            if (selIcon != 0 && TryGetIconHandle(selIcon, out var selHandle))
-            {
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 1f);
-                ImGui.Image(selHandle, new Vector2(18, 18));
-                ImGui.SameLine(0, 6);
-            }
+            Dalamud.Bindings.ImGui.ImTextureID selHandle = default;
+            bool hasIcon = selIcon != 0 && TryGetIconHandle(selIcon, out selHandle);
 
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo("##DutyCategory", DutyCategories.Names[catId]))
+            ImGui.SetNextWindowSizeConstraints(new Vector2(0, 0), new Vector2(float.MaxValue, 320));
+
+            // THE LIST'S DRAW LIST IS NOT THE FIELD'S. BeginCombo pushes the popup window when it
+            // opens, and GetWindowDrawList after that returns the POPUP's - so the preview was
+            // being drawn into the list that belongs to the menu, at the field's coordinates,
+            // where the popup's own clip rect cut it in half. Which is exactly what it looked
+            // like: the words vanishing from the field and reappearing behind the menu.
+            //
+            // The parent's list is taken before the call and drawn into afterwards. It is a
+            // retained list, so writing to it later is fine, and it renders under the popup -
+            // which is where the field is anyway.
+            var fdl = ImGui.GetWindowDrawList();
+
+            // THE FRAME IS MEASURED BEFORE IT IS SUBMITTED, not read back afterwards.
+            //
+            // GetItemRectMin/Max after BeginCombo report the LAST item - and once the menu is open
+            // that is the popup, not the field. The centre line worked out from it fell somewhere
+            // inside the menu, so the preview was drawn too low and the field's own bottom edge cut
+            // it in half. It only looked right while the menu was shut.
+            //
+            // The cursor and GetFrameHeight give the same rectangle ImGui is about to use, and give
+            // it whether the menu is open or not.
+            Vector2 fieldMin = ImGui.GetCursorScreenPos();
+            var fieldMax = new Vector2(fieldMin.X + ImGui.GetContentRegionAvail().X,
+                                       fieldMin.Y + ImGui.GetFrameHeight());
+
+            bool catOpen = ImGui.BeginCombo("##DutyCategory", string.Empty);
+
+            {
+
+                const float pad = 12f;
+                const float side = 20f;
+                const float gap = 9f;
+
+                // The arrow is ImGui's, at the right of the frame; the words stop clear of it.
+                float arrowRoom = fieldMax.Y - fieldMin.Y;
+                float textX = fieldMin.X + pad + (hasIcon ? side + gap : 0f);
+                float textRoom = fieldMax.X - arrowRoom - textX;
+
+                if (hasIcon)
+                {
+                    float top = fieldMin.Y + (fieldMax.Y - fieldMin.Y - side) * 0.5f;
+                    fdl.AddImage(selHandle, new Vector2(fieldMin.X + pad, top),
+                        new Vector2(fieldMin.X + pad + side, top + side));
+                }
+
+                using (UiBodyFont.Push())
+                {
+                    float lineH = ImGui.GetTextLineHeight();
+                    fdl.AddText(new Vector2(textX, (fieldMin.Y + fieldMax.Y) * 0.5f - lineH * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(Ink), Fit(catPreview, textRoom));
+                }
+            }
+
+            if (catOpen)
             {
                 for (int i = 0; i < DutyCategories.Names.Length; i++)
                 {
+                    // Same bargain as the duties inside them: marked when the setting is off,
+                    // gone when it is on. The one you are already on always stays - hiding the
+                    // category a saved preset points at would leave the dropdown reading as
+                    // something the preset is not.
+                    // Not offered at all while the plugin cannot post them correctly - see
+                    // DutyComposition.IsSupported. The one you are already on stays, so opening an
+                    // old preset does not silently repoint it at something else.
+                    if (!DutyComposition.IsSupported(i) && i != catId)
+                        continue;
+
+                    bool catLocked = IsCategoryLocked(i);
+                    if (catLocked && config.HideLockedDuties && i != catId)
+                        continue;
+
                     Vector2 rp = ImGui.GetCursorScreenPos();
                     bool sel = i == catId;
-                    if (ImGui.Selectable($"##cat_{i}", sel, ImGuiSelectableFlags.None, new Vector2(0, 20)))
+                    if (ImGui.Selectable($"##cat_{i}", sel, ImGuiSelectableFlags.None, new Vector2(0, 26)))
                     {
                         editorDutyCategoryId = i;
                         editorDutyCategoryName = DutyCategories.Names[i];
@@ -365,66 +609,101 @@ namespace PfPresets
                         {
                             // Default to the category's first duty so the selection is never left
                             // pointing at a duty from the previous category.
-                            var d = dutyDataHelper.GetDutiesByType(editorDutyCategoryName);
+                            var d = OfferableDuties(editorDutyCategoryName);
                             editorDutyName = d.Count > 0 ? d[0].Name : editorDutyCategoryName;
                             editorDutyRowId = d.Count > 0 ? StorableRowId(d[0].RowId) : 0;
                         }
+
+                        // Only when it actually moved. Clicking the category you are already on
+                        // still fires this Selectable, and resetting the slots because somebody
+                        // opened a dropdown and closed it again would throw away their work.
+                        if (i != catId)
+                            ApplyDefaultComposition();
                     }
                     var cdl = ImGui.GetWindowDrawList();
                     float textX = rp.X + 2f;
                     uint ic = GetCategoryIcon(i);
                     if (ic != 0 && TryGetIconHandle(ic, out var ih))
                     {
-                        cdl.AddImage(ih, new Vector2(rp.X + 2f, rp.Y + 1f), new Vector2(rp.X + 20f, rp.Y + 19f));
+                        cdl.AddImage(ih, new Vector2(rp.X + 2f, rp.Y + 4f), new Vector2(rp.X + 20f, rp.Y + 22f));
                         textX = rp.X + 26f;
                     }
-                    cdl.AddText(new Vector2(textX, rp.Y + 2f),
-                        ImGui.ColorConvertFloat4ToU32(sel ? AccentBlue : TextPrimary), DutyCategories.Names[i]);
+                    string catLabel = catLocked && !config.HideLockedDuties
+                        ? $"{DutyCategories.Names[i]}  (Locked)"
+                        : DutyCategories.Names[i];
+                    cdl.AddText(new Vector2(textX, rp.Y + 5f),
+                        ImGui.ColorConvertFloat4ToU32(sel ? AccentBlue : catLocked ? TextMuted : TextPrimary),
+                        catLabel);
+
+                    // Opens on the category you are already on, rather than at the top of a list
+                    // the current one may be scrolled off.
+                    if (sel)
+                        ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();
             }
             PopFramedInput();
 
-            // If a category is selected, show the duty sub-dropdown
-            if (editorDutyCategoryId > 0)
+            // The duty sub-dropdown, when the category has duties to choose between. The Hunt and
+            // FATEs have none - they are not instances - so the row is left out entirely rather
+            // than offered as a text box, which only ever produced a name that resolved to nothing
+            // and a listing that posted as "any duty" regardless.
+            var duties = editorDutyCategoryId > 0
+                ? OfferableDuties(editorDutyCategoryName)
+                : new List<DutyEntry>();
+
+            if (duties.Count > 0)
             {
                 ImGui.Dummy(new Vector2(0, 2));
                 PushFramedInput();
 
-                // Get duties for this category from Lumina
-                var duties = dutyDataHelper.GetDutiesByType(editorDutyCategoryName);
-
-                if (duties.Count > 0)
                 {
                     ImGui.SetNextItemWidth(-1);
                     // Dropdown menu, but with the popup capped to a max height so a long duty
                     // list scrolls inside the dropdown instead of filling the whole screen.
                     ImGui.SetNextWindowSizeConstraints(new Vector2(0, 0), new Vector2(float.MaxValue, 320));
-                    if (ImGui.BeginCombo("##DutySelection", editorDutyName))
+
+                    // What the closed dropdown reads, which has to agree with the preset card: the
+                    // fight and a mark when the setting is off, nothing but the mark when it is on.
+                    var chosen = duties.FirstOrDefault(d =>
+                        d.Name.Equals(editorDutyName, StringComparison.OrdinalIgnoreCase));
+                    bool chosenLocked = chosen == null
+                        ? !dutyDataHelper.IsDutyUnlocked(dutyDataHelper.GetDutyEntry(editorDutyRowId))
+                        : !dutyDataHelper.IsDutyUnlocked(chosen);
+
+                    string dutyPreview = chosenLocked
+                        ? config.HideLockedDuties ? "(Locked duty)" : $"{editorDutyName}  (Locked)"
+                        : editorDutyName;
+
+                    if (ImGui.BeginCombo("##DutySelection", dutyPreview))
                     {
                         for (int di = 0; di < duties.Count; di++)
                         {
                             var duty = duties[di];
                             bool isSel = duty.Name.Equals(editorDutyName, StringComparison.OrdinalIgnoreCase);
-                            if (ImGui.Selectable($"{duty.Name}##duty_{di}", isSel))
+
+                            // Marked, not withheld. You are allowed to write a preset for a fight
+                            // you have not reached - on the alt that has it, this is the preset you
+                            // want - so the picker says which ones those are and lets you pick one
+                            // anyway. Applying is where it stops.
+                            string label = dutyDataHelper.IsDutyUnlocked(duty)
+                                ? duty.Name
+                                : $"{duty.Name}  (Locked)";
+
+                            if (ImGui.Selectable($"{label}##duty_{di}", isSel))
                             {
                                 editorDutyName = duty.Name;
                                 editorDutyRowId = StorableRowId(duty.RowId);
+
+                                // Same rule as the category above: a re-pick is not a change.
+                                if (!isSel)
+                                    ApplyDefaultComposition();
                             }
                             if (isSel)
                                 ImGui.SetItemDefaultFocus();
                         }
                         ImGui.EndCombo();
                     }
-                }
-                else
-                {
-                    // Manual text input fallback if Lumina doesn't have duties for this category.
-                    // A hand-typed name has no row id behind it, so clear the stored one rather than
-                    // leaving it pointing at whatever was picked before.
-                    ImGui.SetNextItemWidth(-1);
-                    if (ImGui.InputTextWithHint("##DutyManual", "Type duty name...", ref editorDutyName, 128))
-                        editorDutyRowId = 0;
                 }
 
                 PopFramedInput();
@@ -434,14 +713,25 @@ namespace PfPresets
         // ── Role Slot Editor ──────────────────────────────────────
         private void DrawRoleSlotEditor()
         {
-            while (editorSlots.Count < PartySlotCount)
-                editorSlots.Add(new RoleSlot { SlotIndex = editorSlots.Count, Role = RoleType.Free });
+            // However many seats this party has - four for a dungeon, two for Crystalline Conflict,
+            // eight for a raid. Only the extremes are corrected: an empty list (a preset from a
+            // share code that lost them) is reshaped from the duty, and anything past eight is
+            // trimmed because the game has nowhere to put it.
+            if (editorSlots.Count == 0)
+                editorSlots = DutyComposition.DefaultFor(editorDutyCategoryId, editorDutyName);
             while (editorSlots.Count > PartySlotCount)
                 editorSlots.RemoveAt(editorSlots.Count - 1);
 
             const int slotsPerRow = 8;
             const float slotSize = 28f;
             const float spacing = 4f;
+
+            // Auto-adjust is the game client's own composition, offered only where the game offers
+            // it. Anywhere else the checkbox is dead and the flag is forced off, so an old preset
+            // that still carries it does not silently keep overriding its own slots.
+            bool autoAdjustAvailable = DutyComposition.SupportsAutoAdjust(editorDutyCategoryId);
+            if (!autoAdjustAvailable)
+                editorAutoAdjustRoles = false;
 
             if (editorAutoAdjustRoles)
                 ImGui.BeginDisabled();
@@ -537,7 +827,7 @@ namespace PfPresets
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, slotColor);
                     ImGui.PushStyleColor(ImGuiCol.ButtonActive, slotColor);
                     ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
-                    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+                    ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Tile);
 
                     bool clicked = false;
                     if (splitColors != null)
@@ -574,6 +864,10 @@ namespace PfPresets
                         showJobSelector = true;
                         tempSelectorRole = slot.Role;
                         tempSelectorJobFlags = slot.AcceptedJobFlags;
+
+                        // Replaces the editor rather than stacking over it. One sheet at a time -
+                        // the selector's Apply and Cancel both bring the editor back.
+                        OpenSheet(SheetKind.JobSelector);
                     }
 
                     if (ImGui.IsItemHovered())
@@ -586,7 +880,16 @@ namespace PfPresets
 
             ImGui.Dummy(new Vector2(0, 4));
 
+            if (!autoAdjustAvailable) ImGui.BeginDisabled();
             DrawStyledCheckbox("Auto-Adjust Roles (Seek Job Distributions)", ref editorAutoAdjustRoles);
+            if (!autoAdjustAvailable) ImGui.EndDisabled();
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !autoAdjustAvailable)
+                PaddedTooltip(
+                    "Only trials, raids and high-end duties seek job distributions.\n\n"
+                    + "For everything else the slots above are the composition, and they stay "
+                    + "yours to edit.");
+
             if (editorAutoAdjustRoles)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, TextMuted);
@@ -616,23 +919,41 @@ namespace PfPresets
             if (disableRemoveRestrictions) ImGui.EndDisabled();
         }
 
+        /// <summary>
+        /// One of the four language flags: a square with a letter in the middle of it.
+        ///
+        /// DRAWN, NOT LABELLED. The plugin's theme aligns every button's label flush left, which is
+        /// right for a wide button with a sentence on it and wrong for a 34px square holding a
+        /// single character - J, E, D and F all sat against the left edge and the row read as four
+        /// boxes with something spilling out of them.
+        ///
+        /// Centred on the letter's INK rather than on its em box, which is the only way a capital
+        /// with no descender sits optically in the middle - see DrawTextCentredOnInk.
+        /// </summary>
         private void DrawLanguageFlag(string letter, ref bool enabled, Vector4 color)
         {
-            Vector4 bgColor = enabled ? new Vector4(color.X, color.Y, color.Z, 0.3f) : BgCard;
-            Vector4 textColor = enabled ? TextPrimary : TextMuted;
-            Vector4 borderColor = enabled ? color : BorderDefault;
+            const float w = 36f, h = 32f;
 
-            ImGui.PushStyleColor(ImGuiCol.Button, bgColor);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(color.X, color.Y, color.Z, 0.4f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(color.X, color.Y, color.Z, 0.5f));
-            ImGui.PushStyleColor(ImGuiCol.Text, textColor);
-            ImGui.PushStyleColor(ImGuiCol.Border, borderColor);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
-            if (ImGui.Button($"{letter}##Lang_{letter}", new Vector2(34, 30)))
+            Vector2 p = ImGui.GetCursorScreenPos();
+            ImGui.InvisibleButton($"##Lang_{letter}", new Vector2(w, h));
+            bool hot = ImGui.IsItemHovered();
+
+            if (ImGui.IsItemClicked())
                 enabled = !enabled;
-            ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor(5);
+
+            var dl = ImGui.GetWindowDrawList();
+            var max = new Vector2(p.X + w, p.Y + h);
+
+            Vector4 fill = enabled
+                ? color with { W = hot ? 0.42f : 0.30f }
+                : hot ? Raised : Field;
+
+            dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(fill), Radius.Small);
+            dl.AddRect(p, max, ImGui.ColorConvertFloat4ToU32(enabled ? color : BorderControl),
+                Radius.Small, ImDrawFlags.None, 1f);
+
+            DrawTextCentredOnInk(letter, new Vector2(p.X + w * 0.5f, p.Y + h * 0.5f),
+                enabled ? Ink : Dim);
         }
 
         /// <summary>Hard-wraps text at a fixed column, previewing how the game splits the

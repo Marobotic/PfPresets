@@ -20,6 +20,15 @@ namespace PfPresets
         /// <summary>The version label in the footer was clicked. Counts toward enrolment.</summary>
         partial void OnVersionLabelClicked();
 
+        /// <summary>
+        /// Lets an optional component add to the version string in the corner.
+        ///
+        /// `ref` rather than a return value for the same reason as everything else here: a partial
+        /// method has to return void to be erasable, so anything it produces has to come back
+        /// through a parameter. In an ordinary build this is erased and the label is untouched.
+        /// </summary>
+        partial void DecorateVersionLabel(ref string label);
+
         /// <summary>Anything that draws over the whole window, before the frame ends.</summary>
         partial void DrawPanelOverlay();
 

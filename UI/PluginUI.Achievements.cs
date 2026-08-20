@@ -33,13 +33,27 @@ namespace PfPresets
 
         private const float FeedCardPad = 14f;
         private const float FeedGap = 10f;
+
+        /// <summary>Where the feed goes two cards across. Above the tablet's body and well
+        /// above the phone's, so in practice this is "a tablet gets two, a phone gets one".
+        /// </summary>
+        private const float FeedTwoColumnWidth = 720f;
         private const float FeedIconSize = 44f;
         private const float FeedJobIconSize = 18f;
         private const float FeedActionHeight = 34f;
 
         /// <summary>The pager's row, reserved out of the list's height when there is more than one
         /// page.</summary>
-        private const float FeedPagerHeight = 44f;
+        /// <summary>
+        /// The strip the page numbers live in: the rule, the gap under it, the 30px cells, and a
+        /// gutter of air below them.
+        ///
+        /// Summed rather than guessed at, because this number is BOTH the height reserved off the
+        /// bottom of the scroll region and the offset the pager positions itself from. A constant
+        /// that only matched one of those is what put the numbers against the bottom edge.
+        /// </summary>
+        private const float FeedPagerCell = 30f;
+        private const float FeedPagerHeight = 1f + Space.Gap + FeedPagerCell + Space.Gutter;
 
         /// <summary>Gap between the text column and the chip stack on the right, so a long fight
         /// name stops rather than running under a timestamp.</summary>
@@ -109,7 +123,14 @@ namespace PfPresets
 
             ImGui.Indent(FeedMargin);
 
-            DrawFeedHeader(ratings, width);
+            // THE TAB'S OWN TOP MARGIN. Every other tab gets this for free from the toolbar at the
+            // top of it - the search field is centred in a 64px bar, so there is a gutter of air
+            // above the first heading. Clears has no toolbar, so its heading was the first thing in
+            // the body and sat hard against the header strip: seven pixels below a divider, and
+            // twenty above the card it belongs to.
+            ImGui.Dummy(new Vector2(0, Space.Gutter));
+
+            DrawFeedHeader();
             DrawNewPostsPill(ratings, width);
 
             // Already at the top: nothing to lose your place in, so newer posts just appear. The
@@ -126,7 +147,10 @@ namespace PfPresets
             else
             {
                 bool paged = ratings.FeedPages > 1;
-                float listBottom = paged ? -(FeedPagerHeight + FeedMargin) : -FeedMargin;
+                // The pager already carries its own bottom gutter, so the list stops exactly
+                // where the pager starts - it used to subtract a second margin on top and then
+                // lose it again to item spacing.
+                float listBottom = paged ? -FeedPagerHeight : -Space.Gutter;
 
                 ImGui.BeginChild("##FeedScroll", new Vector2(width, listBottom), false);
                 try
@@ -144,15 +168,43 @@ namespace PfPresets
                     // what put every card's timestamp underneath the bar - "Today 12:3" and then
                     // nothing. Card height does not depend on width, so the scrollbar's appearance
                     // cannot feed back into the layout and make it oscillate.
-                    float cardWidth = ImGui.GetContentRegionAvail().X;
+                    float region = ImGui.GetContentRegionAvail().X;
 
-                    for (int i = 0; i < posts.Count; i++)
+                    // TWO ACROSS ON A TABLET, one on a phone.
+                    //
+                    // A clear is a short card - a name, a fight, a time, two buttons - and a single
+                    // column of them across a 900px body was three lines of text with half the row
+                    // empty beside them. Two columns fit twice as many clears on screen without
+                    // making any of them wider than they have anything to put in.
+                    int columns = region >= FeedTwoColumnWidth ? 2 : 1;
+                    float cardWidth = columns == 1
+                        ? region
+                        : (region - FeedGap) * 0.5f;
+
+                    // Zero spacing for the grid: the row's height is measured from where the
+                    // cursor lands after a card, and ImGui's own gap between items would be counted
+                    // into it on top of FeedGap - two gaps where the layout intends one.
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+
+                    for (int i = 0; i < posts.Count; i += columns)
                     {
-                        DrawAchievementCard(posts[i], cardWidth);
+                        // The row is as tall as its tallest card, and the next row starts below
+                        // that. Laid out by letting each card advance the cursor itself, the second
+                        // card of a pair would start where the first one ended.
+                        float rowTop = ImGui.GetCursorPosY();
+                        float rowHeight = 0f;
 
-                        if (i < posts.Count - 1)
-                            ImGui.Dummy(new Vector2(0, FeedGap));
+                        for (int c = 0; c < columns && i + c < posts.Count; c++)
+                        {
+                            ImGui.SetCursorPos(new Vector2(c * (cardWidth + FeedGap), rowTop));
+                            DrawAchievementCard(posts[i + c], cardWidth);
+                            rowHeight = MathF.Max(rowHeight, ImGui.GetCursorPosY() - rowTop);
+                        }
+
+                        ImGui.SetCursorPos(new Vector2(0, rowTop + rowHeight + FeedGap));
                     }
+
+                    ImGui.PopStyleVar();
                 }
                 finally
                 {
@@ -180,13 +232,16 @@ namespace PfPresets
         {
             var dl = ImGui.GetWindowDrawList();
 
-            ImGui.Dummy(new Vector2(0, 4));
+            // PLACED FROM THE BOTTOM, not flowed to it. Flowed, ImGui adds its item spacing after
+            // the scroll child and after each spacer in here - a dozen pixels the arithmetic never
+            // saw - so the numbers drifted down until they were touching the bottom edge of the
+            // window with nothing under them.
+            ImGui.SetCursorPosY(ImGui.GetWindowHeight() - FeedPagerHeight);
+
             Vector2 origin = ImGui.GetCursorScreenPos();
 
             dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + 1f),
                 ImGui.ColorConvertFloat4ToU32(RuleHair));
-
-            ImGui.Dummy(new Vector2(0, 9));
 
             int pages = ratings.FeedPages;
             int current = ratings.FeedPage;
@@ -196,16 +251,17 @@ namespace PfPresets
             int from = Math.Max(0, Math.Min(current - 2, pages - 5));
             int to = Math.Min(pages - 1, Math.Max(current + 2, 4));
 
-            float cell = 30f;
-            float gap = 4f;
+            // NUMBERS ONLY. The row used to be bracketed by < and >, which is two more controls
+            // for a job the numbers already do - every page they could reach is sitting right
+            // there, named, one press away. They also went dead at the ends, so a two-page feed
+            // showed four cells and two of them were furniture.
+            const float cell = FeedPagerCell;
+            const float gap = 4f;
             int shown = to - from + 1;
-            float total = (cell + gap) * (shown + 2) - gap;
+            float total = (cell + gap) * shown - gap;
 
-            float x = ImGui.GetCursorScreenPos().X + Math.Max(0f, (width - total) * 0.5f);
-            float y = ImGui.GetCursorScreenPos().Y;
-
-            x += DrawPagerCell(dl, x, y, cell, "<", current > 0, false,
-                () => ratings.ShowFeedPage(current - 1)) + gap;
+            float x = origin.X + Math.Max(0f, (width - total) * 0.5f);
+            float y = origin.Y + 1f + Space.Gap;
 
             for (int p = from; p <= to; p++)
             {
@@ -214,10 +270,11 @@ namespace PfPresets
                     () => ratings.ShowFeedPage(target)) + gap;
             }
 
-            DrawPagerCell(dl, x, y, cell, ">", current < pages - 1, false,
-                () => ratings.ShowFeedPage(current + 1));
-
-            ImGui.Dummy(new Vector2(width, cell));
+            // The strip's own height, claimed so nothing after it overlaps - there is nothing
+            // after it today, and a region that does not account for what it drew is the kind of
+            // thing that only shows up when something is added below.
+            ImGui.SetCursorScreenPos(origin);
+            ImGui.Dummy(new Vector2(width, FeedPagerHeight));
         }
 
         /// <summary>One square in the pager. Returns its width so the row can be laid out by
@@ -236,12 +293,13 @@ namespace PfPresets
                 onClick();
 
             if (active)
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent));
+                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
             else if (hovered)
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised));
+                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
 
             dl.AddRect(min, max,
-                ImGui.ColorConvertFloat4ToU32(active ? Accent : RuleStrong), 0f, 0, 1f);
+                ImGui.ColorConvertFloat4ToU32(active ? Accent : RuleStrong),
+                Radius.Small, ImDrawFlags.None, 1f);
 
             var colour = active ? OnAccent : enabled ? (hovered ? Ink : Dim) : Faint;
 
@@ -268,12 +326,13 @@ namespace PfPresets
         /// about - so the line ran a margin's width past the cards under it. Same face, same
         /// tracking, same rule; just told where to stop.
         /// </summary>
-        private void DrawFeedHeader(RatingService ratings, float width)
+        private void DrawFeedHeader()
         {
             ImGui.Dummy(new Vector2(0, FeedMargin));
 
             var dl = ImGui.GetWindowDrawList();
             Vector2 p = ImGui.GetCursorScreenPos();
+            float width = ImGui.GetContentRegionAvail().X;
 
             dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + 2f),
                 ImGui.ColorConvertFloat4ToU32(RuleStrong));
@@ -406,8 +465,9 @@ namespace PfPresets
             // ground it sits on plus the chip. No accent edge: the chip already says it, and two
             // marks for one fact is one mark too many.
             dl.AddRectFilled(min, max,
-                ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? Raised : Panel));
-            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(RuleStrong), 0f, 0, 1f);
+                ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? Raised : Field), Radius.Card);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                Radius.Card, ImDrawFlags.None, 1f);
 
             DrawCardBody(post, min, width, bodyHeight);
 
@@ -436,7 +496,7 @@ namespace PfPresets
             var artMin = new Vector2(x, centreY - FeedIconSize * 0.5f);
             var artMax = new Vector2(artMin.X + FeedIconSize, artMin.Y + FeedIconSize);
 
-            dl.AddRectFilled(artMin, artMax, ImGui.ColorConvertFloat4ToU32(Field));
+            dl.AddRectFilled(artMin, artMax, ImGui.ColorConvertFloat4ToU32(Panel), Radius.Tile);
 
             var art = FightArt(post.FightSlug, post.FightLabel);
             if (art != null)
@@ -458,7 +518,8 @@ namespace PfPresets
                 }
             }
 
-            dl.AddRect(artMin, artMax, ImGui.ColorConvertFloat4ToU32(BorderControl), 0f, 0, 1f);
+            dl.AddRect(artMin, artMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
+                Radius.Tile, ImDrawFlags.None, 1f);
 
             // ── Measure both lines before drawing either ──
             //
@@ -551,34 +612,10 @@ namespace PfPresets
 
             var dl = ImGui.GetWindowDrawList();
 
-            string label = post.KindLabel.ToUpperInvariant();
+            float width = ChipWidth(post.KindLabel);
 
-            float textWidth;
-            using (UiLabelFont.Push())
-                textWidth = ImGui.CalcTextSize(label).X;
-
-            float width = textWidth + 16f;
-            var min = new Vector2(rightEdge - width, top);
-            var max = new Vector2(rightEdge, top + height);
-
-            if (post.IsFirstClear)
-            {
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent));
-            }
-            else
-            {
-                dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(BorderControl), 0f, 0, 1f);
-            }
-
-            using (UiLabelFont.Push())
-            {
-                Vector2 ts = ImGui.CalcTextSize(label);
-                dl.AddText(new Vector2(min.X + (width - ts.X) * 0.5f,
-                                       min.Y + (height - ts.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? OnAccent : Dim), label);
-            }
-
-            return width;
+            return DrawChip(new Vector2(rightEdge - width, top + (height - ChipHeight) * 0.5f),
+                post.KindLabel, post.IsFirstClear ? Accent : Dim, filled: post.IsFirstClear);
         }
 
         /// <summary>
@@ -600,29 +637,61 @@ namespace PfPresets
             // feed received on its first day was somebody doing exactly this to their own clear.
             bool mine = IsSelf(post.Identity);
 
-            float heartWidth = FeedActionButton(
-                post, "heart", origin,
+            // THREE STATES, NOT TWO.
+            //
+            //   yours      - filled, and pressing it takes it back
+            //   locked     - filled and dimmed: this connection's heart, cast by another character
+            //   available  - empty, and pressing it gives one
+            //
+            // Locked is drawn as hearted because it is hearted; what it is not is *yours to undo*.
+            // Dimming is the whole of the visual difference, and the tooltip carries the rest -
+            // an alt that shows an empty heart it cannot fill is the version of this that sends
+            // people to the Discord asking why the button is broken.
+            bool locked = post.HeartLocked && !post.Hearted;
+            bool canPress = !mine && !locked;
+
+            string heartTip =
+                mine ? "You can't heart your own clear."
+                : locked ? "Already hearted this from another character."
+                : post.Hearted ? "Click to remove your heart."
+                : string.Empty;
+
+            // Half each, with the divider on the seam. They were sized to their own labels, so
+            // "128" and "Share" made a wide button and a narrow one and the divider sat wherever
+            // the numbers put it - which moved from card to card as the hearts came in.
+            float half = MathF.Floor((width - 1f) * 0.5f);
+
+            FeedActionButton(
+                post, "heart", origin, half,
                 FontAwesomeIcon.Heart,
                 post.Hearts.ToString(),
-                post.Hearted ? Accent : Faint,
+                post.Hearted || locked ? Accent : Faint,
                 out bool heartClicked,
-                enabled: !mine);
+                enabled: canPress,
+                tooltip: heartTip,
+                corners: ImDrawFlags.RoundCornersBottomLeft);
 
-            if (heartClicked && !post.Hearted && !mine)
-                Ratings?.Heart(post);
+            if (heartClicked && canPress)
+            {
+                if (post.Hearted)
+                    Ratings?.Unheart(post);
+                else
+                    Ratings?.Heart(post);
+            }
 
             // The divider between the two.
-            float divX = origin.X + heartWidth;
+            float divX = origin.X + half;
             dl.AddRectFilled(new Vector2(divX, origin.Y),
                 new Vector2(divX + 1f, origin.Y + FeedActionHeight),
                 ImGui.ColorConvertFloat4ToU32(RuleHair));
 
             FeedActionButton(
-                post, "share", new Vector2(divX + 1f, origin.Y),
+                post, "share", new Vector2(divX + 1f, origin.Y), width - half - 1f,
                 FontAwesomeIcon.ShareAlt,
                 post.Reshared ? "Shared" : "Share",
                 post.Reshared ? Faint with { W = 0.5f } : Faint,
-                out bool shareClicked);
+                out bool shareClicked,
+                corners: ImDrawFlags.RoundCornersBottomRight);
 
             if (shareClicked && !post.Reshared)
                 Ratings?.Share(post);
@@ -630,9 +699,20 @@ namespace PfPresets
 
         /// <summary>One footer button. Returns its width so the next one can be placed after
         /// it.</summary>
-        private float FeedActionButton(AchievementPost post, string id, Vector2 origin,
+        /// <summary>
+        /// One of a card's two footer actions, filling the width it is given with its icon and
+        /// label centred in it.
+        ///
+        /// Given a width rather than measuring one, because the two halves of a card's footer have
+        /// to match and neither of them can know what the other needs.
+        /// </summary>
+        /// <param name="corners">Which of this button's corners belong to the card's own outline.
+        /// These two sit along the bottom edge, so the outer one of each has to be rounded to the
+        /// card's radius or hovering it squares off the card - a highlight is a fill like any
+        /// other and takes the shape of whatever it is filling.</param>
+        private void FeedActionButton(AchievementPost post, string id, Vector2 origin, float width,
             FontAwesomeIcon icon, string label, Vector4 colour, out bool clicked,
-            bool enabled = true)
+            bool enabled = true, string tooltip = "", ImDrawFlags corners = ImDrawFlags.RoundCornersNone)
         {
             var dl = ImGui.GetWindowDrawList();
 
@@ -641,22 +721,47 @@ namespace PfPresets
                 glyphWidth = ImGui.CalcTextSize(icon.ToIconString()).X;
 
             float labelWidth = string.IsNullOrEmpty(label) ? 0f : ImGui.CalcTextSize(label).X;
-            float width = FeedCardPad + glyphWidth + (labelWidth > 0 ? 8f + labelWidth : 0f)
-                + FeedCardPad;
+            float contentWidth = glyphWidth + (labelWidth > 0 ? 8f + labelWidth : 0f);
+            float contentX = origin.X + MathF.Max(FeedCardPad, (width - contentWidth) * 0.5f);
 
             ImGui.SetCursorScreenPos(origin);
             ImGui.InvisibleButton($"##feed{id}{post.Id}", new Vector2(width, FeedActionHeight));
 
-            bool hovered = enabled && ImGui.IsItemHovered();
+            // Hover is tracked even when the button is off, because a disabled button is exactly
+            // the one that owes an explanation - the highlight stays keyed to `enabled` so it
+            // still does not look pressable.
+            bool over = ImGui.IsItemHovered();
+            bool hovered = enabled && over;
             clicked = enabled && ImGui.IsItemClicked();
+
+            if (over && tooltip.Length > 0)
+                PaddedTooltip(tooltip);
 
             if (!enabled)
                 colour = colour with { W = colour.W * 0.45f };
 
             if (hovered)
             {
-                dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + FeedActionHeight),
-                    ImGui.ColorConvertFloat4ToU32(Field));
+                // RAISED, AND HELD OFF THE CARD'S OWN EDGE.
+                //
+                // The highlight was Field - the colour the card is already painted in - so hovering
+                // changed nothing except that the fill covered the card's 1px border along the
+                // edges it touches. Nothing lit up; a line went missing, which is a strange thing
+                // for a cursor to do and read as damage rather than as feedback.
+                //
+                // A step lighter than the card says "this is under the pointer", and the fill stops
+                // one pixel inside whichever edges are the card's outline so the border it sits
+                // against survives. The inner edge, on the divider, is not inset - two buttons that
+                // meet at a seam should meet.
+                float left = origin.X + (corners.HasFlag(ImDrawFlags.RoundCornersBottomLeft) ? 1f : 0f);
+                float right = origin.X + width
+                    - (corners.HasFlag(ImDrawFlags.RoundCornersBottomRight) ? 1f : 0f);
+                float bottom = origin.Y + FeedActionHeight
+                    - (corners == ImDrawFlags.RoundCornersNone ? 0f : 1f);
+
+                dl.AddRectFilled(new Vector2(left, origin.Y), new Vector2(right, bottom),
+                    ImGui.ColorConvertFloat4ToU32(Raised),
+                    corners == ImDrawFlags.RoundCornersNone ? 0f : Radius.Card - 1f, corners);
             }
 
             var drawColour = ImGui.ColorConvertFloat4ToU32(hovered ? Ink : colour);
@@ -665,19 +770,16 @@ namespace PfPresets
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
             {
                 Vector2 gs = ImGui.CalcTextSize(icon.ToIconString());
-                dl.AddText(new Vector2(origin.X + FeedCardPad, centreY - gs.Y * 0.5f),
+                dl.AddText(new Vector2(contentX, centreY - gs.Y * 0.5f),
                     drawColour, icon.ToIconString());
             }
 
             if (labelWidth > 0)
             {
                 Vector2 ls = ImGui.CalcTextSize(label);
-                dl.AddText(new Vector2(origin.X + FeedCardPad + glyphWidth + 8f,
-                        centreY - ls.Y * 0.5f),
+                dl.AddText(new Vector2(contentX + glyphWidth + 8f, centreY - ls.Y * 0.5f),
                     drawColour, label);
             }
-
-            return width;
         }
 
         /// <summary>

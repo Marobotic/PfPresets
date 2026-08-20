@@ -75,6 +75,89 @@ namespace PfPresets
 
         private readonly ConcurrentDictionary<string, DateTime> clearsPressedAt = new();
 
+        // ── The budget, and the character that never resolves ──────
+        //
+        // WHAT WENT WRONG, so it is not re-derived from scratch next time. Searching a character
+        // who does not exist and pressing refresh sent hundreds of lookups and got the address
+        // rate-limited at both ends.
+        //
+        // No single bug: three things that are each defensible alone.
+        //
+        //   1. The server answers 200 for any well-formed name. It does not check that a character
+        //      exists - it cannot cheaply - it just queues the work.
+        //   2. When the queue gives up on a character it stops being queued, but nothing writes a
+        //      fetched_at row. So FetchedAt stays null.
+        //   3. ClearsRefreshWait returns zero the moment !Fetched, because "never fetched" was
+        //      meant to read as "nobody has looked yet, go ahead".
+        //
+        // Together: a name nothing will ever answer for is permanently in the state the cooldown
+        // treats as "fresh press welcome". The button never rests, the press-rest is actively
+        // cleared when the answer comes back unqueued, and every press starts the whole cycle
+        // again. Nobody was holding the button down; the button simply never said no.
+        //
+        // Both halves are fixed here rather than one. The per-character rest stops this exact
+        // shape, and the global budget stops the next one - whatever it turns out to be - from
+        // reaching four hundred requests before anybody notices.
+
+        /// <summary>How long a character rests after a lookup that produced nothing at all.</summary>
+        private static readonly TimeSpan ClearsEmptyRest = TimeSpan.FromMinutes(10);
+
+        /// <summary>Characters whose last press came back with nothing known and nothing queued,
+        /// and when they may be asked about again.</summary>
+        private readonly ConcurrentDictionary<string, DateTime> clearsEmptyUntil = new();
+
+        /// <summary>
+        /// The ceiling on presses, across every character, per window.
+        ///
+        /// Deliberately a whole-client budget rather than another per-character one. Per-character
+        /// limits are what this feature already had, and they are exactly what a person searching
+        /// one bad name after another walks straight past - every new name is a fresh allowance.
+        /// Ten in five minutes is more than anybody inspecting a party will ever use and far below
+        /// anything the server would notice.
+        /// </summary>
+        private static readonly TimeSpan ClearsBudgetWindow = TimeSpan.FromMinutes(5);
+
+        private const int ClearsBudgetMax = 10;
+
+        private readonly ConcurrentQueue<DateTime> clearsPressLog = new();
+
+        /// <summary>
+        /// How long a queued character is polled before the client stops believing the queue.
+        ///
+        /// The poll exists to notice an answer landing, and an answer that has not landed in three
+        /// minutes is not going to. Without this the client keeps reading every six seconds for as
+        /// long as the card is open, which is the quiet half of what happened - not a press, just a
+        /// window somebody left on screen.
+        /// </summary>
+        private static readonly TimeSpan ClearsPollGiveUp = TimeSpan.FromMinutes(3);
+
+        private readonly ConcurrentDictionary<string, DateTime> clearsPollingSince = new();
+
+        /// <summary>Drops presses that have aged out of the window, and reports what is left.</summary>
+        private int ClearsBudgetUsed()
+        {
+            DateTime cutoff = DateTime.UtcNow - ClearsBudgetWindow;
+            while (clearsPressLog.TryPeek(out var when) && when < cutoff)
+                clearsPressLog.TryDequeue(out _);
+
+            return clearsPressLog.Count;
+        }
+
+        /// <summary>How long until another press is allowed, or zero when one is allowed now. Drives
+        /// the button's own disabled state, so the budget is visible before it is hit rather than
+        /// as a refusal afterwards.</summary>
+        public TimeSpan ClearsBudgetWait()
+        {
+            if (ClearsBudgetUsed() < ClearsBudgetMax)
+                return TimeSpan.Zero;
+
+            if (!clearsPressLog.TryPeek(out var oldest))
+                return TimeSpan.Zero;
+
+            var wait = oldest + ClearsBudgetWindow - DateTime.UtcNow;
+            return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+        }
+
         /// <summary>This character's clears as last known, or null if never read.</summary>
         public ClearsResponse? ClearsFor(CharacterIdentity who)
             => who.IsValid && clears.TryGetValue(who.Key, out var found) ? found : null;
@@ -107,6 +190,20 @@ namespace PfPresets
         /// </summary>
         public TimeSpan ClearsRefreshWait(CharacterIdentity who)
         {
+            // A character nothing answered for. Checked FIRST, because this is precisely the case
+            // the test below waves through: no fetch row means no cooldown, which is the right
+            // reading for "nobody has looked yet" and the wrong one for "we looked and there is
+            // nothing there". They are indistinguishable in the response, so the client has to
+            // remember which of the two it just did.
+            if (who.IsValid && clearsEmptyUntil.TryGetValue(who.Key, out var until))
+            {
+                var rest = until - DateTime.UtcNow;
+                if (rest > TimeSpan.Zero)
+                    return rest;
+
+                clearsEmptyUntil.TryRemove(who.Key, out _);
+            }
+
             var found = ClearsFor(who);
             if (found == null || !found.Fetched || found.RefreshAfterSec <= 0)
                 return TimeSpan.Zero;
@@ -147,6 +244,26 @@ namespace PfPresets
             if (known && !waiting)
                 return;
 
+            // The belt is allowed to be slow; it is not allowed to be believed forever. A card left
+            // open on a character the queue will never answer for polled every six seconds for as
+            // long as the window stayed up - no press involved, no ceiling, and nothing on screen
+            // to suggest anything was happening.
+            if (waiting)
+            {
+                DateTime since = clearsPollingSince.GetOrAdd(who.Key, DateTime.UtcNow);
+
+                if (DateTime.UtcNow - since > ClearsPollGiveUp)
+                {
+                    // Believe the belt no longer. Marked as rested rather than merely stopped, so
+                    // the button does not sit there inviting the press that starts it all again.
+                    found!.Queued = false;
+                    clearsEmptyUntil[who.Key] = DateTime.UtcNow + ClearsEmptyRest;
+                    clearsPollingSince.TryRemove(who.Key, out _);
+                    clearsPressedAt.TryRemove(who.Key, out _);
+                    return;
+                }
+            }
+
             if (clearsReadAt.TryGetValue(who.Key, out var last)
                 && DateTime.UtcNow - last < ClearsPollAfter)
                 return;
@@ -165,6 +282,17 @@ namespace PfPresets
             if (!who.IsValid || ClearsPending(who) || ClearsRefreshWait(who) > TimeSpan.Zero)
                 return;
 
+            // The budget is spent on the press, not on the answer. A lookup that fails still cost
+            // the server the work of trying, and a budget that only counted successes would be no
+            // budget at all in exactly the situation it exists for.
+            if (ClearsBudgetWait() > TimeSpan.Zero)
+            {
+                clearsNote = "That's a lot of lookups - give it a few minutes.";
+                clearsNoteUntil = DateTime.UtcNow.AddSeconds(12);
+                return;
+            }
+
+            clearsPressLog.Enqueue(DateTime.UtcNow);
             clearsPressedAt[who.Key] = DateTime.UtcNow;
             Fetch(who, region, refresh: true, attempt: 0);
         }
@@ -218,12 +346,30 @@ namespace PfPresets
                         clearsNote = null;
                         clearsRetry.TryRemove(who.Key, out _);
 
-                        // A press the server declined to queue - because somebody else fetched
-                        // this character twenty minutes ago - is finished the moment it answers.
-                        // Holding the button for the full rest would be pretending to work.
                         if (!value.Queued)
-                            clearsPressedAt.TryRemove(who.Key, out _);
+                        {
+                            // TWO VERY DIFFERENT ANSWERS, AND THEY USED TO BE THE SAME ONE.
+                            //
+                            // Not queued AND fetched is the server declining work because somebody
+                            // read this character twenty minutes ago. The press is genuinely
+                            // finished, and holding the button for the full rest would be
+                            // pretending to work - so it is released, as before.
+                            //
+                            // Not queued and NOT fetched is the other thing entirely: nothing is
+                            // known, nothing is coming, and the queue has already given up or never
+                            // took it. Releasing the button there is what made a nonexistent
+                            // character infinitely re-pressable - each press cleared its own rest
+                            // on the way out.
+                            if (value.Fetched)
+                                clearsPressedAt.TryRemove(who.Key, out _);
+                            else
+                                clearsEmptyUntil[who.Key] = DateTime.UtcNow + ClearsEmptyRest;
+                        }
                     }
+
+                    // The queue answered one way or the other, so the poll's clock starts over.
+                    if (!value.Queued)
+                        clearsPollingSince.TryRemove(who.Key, out _);
                 }
                 catch (Exception ex)
                 {

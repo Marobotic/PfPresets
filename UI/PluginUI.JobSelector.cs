@@ -15,19 +15,34 @@ namespace PfPresets
         private RoleType tempSelectorRole;
         private ulong tempSelectorJobFlags;
 
-        // Fixed-size job selector geometry. Columns are pixel offsets from the window's
-        // content-left edge; the wide gap between the label column and the JOB column keeps
-        // role labels from sitting under the job icons (prevents misclicks). Everything is
-        // laid out with explicit positions for consistent margins and vertical centering.
-        private const float JobSelWindowW = 700f;
-        private const float JobSelWindowH = 600f;
-        private const float JobSelLabelX = 22f;
-        private const float JobSelJobX = 245f;
-        private const float JobSelClassX = 510f;
+        // Job selector geometry.
+        //
+        // THE JOB ICONS FLOW AND WRAP; they used to sit at two fixed columns, 245px and 510px from
+        // the content edge, which needed a 700px window and got one. There is no 700px window any
+        // more - the phone is 460 across - and a fixed column at 510 on a 428px content area is not
+        // a cramped layout, it is icons drawn off the side of the sheet where nobody can click them.
+        //
+        // What is left fixed is the label column, because the labels are what the eye runs down and
+        // a ragged left edge on eight role names is worse than a ragged right edge on job icons.
+        private const float JobSelLabelX = 16f;
         private const float JobSelIconSize = 30f;
         private const float JobSelIconGap = 6f;
-        private const float JobSelSubIndent = 30f;
+        private const float JobSelSubIndent = 22f;
         private const float JobSelRoleIcon = 26f;
+
+        /// <summary>Gap between the last job of a row and the first of its base classes, so the two
+        /// groups stay readable as two groups now that they share a flow.</summary>
+        private const float JobSelClassGap = 18f;
+
+        /// <summary>
+        /// How much of the row the labels get, at the current width.
+        ///
+        /// Proportional with a floor and a ceiling rather than a constant: "Magical Ranged DPS" is
+        /// the longest label and it has to fit on a phone, while on a tablet a label column that
+        /// kept growing with the sheet would strand the icons against the right-hand edge.
+        /// </summary>
+        private static float JobSelLabelColumn(float contentW)
+            => Math.Clamp(contentW * 0.42f, 158f, 228f);
 
         /// <summary>Bitfield of all jobs+classes that belong to the named selector category.
         /// "Healer" and "DPS" are super-groups spanning several job categories.</summary>
@@ -120,7 +135,8 @@ namespace PfPresets
             }
             if (ImGui.IsItemHovered())
             {
-                drawList.AddRect(pos, br, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.5f)), 0f, ImDrawFlags.None, 1.5f);
+                drawList.AddRect(pos, br, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.5f)),
+                    Radius.Tile, ImDrawFlags.None, 1.5f);
                 ImGui.SetTooltip(job.Name);
             }
         }
@@ -130,10 +146,13 @@ namespace PfPresets
         {
             var dl = ImGui.GetWindowDrawList();
             Vector2 br = new Vector2(topLeft.X + size, topLeft.Y + size);
-            dl.AddRectFilled(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.14f)), 0f);
+            dl.AddRectFilled(topLeft, br,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.14f)), Radius.Tile);
             if (TryGetIconHandle(iconId, out var h))
                 dl.AddImage(h, new Vector2(topLeft.X + 2f, topLeft.Y + 2f), new Vector2(br.X - 2f, br.Y - 2f));
-            dl.AddRect(topLeft, br, ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.65f)), 0f, ImDrawFlags.None, 1.5f);
+            dl.AddRect(topLeft, br,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.65f)),
+                Radius.Tile, ImDrawFlags.None, 1.5f);
         }
 
         /// <summary>Draws the tree connector lines linking a role header to its sub-rows.</summary>
@@ -151,65 +170,131 @@ namespace PfPresets
                 dl.AddLine(new Vector2(vx, cy), new Vector2(childIconLeft, cy), col, 1.5f);
         }
 
-        /// <summary>Draws one job-selector row with explicit positioning so every row shares the same
-        /// columns, row height and vertical centering. Header rows (Tank / Healer / DPS) select their
-        /// whole role; sub-rows are indented and select their sub-category. The whole label-and-icon
-        /// area is hoverable/clickable so the role icon is part of the hover. Returns the row's icon
-        /// centre Y (used to draw the tree connectors).</summary>
+        /// <summary>
+        /// One job-selector row: a role name in the label column, and the jobs it covers flowing to
+        /// the right of it, wrapping onto as many lines as they need.
+        ///
+        /// Header rows (Tank / Healer / DPS) select their whole role; sub-rows are indented and
+        /// select their sub-category. The whole label area is clickable, so the role icon is part of
+        /// the same target as the words beside it.
+        /// </summary>
+        /// <returns>The row's first-line centre Y, which is where the tree connectors meet it.
+        /// The FIRST line, not the row's middle: a wrapped row is taller than one line of icons, and
+        /// a connector drawn to its centre would come in below the icon it is pointing at.</returns>
         private float DrawJobSelectorRow(string label, uint roleIconId, JobInfo[] jobs, JobInfo[] classes,
             Vector4 roleColor, string categoryName, RoleType roleType, bool isHeader, float indent)
         {
-            bool hasIcons = jobs.Length > 0 || classes.Length > 0;
-            float rowH = hasIcons ? JobSelIconSize + 10f : 30f;
             Vector2 p0 = ImGui.GetCursorScreenPos();
             float contentW = ImGui.GetContentRegionAvail().X;
-            float midY = p0.Y + rowH * 0.5f;
             var drawList = ImGui.GetWindowDrawList();
+
+            float labelCol = JobSelLabelColumn(contentW);
+            float iconsX = JobSelLabelX + labelCol;
+            float iconsAvail = MathF.Max(JobSelIconSize, contentW - iconsX - 4f);
+
+            // Laid out before anything is drawn, so the row knows its own height in advance - the
+            // label, the role icon and the hit area are all centred on the first line, and none of
+            // them can be positioned until it is known whether there is a second.
+            var slots = PlanIconFlow(jobs, classes, iconsAvail, out int lines);
+
+            const float lineStride = JobSelIconSize + JobSelIconGap;
+            bool hasIcons = slots.Length > 0;
+            float firstLineH = hasIcons ? JobSelIconSize + 10f : 30f;
+            float rowH = hasIcons ? firstLineH + (lines - 1) * lineStride : firstLineH;
+            float midY = p0.Y + firstLineH * 0.5f;
 
             ulong categoryMask = GetCategoryMask(categoryName);
             bool isSelected = tempSelectorJobFlags != 0
                 ? tempSelectorJobFlags == categoryMask
                 : (!isHeader && tempSelectorRole == roleType);
 
-            // Clickable/hover area spans the role icon AND the label (icon is part of the hover).
-            float clickW = (JobSelJobX - 14f) - indent;
-            if (clickW < 90f) clickW = 90f;
+            // Clickable/hover area spans the role icon AND the label. Only the first line of it:
+            // pressing the empty space under a wrapped run of icons should do nothing, and the
+            // label is on the line above it.
+            float clickW = MathF.Max(90f, labelCol - 10f);
             ImGui.SetCursorScreenPos(new Vector2(p0.X + indent, p0.Y));
-            if (ImGui.InvisibleButton($"##row_{categoryName}", new Vector2(clickW, rowH)))
+            if (ImGui.InvisibleButton($"##row_{categoryName}", new Vector2(clickW, firstLineH)))
                 SelectRoleCategory(categoryName, roleType);
             if (ImGui.IsItemHovered())
             {
-                drawList.AddRectFilled(new Vector2(p0.X + indent - 6f, p0.Y), new Vector2(p0.X + indent + clickW, p0.Y + rowH),
-                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f);
+                drawList.AddRectFilled(
+                    new Vector2(p0.X + indent - 6f, p0.Y),
+                    new Vector2(p0.X + indent + clickW, p0.Y + firstLineH),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Small);
                 ImGui.SetTooltip($"Select all {label} for this slot");
             }
 
-            // Role icon (framed), vertically centered.
-            DrawFramedRoleIcon(roleIconId, new Vector2(p0.X + indent, midY - JobSelRoleIcon * 0.5f), JobSelRoleIcon, roleColor);
+            // Role icon (framed), centred on the first line.
+            DrawFramedRoleIcon(roleIconId, new Vector2(p0.X + indent, midY - JobSelRoleIcon * 0.5f),
+                JobSelRoleIcon, roleColor);
 
-            // Label text.
+            // Label text, ellipsised rather than allowed to run under the icons. "Magical Ranged
+            // DPS" is within a few pixels of the phone's label column and the fit depends on the
+            // player's font scale, which is not knowable from here.
             float labelX = indent + JobSelRoleIcon + 8f;
             Vector4 labelColor = isHeader || isSelected ? roleColor : JsMuted;
-            Vector2 ts = ImGui.CalcTextSize(label);
-            drawList.AddText(new Vector2(p0.X + labelX, midY - ts.Y * 0.5f), ImGui.ColorConvertFloat4ToU32(labelColor), label);
+            string shown = Fit(label, JobSelLabelX + labelCol - labelX - 8f);
+            Vector2 ts = ImGui.CalcTextSize(shown);
+            drawList.AddText(new Vector2(p0.X + labelX, midY - ts.Y * 0.5f),
+                ImGui.ColorConvertFloat4ToU32(labelColor), shown);
 
-            // Job icons.
-            for (int k = 0; k < jobs.Length; k++)
+            foreach (var (job, col, line) in slots)
             {
-                ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelJobX + k * (JobSelIconSize + JobSelIconGap), midY - JobSelIconSize * 0.5f));
-                DrawJobIcon(jobs[k], JobSelIconSize);
-            }
-            // Class icons.
-            for (int k = 0; k < classes.Length; k++)
-            {
-                ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelClassX + k * (JobSelIconSize + JobSelIconGap), midY - JobSelIconSize * 0.5f));
-                DrawJobIcon(classes[k], JobSelIconSize);
+                ImGui.SetCursorScreenPos(new Vector2(
+                    p0.X + iconsX + col,
+                    midY - JobSelIconSize * 0.5f + line * lineStride));
+                DrawJobIcon(job, JobSelIconSize);
             }
 
             // Reserve the row so the next row flows below it.
             ImGui.SetCursorScreenPos(p0);
             ImGui.Dummy(new Vector2(contentW, rowH));
             return midY;
+        }
+
+        /// <summary>
+        /// Where each of a row's icons goes: an x offset within the icon area, and which line.
+        ///
+        /// Jobs first, then the base classes after a wider gap. The gap is what keeps the two groups
+        /// legible as two groups now that they share one flow instead of two columns - and it is
+        /// allowed to be the thing that pushes the classes onto their own line, which on a phone is
+        /// usually what happens and reads correctly.
+        /// </summary>
+        private static (JobInfo Job, float X, int Line)[] PlanIconFlow(
+            JobInfo[] jobs, JobInfo[] classes, float avail, out int lines)
+        {
+            const float stride = JobSelIconSize + JobSelIconGap;
+
+            var placed = new System.Collections.Generic.List<(JobInfo, float, int)>(
+                jobs.Length + classes.Length);
+
+            float x = 0f;
+            int line = 0;
+
+            void Place(JobInfo job, float leadingGap)
+            {
+                float at = x + leadingGap;
+                if (at + JobSelIconSize > avail && placed.Count > 0)
+                {
+                    line++;
+                    at = 0f;
+                }
+                placed.Add((job, at, line));
+                x = at + stride;
+            }
+
+            foreach (var job in jobs)
+                Place(job, 0f);
+
+            bool first = true;
+            foreach (var cls in classes)
+            {
+                Place(cls, first && jobs.Length > 0 ? JobSelClassGap - JobSelIconGap : 0f);
+                first = false;
+            }
+
+            lines = line + 1;
+            return placed.ToArray();
         }
 
         /// <summary>Draws the "Free" (any job) row in the same column layout as the role rows,
@@ -222,8 +307,9 @@ namespace PfPresets
             float midY = p0.Y + rowH * 0.5f;
             var drawList = ImGui.GetWindowDrawList();
 
-            // Clickable/hover area spans the person glyph and the "Free" label.
-            float clickW = 160f;
+            // Clickable/hover area spans the whole row, description included. Free and Omit are the
+            // two rows with no icons on them, so there is nothing else on the line to hit.
+            float clickW = contentW - JobSelLabelX;
             ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelLabelX, p0.Y));
             if (ImGui.InvisibleButton("##row_Free", new Vector2(clickW, rowH)))
             {
@@ -233,7 +319,7 @@ namespace PfPresets
             if (ImGui.IsItemHovered())
             {
                 drawList.AddRectFilled(new Vector2(p0.X + JobSelLabelX - 6f, p0.Y), new Vector2(p0.X + JobSelLabelX + clickW, p0.Y + rowH),
-                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f);
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Small);
                 ImGui.SetTooltip("Set slot to Free (accepts any role and job)");
             }
 
@@ -243,8 +329,11 @@ namespace PfPresets
             Vector2 ts = ImGui.CalcTextSize("Free");
             drawList.AddText(new Vector2(p0.X + JobSelLabelX + JobSelRoleIcon + 8f, midY - ts.Y * 0.5f),
                 ImGui.ColorConvertFloat4ToU32(AccentYellow), "Free");
-            drawList.AddText(new Vector2(p0.X + JobSelJobX, midY - ts.Y * 0.5f),
-                ImGui.ColorConvertFloat4ToU32(JsMuted), "Accepts any role and job for this slot");
+
+            float descX = JobSelLabelX + JobSelLabelColumn(contentW);
+            drawList.AddText(new Vector2(p0.X + descX, midY - ts.Y * 0.5f),
+                ImGui.ColorConvertFloat4ToU32(JsMuted),
+                Fit("Accepts any role and job for this slot", contentW - descX - 4f));
 
             ImGui.SetCursorScreenPos(p0);
             ImGui.Dummy(new Vector2(contentW, rowH));
@@ -264,7 +353,7 @@ namespace PfPresets
 
             if (isLastActiveSlot) ImGui.BeginDisabled(true);
 
-            float clickW = 160f;
+            float clickW = contentW - JobSelLabelX;
             ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelLabelX, p0.Y));
             bool clicked = ImGui.InvisibleButton("##row_Omit", new Vector2(clickW, rowH));
             bool hovered = ImGui.IsItemHovered(isLastActiveSlot ? ImGuiHoveredFlags.AllowWhenDisabled : ImGuiHoveredFlags.None);
@@ -277,7 +366,7 @@ namespace PfPresets
             {
                 if (!isLastActiveSlot)
                     dl.AddRectFilled(new Vector2(p0.X + JobSelLabelX - 6f, p0.Y), new Vector2(p0.X + JobSelLabelX + clickW, p0.Y + rowH),
-                        ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f);
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Small);
                 ImGui.SetTooltip(isLastActiveSlot
                     ? "Cannot omit the last remaining active slot."
                     : "Omit — removes this slot from recruitment (empty slot)");
@@ -290,16 +379,44 @@ namespace PfPresets
             dl.AddText(new Vector2(p0.X + JobSelLabelX + JobSelRoleIcon + 8f, midY - ts.Y * 0.5f),
                 ImGui.ColorConvertFloat4ToU32(selected ? AccentRed : JsText), "Omit");
 
+            float omitDescX = JobSelLabelX + JobSelLabelColumn(contentW);
+            dl.AddText(new Vector2(p0.X + omitDescX, midY - ts.Y * 0.5f),
+                ImGui.ColorConvertFloat4ToU32(JsMuted),
+                Fit("Removes the slot from recruitment", contentW - omitDescX - 4f));
+
             if (isLastActiveSlot) ImGui.EndDisabled();
 
             ImGui.SetCursorScreenPos(p0);
             ImGui.Dummy(new Vector2(contentW, rowH));
         }
 
-        private void DrawJobSelectorWindow()
+        /// <summary>
+        /// Leaves the job selector without applying anything, and goes back to the editor rather
+        /// than out to the body behind it.
+        ///
+        /// The selector is a step inside editing a preset, not a thing you opened on its own, so
+        /// dismissing it means "back", not "close". Routed through <see cref="RequestSheetDismiss"/>
+        /// so the close button, a tap on the scrim and Escape all do this same thing.
+        /// </summary>
+        private void CancelJobSelector()
+        {
+            showJobSelector = false;
+            OpenSheet(SheetKind.Editor);
+        }
+
+        /// <summary>
+        /// The job selector, as a sheet: the roles as rows, the jobs each covers beside them, and
+        /// Free and Omit under a rule at the bottom.
+        /// </summary>
+        private void DrawJobSelectorSheet()
         {
             if (!showJobSelector || jobSelectorSlotIndex < 0 || jobSelectorSlotIndex >= editorSlots.Count)
+            {
+                // The editor is what is really open; the selector was a step inside it that has
+                // gone away underneath us (the slot count changed, or the editor was cancelled).
+                OpenSheet(isEditorWindowVisible ? SheetKind.Editor : SheetKind.None);
                 return;
+            }
 
             var slot = editorSlots[jobSelectorSlotIndex];
 
@@ -317,104 +434,98 @@ namespace PfPresets
                     isLastActiveSlot = true;
             }
 
-            ImGui.SetNextWindowSize(new Vector2(JobSelWindowW, JobSelWindowH), ImGuiCond.Always);
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, JsBg);
-            ImGui.PushStyleColor(ImGuiCol.Border, JsBorder);
-            ImGui.PushStyleColor(ImGuiCol.TitleBg, JsTitle);
-            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, JsTitle);
-            ImGui.PushStyleColor(ImGuiCol.Text, JsText);
-            ImGui.PushStyleColor(ImGuiCol.Separator, JsBorder);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(20, 16));
-
             var noClasses = Array.Empty<JobInfo>();
             const float subIndent = JobSelLabelX + JobSelSubIndent;
 
-            bool open = showJobSelector;
-            var flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize
-                      | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
-            if (ImGui.Begin("Job Selector##JobSelectorWindow", ref open, flags))
+            if (!BeginSheet("Jobs", $"Slot {jobSelectorSlotIndex + 1} — jobs & roles", 620f))
+                return;
+
+            try
             {
-                if (!open) showJobSelector = false;
+                if (BeginSheetBody(SheetFooterHeight))
+                {
+                    try
+                    {
+                        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(10, 5));
+                        try
+                        {
+                            ImGui.Dummy(new Vector2(0, 2));
+                            using (UiHelpFont.Push())
+                                ImGui.TextColored(JsMuted,
+                                    "Pick a role, the exact jobs it accepts, or omit the slot.");
+                            ImGui.Dummy(new Vector2(0, 6));
 
-                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(10, 5));
+                            float contentLeftX = ImGui.GetCursorScreenPos().X;
 
-                // ── Header ──
-                ImGui.AlignTextToFramePadding();
-                ImGui.TextColored(JsAccent, $"Editing Slot {jobSelectorSlotIndex + 1}");
-                ImGui.SameLine(0, 8);
-                ImGui.TextColored(JsMuted, "|");
-                ImGui.SameLine(0, 8);
-                ImGui.AlignTextToFramePadding();
-                ImGui.TextColored(JsMuted, "Pick a role, individual jobs, or omit the slot");
+                            DrawJobSelectorRow("Tank", IconRoleTank,
+                                new[] { JobData.PLD, JobData.WAR, JobData.DRK, JobData.GNB },
+                                new[] { JobData.GLA, JobData.MRD },
+                                JsTank, "Tank", RoleType.Tank, isHeader: true, indent: JobSelLabelX);
 
-                ImGui.Dummy(new Vector2(0, 6));
-                ImGui.Separator();
-                ImGui.Dummy(new Vector2(0, 6));
+                            float healerY = DrawJobSelectorRow("Healer", IconRoleHealer, noClasses, noClasses,
+                                JsHealer, "Healer", RoleType.Healer, isHeader: true, indent: JobSelLabelX);
+                            float pureY = DrawJobSelectorRow("Pure Healer", IconRoleHealer,
+                                new[] { JobData.WHM, JobData.AST }, new[] { JobData.CNJ },
+                                JsHealer, "Pure Healer", RoleType.Healer, isHeader: false, indent: subIndent);
+                            float barrierY = DrawJobSelectorRow("Barrier Healer", IconRoleHealer,
+                                new[] { JobData.SCH, JobData.SGE }, noClasses,
+                                JsHealer, "Barrier Healer", RoleType.Healer, isHeader: false, indent: subIndent);
+                            DrawTreeConnector(contentLeftX, healerY, new[] { pureY, barrierY });
 
-                // ── Roles ──
-                float contentLeftX = ImGui.GetCursorScreenPos().X;
+                            float dpsY = DrawJobSelectorRow("DPS", IconRoleDps, noClasses, noClasses,
+                                JsDPS, "DPS", RoleType.MeleeDPS, isHeader: true, indent: JobSelLabelX);
+                            float meleeY = DrawJobSelectorRow("Melee DPS", IconRoleDps,
+                                new[] { JobData.MNK, JobData.DRG, JobData.NIN, JobData.SAM, JobData.RPR, JobData.VPR, JobData.BST },
+                                new[] { JobData.PGL, JobData.LNC, JobData.ROG },
+                                JsDPS, "Melee DPS", RoleType.MeleeDPS, isHeader: false, indent: subIndent);
+                            float physY = DrawJobSelectorRow("Physical Ranged DPS", IconRoleDps,
+                                new[] { JobData.BRD, JobData.MCH, JobData.DNC }, new[] { JobData.ARC },
+                                JsDPS, "Physical Ranged DPS", RoleType.PhysRangedDPS, isHeader: false, indent: subIndent);
+                            float magicY = DrawJobSelectorRow("Magical Ranged DPS", IconRoleDps,
+                                new[] { JobData.BLM, JobData.SMN, JobData.RDM, JobData.PCT, JobData.BLU },
+                                new[] { JobData.THM, JobData.ACN },
+                                JsDPS, "Magical Ranged DPS", RoleType.MagicRangedDPS, isHeader: false, indent: subIndent);
+                            DrawTreeConnector(contentLeftX, dpsY, new[] { meleeY, physY, magicY });
 
-                DrawJobSelectorRow("Tank", IconRoleTank,
-                    new[] { JobData.PLD, JobData.WAR, JobData.DRK, JobData.GNB },
-                    new[] { JobData.GLA, JobData.MRD },
-                    JsTank, "Tank", RoleType.Tank, isHeader: true, indent: JobSelLabelX);
+                            ImGui.Dummy(new Vector2(0, 6));
+                            DrawRuleHair();
+                            ImGui.Dummy(new Vector2(0, 4));
+                            DrawFreeRow();
+                            DrawOmitButton(isLastActiveSlot);
+                            ImGui.Dummy(new Vector2(0, 4));
+                        }
+                        finally
+                        {
+                            ImGui.PopStyleVar();
+                        }
+                    }
+                    finally
+                    {
+                        EndSheetBody();
+                    }
+                }
+                else
+                {
+                    EndSheetBody();
+                }
 
-                float healerY = DrawJobSelectorRow("Healer", IconRoleHealer, noClasses, noClasses,
-                    JsHealer, "Healer", RoleType.Healer, isHeader: true, indent: JobSelLabelX);
-                float pureY = DrawJobSelectorRow("Pure Healer", IconRoleHealer,
-                    new[] { JobData.WHM, JobData.AST }, new[] { JobData.CNJ },
-                    JsHealer, "Pure Healer", RoleType.Healer, isHeader: false, indent: subIndent);
-                float barrierY = DrawJobSelectorRow("Barrier Healer", IconRoleHealer,
-                    new[] { JobData.SCH, JobData.SGE }, noClasses,
-                    JsHealer, "Barrier Healer", RoleType.Healer, isHeader: false, indent: subIndent);
-                DrawTreeConnector(contentLeftX, healerY, new[] { pureY, barrierY });
-
-                float dpsY = DrawJobSelectorRow("DPS", IconRoleDps, noClasses, noClasses,
-                    JsDPS, "DPS", RoleType.MeleeDPS, isHeader: true, indent: JobSelLabelX);
-                float meleeY = DrawJobSelectorRow("Melee DPS", IconRoleDps,
-                    new[] { JobData.MNK, JobData.DRG, JobData.NIN, JobData.SAM, JobData.RPR, JobData.VPR, JobData.BST },
-                    new[] { JobData.PGL, JobData.LNC, JobData.ROG },
-                    JsDPS, "Melee DPS", RoleType.MeleeDPS, isHeader: false, indent: subIndent);
-                float physY = DrawJobSelectorRow("Physical Ranged DPS", IconRoleDps,
-                    new[] { JobData.BRD, JobData.MCH, JobData.DNC }, new[] { JobData.ARC },
-                    JsDPS, "Physical Ranged DPS", RoleType.PhysRangedDPS, isHeader: false, indent: subIndent);
-                float magicY = DrawJobSelectorRow("Magical Ranged DPS", IconRoleDps,
-                    new[] { JobData.BLM, JobData.SMN, JobData.RDM, JobData.PCT, JobData.BLU },
-                    new[] { JobData.THM, JobData.ACN },
-                    JsDPS, "Magical Ranged DPS", RoleType.MagicRangedDPS, isHeader: false, indent: subIndent);
-                DrawTreeConnector(contentLeftX, dpsY, new[] { meleeY, physY, magicY });
-
-                // ── Free / Omit ──
-                ImGui.Dummy(new Vector2(0, 6));
-                ImGui.Separator();
-                ImGui.Dummy(new Vector2(0, 4));
-                DrawFreeRow();
-                DrawOmitButton(isLastActiveSlot);
-
-                // ── Footer (anchored to the bottom) ──
-                float footerH = ButtonHeight;
-                float bottomY = ImGui.GetWindowContentRegionMax().Y - footerH;
-                if (ImGui.GetCursorPosY() < bottomY) ImGui.SetCursorPosY(bottomY);
-
-                float btnW = (ImGui.GetContentRegionAvail().X - 10) / 2f;
-
-                if (DrawPrimaryButton("OK##ConfirmJobSelector", new Vector2(btnW, footerH)))
+                if (DrawSheetFooter("Apply to slot##ConfirmJobSelector", "Cancel##CancelJobSelector",
+                        out bool cancelled))
                 {
                     slot.Role = tempSelectorRole;
                     slot.AcceptedJobFlags = tempSelectorJobFlags;
                     showJobSelector = false;
+                    OpenSheet(SheetKind.Editor);
                 }
-                ImGui.SameLine(0, 10);
-                if (DrawSecondaryButton("Cancel##CancelJobSelector", new Vector2(btnW, footerH)))
-                    showJobSelector = false;
-
-                ImGui.PopStyleVar(); // ItemSpacing
+                else if (cancelled)
+                {
+                    CancelJobSelector();
+                }
             }
-            ImGui.End();
-            ImGui.PopStyleVar(3);
-            ImGui.PopStyleColor(6);
+            finally
+            {
+                EndSheet();
+            }
         }
     }
 }

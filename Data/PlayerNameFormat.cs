@@ -76,6 +76,22 @@ namespace PfPresets
             "First name, last initial  (John S.)",
         };
 
+        /// <summary>
+        /// The same four styles as short labels, for a segmented control.
+        ///
+        /// THE EXAMPLE IS THE LABEL. "First initial, full last name" is a description of a format;
+        /// "J. Smith" is the format, and it is four characters instead of twenty-nine - which is
+        /// what lets all four sit in one track without any of them being cut. The wording that used
+        /// to be here is on the help mark beside the control.
+        /// </summary>
+        public static string[] StyleLabelsShort { get; } = new[]
+        {
+            "John Smith",
+            "J.S.",
+            "J. Smith",
+            "John S.",
+        };
+
         private static string Initial(string part)
             => part.Length == 0 ? string.Empty : char.ToUpperInvariant(part[0]) + ".";
     }

@@ -27,45 +27,165 @@ namespace PfPresets
         /// </summary>
         private static float Ease(float t) => t * t * (3f - 2f * t);
 
-        private static byte[]? robotoBytes;
-
-        private static byte[] Roboto()
+        /// <summary>The two weights the design uses. Nothing in the plugin is drawn in a weight
+        /// that is not one of these.</summary>
+        internal enum FontWeight
         {
-            if (robotoBytes != null)
-                return robotoBytes;
+            /// <summary>Body copy, help text, a person's name in a list row.</summary>
+            Regular,
 
-            using var stream = typeof(PluginUI).Assembly
-                .GetManifestResourceStream("PfPresets.Data.Fonts.Roboto.ttf")
-                ?? throw new InvalidOperationException("Roboto.ttf missing from the assembly.");
+            /// <summary>Headings, labels, tab names, the plugin's own name, and any number set
+            /// large enough to be read as a figure rather than as text.</summary>
+            SemiBold,
+        }
+
+        private static byte[]? regularBytes;
+        private static byte[]? semiBoldBytes;
+
+        /// <summary>
+        /// The typeface, as bytes.
+        ///
+        /// SEMIBOLD IS A REAL WEIGHT NOW. It used to be faked, by drawing the same run twice a
+        /// sub-pixel apart - a trick that works at one size and smears at every other, and that had
+        /// to be remembered at every call site that wanted a heading to look like one. Two files at
+        /// 121KB each is a much better trade than a rendering hack in the middle of the layout code.
+        /// </summary>
+        private static byte[] Typeface(FontWeight weight)
+        {
+            ref byte[]? slot = ref weight == FontWeight.SemiBold
+                ? ref semiBoldBytes
+                : ref regularBytes;
+
+            if (slot != null)
+                return slot;
+
+            string name = weight == FontWeight.SemiBold
+                ? "PfPresets.Data.Fonts.Roboto-SemiBold.ttf"
+                : "PfPresets.Data.Fonts.Roboto-Regular.ttf";
+
+            using var stream = typeof(PluginUI).Assembly.GetManifestResourceStream(name)
+                ?? throw new InvalidOperationException($"{name} missing from the assembly.");
 
             using var buffer = new System.IO.MemoryStream();
             stream.CopyTo(buffer);
-            return robotoBytes = buffer.ToArray();
+            return slot = buffer.ToArray();
         }
 
         /// <summary>
-        /// The auto-translate brackets, which are game glyphs rather than characters: they live in
-        /// the private-use area and no ordinary font has them, Roboto included. Merged into every
-        /// handle so a comment carrying an auto-translate phrase draws its brackets instead of two
-        /// empty boxes, wherever in the plugin it happens to be drawn.
+        /// Everything the plugin has to draw that Roboto has no glyph for, borrowed from the
+        /// game's own face.
+        ///
+        /// THIS IS WHY PRESET COMMENTS WERE FULL OF QUESTION MARKS. A comment like
+        /// "†Θmεηs† 【】Mαlßoro" is ordinary in a Party Finder listing - people build names out of
+        /// Greek letters, daggers, fullwidth capitals and CJK brackets because the game lets them.
+        /// Roboto is a Latin face and has none of that, so every one of those characters came out
+        /// as a box. It looked like the text was being mangled, and the giveaway that it was not
+        /// was the editor: the editor draws in ImGui's default font, which is the game's, and there
+        /// the comment read perfectly.
+        ///
+        /// Latin is deliberately absent. Roboto covers it, and merging over the top would replace
+        /// glyphs of the plugin's own typeface with the game's for no reason.
+        ///
+        /// An ImGui glyph range: begin/end pairs, terminated by a zero.
         /// </summary>
-        /// An ImGui glyph range: one begin/end pair - the two brackets are adjacent code points -
-        /// terminated by zero.
+        private static readonly ushort[] GameFallbackGlyphs =
+        {
+            0x0370, 0x03FF,  // Greek and Coptic - the single most common source of this
+            0x0400, 0x04FF,  // Cyrillic
+            0x2000, 0x206F,  // General punctuation, the dagger among it
+            0x20A0, 0x20BF,  // Currency
+            0x2100, 0x214F,  // Letterlike symbols
+            0x2190, 0x21FF,  // Arrows
+            0x2200, 0x22FF,  // Mathematical operators
+            0x2460, 0x24FF,  // Enclosed alphanumerics
+            0x25A0, 0x25FF,  // Geometric shapes
+            0x2600, 0x26FF,  // Miscellaneous symbols, hearts included
+            0x2700, 0x27BF,  // Dingbats
+            0x3000, 0x303F,  // CJK symbols and punctuation - the bracket pair
+            0xFF00, 0xFFEF,  // Halfwidth and fullwidth forms
+
+            // The auto-translate brackets, which are game glyphs rather than characters: they live
+            // in the private-use area and no ordinary font has them, Roboto included. A comment
+            // carrying an auto-translate phrase draws its brackets instead of two empty boxes.
+            CommentText.AutoTranslateOpen, CommentText.AutoTranslateClose,
+
+            0,
+        };
+
+        /// <summary>
+        /// The brackets on their own, for the faces that never draw anything a player typed.
+        ///
+        /// The full range above is a few hundred real glyphs, and it is baked once per size. The
+        /// headings, chips and the 54px score are strings this plugin wrote, so they pay for two
+        /// glyphs instead of six hundred.
+        /// </summary>
         private static readonly ushort[] AutoTranslateGlyphs =
         {
             CommentText.AutoTranslateOpen, CommentText.AutoTranslateClose, 0,
         };
 
         /// <summary>Builds the handle on first use and caches it in the caller's field.</summary>
-        private IFontHandle Font(ref IFontHandle? slot, float px)
+        /// <param name="userText">Whether this face ever draws something a player typed - a name,
+        /// a comment, a world. If it does it needs the full fallback range; if it only ever draws
+        /// the plugin's own words, it does not.</param>
+        /// <param name="gameGlyphs">Whether to merge the game's own face in behind Roboto for the
+        /// characters Roboto does not carry.
+        ///
+        /// OFF FOR ANYTHING THAT IS ONLY EVER DIGITS. The game's Axis face exists at a fixed set of
+        /// sizes, and asking for one it does not have is how a handle fails to build - and a handle
+        /// that fails to build does not fall back to Roboto at the size asked for, it falls back
+        /// to Dalamud's default, about 12px. That is why a score set at 54 came out smaller than
+        /// the two words beside it. A number needs no fallback face: there is no digit Roboto is
+        /// missing.</param>
+        /// <summary>The largest Axis face Dalamud carries. See the note inside <see cref="Font"/>.
+        /// </summary>
+        private const float MaxGameGlyphPx = 36f;
+
+        private IFontHandle Font(ref IFontHandle? slot, float px,
+            FontWeight weight = FontWeight.Regular, bool userText = true, bool gameGlyphs = true)
         {
             slot ??= pluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(tk =>
                 tk.OnPreBuild(pre =>
                 {
-                    var roboto = pre.AddFontFromMemory(
-                        Roboto(), new SafeFontConfig { SizePx = px }, "Roboto");
-                    pre.AddGameGlyphs(new GameFontStyle(GameFontFamily.Axis, px), AutoTranslateGlyphs, roboto);
+                    var face = pre.AddFontFromMemory(
+                        Typeface(weight), new SafeFontConfig { SizePx = px }, "Roboto");
+
+                    // THE GAME FACE IS ASKED FOR AT A SIZE IT ACTUALLY HAS.
+                    //
+                    // Dalamud ships Axis at five sizes and no others: 9.6, 12, 14, 18 and 36. Ask
+                    // for one that is not on that list - 54 for the score, 64 for a name somebody
+                    // is trying out - and the request does not degrade, it fails, and a font handle
+                    // that fails to build does not fall back to Roboto at the size requested. It
+                    // falls back to Dalamud's default, around 12px.
+                    //
+                    // Which is why raising a size and rebuilding appeared to change nothing: past
+                    // 36 every one of these went to the same small default, so the number in the
+                    // source and the text on screen stopped being connected at all.
+                    //
+                    // Roboto still gets the exact size - it is what draws every Latin character
+                    // here. Only the fallback face, which exists for the characters Roboto has
+                    // none of, is capped. A Japanese name in a 64px heading comes out at 36 rather
+                    // than taking the whole heading down with it.
+                    if (gameGlyphs)
+                        pre.AddGameGlyphs(new GameFontStyle(GameFontFamily.Axis, MathF.Min(px, MaxGameGlyphPx)),
+                            userText ? GameFallbackGlyphs : AutoTranslateGlyphs, face);
                 }));
+            return slot;
+        }
+
+        /// <summary>
+        /// FontAwesome at a size the plugin picks, rather than at whatever Dalamud's shared icon
+        /// font happens to be.
+        ///
+        /// The shared handle is sized for Dalamud's own UI and is noticeably heavier than 13px body
+        /// text - a magnifier inside a search field, or the three dots on a preset row, came out
+        /// bigger than the words beside them. An icon that outweighs its label is an icon nobody
+        /// reads past.
+        /// </summary>
+        private IFontHandle IconFont(ref IFontHandle? slot, float px)
+        {
+            slot ??= pluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(tk =>
+                tk.OnPreBuild(pre => pre.AddFontAwesomeIconFont(new SafeFontConfig { SizePx = px })));
             return slot;
         }
     }

@@ -5,6 +5,74 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "3.5.0",
+      "date": "2026-08-19",
+      "published": true,
+      "headline": "Two layouts, an overhauled UI, and duty spoiler locking",
+      "changes": [
+        {
+          "type": "new",
+          "title": "Portrait and landscape layouts",
+          "body": "The window now comes in two fixed shapes: portrait, one column with a tab bar along the bottom, and landscape, wider with a sidebar and two-column pages. Neither can be resized - each is drawn for the size it is. Pick one in Settings under Appearance."
+        },
+        {
+          "type": "changed",
+          "title": "Overhauled UI across the plugin",
+          "body": "New fonts, resized icons and buttons, and rounded corners throughout. Every prompt is now drawn inside the window rather than as a second window beside it, and confirmations are small centred alerts rather than full-width panels."
+        },
+        {
+          "type": "new",
+          "title": "Spoiler setting for unlocked duties",
+          "body": "A setting in Party Finder hides and locks any duty the current character has not unlocked, and stops such a preset being applied. Leave it off to see the duty names with locked ones marked, or turn it on to keep unseen content out of the picker entirely."
+        },
+        {
+          "type": "changed",
+          "title": "Role slots default to a real composition",
+          "body": "With auto-select jobs off, slots used to be left free-for-all. Every category now has a default: a light party is a tank, a healer and two of anything that does damage, and an eight-player duty is two of each and four damage. A preset also carries only as many seats as its content fields."
+        },
+        {
+          "type": "changed",
+          "title": "Clears notify on each new clear",
+          "body": "The Clears tab marks itself when somebody posts a clear you have not seen. Hearts are locked to the character that cast them and can be taken back by pressing again."
+        },
+        {
+          "type": "changed",
+          "title": "The PF Analysis button steps aside",
+          "body": "It hides while the game's own recruitment criteria window or a listing's details are open, so the plugin is not offering a second button over a window that has already asked you something."
+        },
+        {
+          "type": "changed",
+          "title": "FATEs and The Hunt stay on your world",
+          "body": "Both force \"limit recruiting to my world\" on, because neither survives the trip from another world, and your previous setting is restored when you pick a different category."
+        },
+        {
+          "type": "removed",
+          "title": "Some duty categories are unavailable for now",
+          "body": "Duty Roulette, PvP, Gold Saucer, FATEs, Treasure Hunt and Deep Dungeons cannot currently be posted with the correct duty, so they are hidden rather than putting up a listing that says the wrong thing. Presets for them are kept and will return with the category."
+        },
+        {
+          "type": "fixed",
+          "title": "Presets saved without pressing Save",
+          "body": "Opening New preset created and saved the preset immediately. It is now only kept when Save is pressed."
+        },
+        {
+          "type": "fixed",
+          "title": "Dungeons were sized as a full party",
+          "body": "Light-party content now recruits four seats rather than eight."
+        },
+        {
+          "type": "fixed",
+          "title": "Omit did not omit the slot",
+          "body": "Omitting a role in the job selector had no effect while auto-adjust roles was on, which was the default for a new preset. Auto-adjust is now offered only where the game supports it, and the slot editor is yours everywhere else."
+        },
+        {
+          "type": "fixed",
+          "title": "Language letters were not centred",
+          "body": "J, E, D and F sat against the left edge of their buttons."
+        }
+      ]
+    },
+    {
       "version": "3.2.1",
       "date": "2026-07-29",
       "published": true,

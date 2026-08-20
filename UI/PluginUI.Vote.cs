@@ -50,7 +50,7 @@ namespace PfPresets
         /// width) and the rows off GetContentRegionAvail, so the two ended four pixels apart and
         /// the rows ran flush into the window border.
         /// </summary>
-        private const float RowInset = 12f;
+        private const float RowInset = Space.Gutter;
 
         /// <summary>How long between asking the server whether a poll is running.</summary>
         private static readonly TimeSpan PollRecheck = TimeSpan.FromMinutes(10);
@@ -135,26 +135,20 @@ namespace PfPresets
             // it - navigation you cannot reach because you scrolled down is the one failure a tab
             // strip must not have. Every other tab in this plugin opens a child for the same
             // reason; this one did not, and that was the whole bug.
-            ImGui.BeginChild("VoteBody", new Vector2(0, 0), false);
+            // Inset by the shared gutter like every other tab, rather than by an 8px spacer and a
+            // 12px indent that happened to add up to something close.
+            ImGui.SetCursorPosX(Space.Gutter);
+            ImGui.BeginChild("VoteBody",
+                new Vector2(ImGui.GetWindowWidth() - Space.Gutter * 2f, 0), false);
             try
             {
-                ImGui.Dummy(new Vector2(0, 8));
-                ImGui.Indent(12);
-
-                try
-                {
-                    DrawPollPost(p);
-                    DrawRuleHair(14f, 14f);
-                    DrawPollBody(p);
-                }
-                finally
-                {
-                    ImGui.Unindent(12);
-                }
+                DrawPollPost(p);
+                ImGui.Dummy(new Vector2(0, Space.Gutter));
+                DrawPollBody(p);
 
                 // Room under the last control, so the tab scrolls past it rather than stopping
                 // with it half inside the clip rect.
-                ImGui.Dummy(new Vector2(0, 20));
+                ImGui.Dummy(new Vector2(0, Space.Gutter * 2f));
             }
             finally
             {
@@ -173,10 +167,10 @@ namespace PfPresets
             if (string.IsNullOrWhiteSpace(p.PostUrl))
                 return;
 
-            using (UiCaptionFont.Push())
-                ImGui.TextColored(Faint, "FROM THE DEVELOPER");
-
-            ImGui.Dummy(new Vector2(0, 8));
+            // The same heading control every tab uses, rather than a hand-set caps string at its
+            // own size and its own colour - which is what this was, and why it did not match
+            // "RECENT CLEARS" or "MY PRESETS" two tabs away.
+            DrawListHeading("From the developer");
 
             const float markSize = 30f;
             const float markGap = 14f;
@@ -248,10 +242,7 @@ namespace PfPresets
 
         private void DrawPollBody(PollResponse p)
         {
-            using (UiCaptionFont.Push())
-                ImGui.TextColored(Faint, "COMMUNITY VOTE");
-
-            ImGui.Dummy(new Vector2(0, 8));
+            DrawListHeading("Community vote");
 
             using (UiHeadingFont.Push())
                 ImGui.TextColored(Ink, p.Question);
@@ -603,57 +594,78 @@ namespace PfPresets
         /// Drawn from the overlay rather than inside the tab so it owns its own space, the same way
         /// every other dialog in this plugin is.
         /// </summary>
-        private void DrawPollShare()
+        private void DrawPollShareSheet()
         {
             if (!pollShareOpen)
+            {
+                CloseSheet();
                 return;
+            }
 
             const string url = "https://pfa.marobotic.dev/voting";
 
-            bool open = pollShareOpen;
+            if (!BeginSheet("PollShare", "Share this poll", 300f))
+                return;
 
-            if (BeginDialog("Share this poll", "PfPresetsPollShare", 400f, ref open))
+            try
             {
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - RowInset);
-                ImGui.TextColored(Dim,
-                    "Anyone can vote from this link, whether or not they have the plugin.");
-                ImGui.PopTextWrapPos();
-
-                ImGui.Dummy(new Vector2(0, 10));
-
-                // Drawn as a framed line rather than as an input: there is nothing to type here,
-                // and a read-only text box invites somebody to try.
-                Vector2 boxAt = ImGui.GetCursorScreenPos();
-                float boxW = ImGui.GetContentRegionMax().X - 16;
-                var dl = ImGui.GetWindowDrawList();
-
-                dl.AddRectFilled(boxAt, new Vector2(boxAt.X + boxW, boxAt.Y + 30f),
-                    ImGui.ColorConvertFloat4ToU32(Field));
-                dl.AddRect(boxAt, new Vector2(boxAt.X + boxW, boxAt.Y + 30f),
-                    ImGui.ColorConvertFloat4ToU32(RuleHair), 0f, 0, 1f);
-
-                ImGui.SetCursorScreenPos(new Vector2(boxAt.X + 10f, boxAt.Y + 7f));
-                ImGui.TextColored(Ink, url);
-                ImGui.SetCursorScreenPos(new Vector2(boxAt.X, boxAt.Y + 30f));
-
-                ImGui.Dummy(new Vector2(0, 12));
-
-                if (DrawPrimaryButton("Copy link##pollcopy", new Vector2(130, ButtonHeight)))
+                if (BeginSheetBody(0f))
                 {
-                    ImGui.SetClipboardText(url);
-                    pollNote = "Link copied.";
+                    try
+                    {
+                        ImGui.PushTextWrapPos(0);
+                        ImGui.TextColored(Dim,
+                            "Anyone can vote from this link, whether or not they have the plugin.");
+                        ImGui.PopTextWrapPos();
+
+                        ImGui.Dummy(new Vector2(0, 12));
+
+                        // Drawn as a framed line rather than as an input: there is nothing to type
+                        // here, and a read-only text box invites somebody to try.
+                        Vector2 boxAt = ImGui.GetCursorScreenPos();
+                        float boxW = ImGui.GetContentRegionAvail().X;
+                        var dl = ImGui.GetWindowDrawList();
+
+                        dl.AddRectFilled(boxAt, new Vector2(boxAt.X + boxW, boxAt.Y + 36f),
+                            ImGui.ColorConvertFloat4ToU32(Field), Radius.Control);
+                        dl.AddRect(boxAt, new Vector2(boxAt.X + boxW, boxAt.Y + 36f),
+                            ImGui.ColorConvertFloat4ToU32(RuleHair), Radius.Control, ImDrawFlags.None, 1f);
+
+                        ImGui.SetCursorScreenPos(new Vector2(boxAt.X + 12f, boxAt.Y + 10f));
+                        ImGui.TextColored(Ink, Fit(url, boxW - 24f));
+                        ImGui.SetCursorScreenPos(new Vector2(boxAt.X, boxAt.Y + 36f));
+
+                        ImGui.Dummy(new Vector2(0, 14));
+
+                        float half = (ImGui.GetContentRegionAvail().X - 10f) * 0.5f;
+
+                        if (DrawPrimaryButton("Copy link##pollcopy", new Vector2(half, ButtonHeight)))
+                        {
+                            ImGui.SetClipboardText(url);
+                            pollNote = "Link copied.";
+                        }
+
+                        ImGui.SameLine(0, 10);
+
+                        if (DrawNeutralButton("Open in browser##pollopen", new Vector2(half, ButtonHeight)))
+                            Dalamud.Utility.Util.OpenLink(url);
+                    }
+                    finally
+                    {
+                        EndSheetBody();
+                    }
                 }
-
-                ImGui.SameLine(0, 10);
-
-                if (DrawNeutralButton("Open in browser##pollopen", new Vector2(170, ButtonHeight)))
-                    Dalamud.Utility.Util.OpenLink(url);
-
-                EndDialog();
+                else
+                {
+                    EndSheetBody();
+                }
             }
-
-            pollShareOpen = open;
+            finally
+            {
+                EndSheet();
+            }
         }
+
     }
 }
 #endif
