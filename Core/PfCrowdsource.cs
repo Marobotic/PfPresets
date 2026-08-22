@@ -132,6 +132,12 @@ namespace PfPresets
                     return;
                 }
 
+                // Before asking whether we are in a listing: let the game's own copy of the
+                // leader's listing count, if it has one. The watcher that normally does this only
+                // runs while the status card is drawing, and this half of the plugin runs with the
+                // window shut - which is why a cross-world member reported nothing.
+                pfAutomation.NoteListingIfGameHasIt();
+
                 if (!TryGetListingKey(frameCount, out string leaderName, out string leaderWorld))
                 {
                     // Not in a listing any more - take the row down rather than letting it age out,

@@ -417,6 +417,50 @@ namespace PfPresets
             return TimeSpan.FromSeconds(frozen) - (DateTime.UtcNow - lastSeenListingAt);
         }
 
+        /// <summary>
+        /// Takes the leader's listing from the game if the game is already holding it, and does
+        /// nothing else whatsoever.
+        ///
+        /// THE HALF OF THE WATCHER THAT IS FREE. <see cref="WatchTick"/> also PROBES - it opens the
+        /// listing in a window to go and find one - and that is a window appearing in front of the
+        /// player, so it is rightly gated behind the status card being on screen. This is only the
+        /// other half: LastViewedListing already belongs to our party's leader, because the player
+        /// opened it themselves when they joined through the Party Finder, and all this does is
+        /// notice.
+        ///
+        /// It exists because the reporting half of the crowdsourcing runs with the plugin window
+        /// shut, and a member of somebody else's listed party has no other way to establish that
+        /// the party is listed at all: the leader's recruiting status can only be read when the
+        /// leader is loaded on this client, which in a cross-world party is usually not the case.
+        /// Without this, a plugin reload or a closed window meant a cross-world member silently
+        /// reported nothing for the life of the listing.
+        ///
+        /// It cannot invent a listing. The game either holds that leader's listing or it does not,
+        /// and a leader standing in front of us without the recruiting status still clears the
+        /// capture in WatchTick.
+        /// </summary>
+        public void NoteListingIfGameHasIt()
+        {
+            try
+            {
+                if (!clientState.IsLoggedIn || IsInDuty())
+                    return;
+
+                ulong leader = GetPartyLeaderContentId();
+
+                // Solo, or the listing is ours - our own recruiting state is readable directly.
+                if (leader == 0 || leader == playerState.ContentId)
+                    return;
+
+                if (capturedLeaderId != leader && LeaderListingLoaded(leader))
+                    NoteCapturedListing(leader);
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Debug($"[ListingWatch] Passive capture failed: {ex.Message}");
+            }
+        }
+
         private void NoteCapturedListing(ulong leaderId)
         {
             capturedLeaderId = leaderId;
