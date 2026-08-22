@@ -7,15 +7,20 @@ namespace PfPresets
     // ══════════════════════════════════════════════════════════════
     //  PF CROWDSOURCING
     //
-    //  The wire format for "I am in this listing" and "who is in this listing".
+    //  The wire format for "this is the party I am sitting in" and "who is in this listing".
     //
-    //  ONE CHARACTER PER REPORT, AND IT HAS TO BE YOURS. The report names the listing's leader as
-    //  the key and exactly one character - the one sending it. The server refuses a report whose
-    //  character does not match the session's own, so this cannot carry a roster of other people
-    //  even if a client tried to put one in it.
+    //  A REPORT CARRIES THE WHOLE PARTY, NOT JUST THE SENDER. One person running this plugin is
+    //  enough to describe an eight-person party, which is the only way the panel is ever useful -
+    //  a report that named only its sender told a reader nothing they could not already see, and
+    //  needed every seat to be running the plugin before it said anything at all.
+    //
+    //  What is still enforced: the SENDER has to be who they say they are. `Name`/`World` name the
+    //  reporting character and the server checks them against the session, so a report can only
+    //  come from somebody actually holding that character - and therefore, in practice, from
+    //  somebody actually in that party.
     // ══════════════════════════════════════════════════════════════
 
-    /// <summary>"I am in the listing led by X, on this job."</summary>
+    /// <summary>"The listing led by X currently holds these people, and I am one of them."</summary>
     internal sealed class PfReportRequest
     {
         [JsonProperty("leaderName")]
@@ -34,6 +39,16 @@ namespace PfPresets
 
         [JsonProperty("dutyId")]
         public int DutyId { get; set; }
+
+        /// <summary>
+        /// The party as this client sees it, the sender included.
+        ///
+        /// Sent whole every time rather than as a diff, and it REPLACES whatever this sender said
+        /// last. That is what makes somebody leaving the party disappear from the panel: there is
+        /// no remove message, only a shorter roster next heartbeat.
+        /// </summary>
+        [JsonProperty("members")]
+        public List<PfMember> Members { get; set; } = new();
     }
 
     /// <summary>"Who has said they are in the listing led by X?"</summary>
@@ -58,11 +73,12 @@ namespace PfPresets
         public bool Ok { get; set; }
 
         /// <summary>
-        /// Everyone who has reported themselves into this listing and not yet aged out.
+        /// Everyone reported into this listing and not yet aged out, merged across reporters.
         ///
-        /// Expected to be a subset of the party, usually a small one - only people running this
-        /// plugin with the setting on are ever in here. The panel says as much rather than
-        /// implying the rest of the party is empty.
+        /// Usually the whole party: it takes one member running this plugin to describe all of it.
+        /// Where several members are running it, the server merges their rosters and the most
+        /// recent report wins for anybody they disagree about - a job change lands rather than
+        /// bouncing between two versions of the same character.
         /// </summary>
         public List<PfMember> Members { get; set; } = new();
     }

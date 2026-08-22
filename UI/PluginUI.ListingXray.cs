@@ -15,8 +15,9 @@ namespace PfPresets
     /// who these people are and whether they have cleared the thing, so that is all this shows.
     ///
     /// Names come from two places and the panel does not distinguish them, because the reader does
-    /// not care: characters this client already knows (party, free company, linkshells) and people
-    /// who published themselves through <see cref="PfCrowdsource"/>.
+    /// not care: characters this client already knows (party, free company, linkshells) and the
+    /// party published by somebody sitting in that listing through <see cref="PfCrowdsource"/> -
+    /// which, because one participant reports the whole party, is usually all of it.
     /// </summary>
     public partial class PluginUI
     {
@@ -116,7 +117,8 @@ namespace PfPresets
             if (people.Count == 0)
             {
                 using (UiHelpFont.Push())
-                    ImGui.TextColored(Faint, "Nobody in this listing is known here yet.");
+                    ImGui.TextColored(Faint,
+                        "Nobody in this listing is known here yet - nobody in it is sharing.");
                 return;
             }
 
@@ -189,6 +191,10 @@ namespace PfPresets
 
             var wanted = new List<CharacterIdentity>();
 
+            // Everybody the server checked too recently to check again, counted so the button can
+            // tell "nothing to ask about" apart from "already asked".
+            int cooling = 0;
+
             foreach (var person in people)
             {
                 var who = new CharacterIdentity(person.Name, person.World);
@@ -199,7 +205,7 @@ namespace PfPresets
                 if (string.IsNullOrWhiteSpace(Worlds?.GetFfLogsRegion(who.World)))
                     continue;
 
-                if (Ratings?.PlayerProgressPending(who) == true)
+                if (Ratings?.PlayerProgressPending(dutyName, who) == true)
                     continue;
 
                 // NO LOCAL COOLDOWN ON THIS BUTTON, deliberately.
@@ -210,10 +216,18 @@ namespace PfPresets
                 // and being told to wait a minute before finding out who is in it is the whole
                 // feature refusing to work.
                 //
-                // The limit that matters is the server's, fifteen minutes per CHARACTER, and it is
-                // enforced there before anything reaches a provider token. So this queues freely
-                // and lets the server refuse what it has already answered recently - which costs
-                // nothing, because a refusal never leaves our own API.
+                // THE SERVER'S WINDOW IS A DIFFERENT MATTER, and it is honoured. Fifteen minutes
+                // per character, enforced there: a name inside it is accepted by the route,
+                // matched against the stored row, and queued for nothing. This used to send them
+                // anyway on the reasoning that a refusal costs nothing - which is true of the
+                // request and false of the person pressing, who got a button that visibly did
+                // nothing at all. Skipped here so the button can say so instead.
+                if (Ratings?.PlayerRefreshWait(dutyName, who) > TimeSpan.Zero)
+                {
+                    cooling++;
+                    continue;
+                }
+
                 wanted.Add(who);
             }
 
@@ -242,7 +256,11 @@ namespace PfPresets
                     ? "This listing's duty isn't one progression can be looked up against."
                     : wanted.Count > 0
                         ? $"Fetch progression for {wanted.Count} of them."
-                        : "Nobody here can be looked up right now.");
+                        : cooling > 0
+                            ? "Everyone here was checked recently.\n\n"
+                                + "The server re-reads one character no more often than that, so\n"
+                                + "pressing now would fetch nothing for anybody."
+                            : "Nobody here can be looked up right now.");
             }
         }
 #endif
@@ -251,7 +269,9 @@ namespace PfPresets
         /// Everybody the panel can put a name to, de-duplicated.
         ///
         /// The leader first because the listing names them and they are the one certainty; then
-        /// anybody this client already knew; then anybody who published themselves.
+        /// anybody this client already knew; then the party as reported by whoever in it is
+        /// sharing. The last of those is normally the whole party, so most of what is drawn here
+        /// arrives that way and the first two mostly deduplicate against it.
         /// </summary>
         private List<ListingPerson> CollectListingPeople(ListingSnapshot snapshot)
         {

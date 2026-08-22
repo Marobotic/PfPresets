@@ -5,6 +5,49 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "3.5.1",
+      "date": "2026-08-22",
+      "published": false,
+      "headline": "Listing rosters, a party list that works on your own, and progression that stays put",
+      "changes": [
+        {
+          "type": "new",
+          "title": "The listing panel shows who is in the party",
+          "body": "The panel beside a party finder listing now lists who is already in that party. One person in the party running the plugin is enough to describe the whole of it, so a listing is legible even when nobody else in it uses this. Only a publicly listed party is ever published, it is withdrawn when the listing ends, and the setting is under Settings -> PF Radar."
+        },
+        {
+          "type": "new",
+          "title": "Your own row while recruiting alone",
+          "body": "A listing posted with nobody in it yet now shows you, with your progression and a way to fetch it. The party list previously drew nothing at all until the first person joined, which is the one moment the information was worth having."
+        },
+        {
+          "type": "fixed",
+          "title": "Progression no longer disappears",
+          "body": "Prog points would drop back to \"Fetch\" while the server held the answer, most often with a listing open beside your own party list. The two panels shared one store and overwrote each other's results; each fight and character now has its own entry, so every surface shows the same answer at the same time."
+        },
+        {
+          "type": "fixed",
+          "title": "Update progress no longer swallows a press",
+          "body": "A press landing while the plugin was already reading was refused in silence, leaving a button that looked broken. Reads no longer block each other, and a press that genuinely cannot go through now says so."
+        },
+        {
+          "type": "fixed",
+          "title": "Omitted slots stay omitted",
+          "body": "Omitting a slot held until the first person left the party, at which point the locked-slot adjuster read every closed seat as a free one and recruited for the roles you had struck off. Closed seats are now left alone."
+        },
+        {
+          "type": "fixed",
+          "title": "Omitted slots are posted where the game puts them",
+          "body": "Omitted slots are now moved to the end of the listing before it is posted, which is the shape the game settles a listing into anyway. The roles you kept keep their order and slide up into the gaps."
+        },
+        {
+          "type": "removed",
+          "title": "The \"Read the update\" button",
+          "body": "Removed from Settings -> About, along with the post it opened."
+        }
+      ]
+    },
+    {
       "version": "3.5.0",
       "date": "2026-08-19",
       "published": true,

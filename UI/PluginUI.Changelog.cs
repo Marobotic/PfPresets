@@ -27,6 +27,17 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("3.5.1", "August 2026", new[]
+            {
+                "Looking at a listing? The panel beside it now shows who is already in that party. One person in it running the plugin is enough for everybody looking to see the rest.",
+                "That means you show up in listings you sit in, too - your party is published while it's listed, and only while it's listed. Turn it off under Settings \u2192 PF Radar.",
+                "Recruiting on your own now lists you, with your progression and a way to fetch it, instead of showing nothing until somebody joins.",
+                "Progression stopped vanishing. Prog points would fall back to \"Fetch\" while the server had the answer all along, usually with a listing open next to your party list.",
+                "\"Update progress\" no longer eats a press. If it can't go through right now, it says so.",
+                "Omit works after somebody leaves. Omitted slots used to come back and start recruiting for the roles you had struck off.",
+                "Omitted slots are also posted where the game puts them - at the end - so the roles you kept keep their order.",
+            }),
+
             new("3.4.5", "August 2026", new[]
             {
                 "New clears to see? The Achievements tab now wears a badge telling you how many people have posted since you last looked.",

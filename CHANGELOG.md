@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.5.1
+
+### Updates
+
+The panel beside a party finder listing now shows who is already in that party. One person in the party running the plugin is enough to fill it in for everybody looking at the listing, so you can see who you would be joining before you join them. It only ever describes a party that is publicly listed, it comes down when the listing does, and you can turn it off under Settings -> PF Radar.
+
+Recruiting on your own now lists you, with your progression and a way to fetch it. Posting a listing and waiting is exactly when your own prog point is worth seeing, and the party list used to show nothing at all until somebody joined.
+
+The listing panel's "Look up progress" now says when everyone in the listing was checked too recently to check again, instead of taking the press and appearing to do nothing.
+
+Removed the "Read the update" button from Settings -> About.
+
+### Bugs Fixed
+
+Fixed progression disappearing. Prog points would drop back to "Fetch" while the server had the answer all along - most often with a party finder listing open beside your own party list, because the two were overwriting each other's results.
+
+Fixed "Update progress" doing nothing. A press that landed while the plugin was already reading was thrown away without a word; it now goes through, and says so when it genuinely cannot.
+
+Fixed omitted slots coming back. Omitting a slot worked until the first person left the party, at which point the locked-slot adjuster put every omitted seat back and started recruiting for the roles you had struck off.
+
+Fixed omitted slots being posted out of place. They are now moved to the end of the listing before it goes up, which is where the game puts them anyway, and the roles you kept keep their order.
+
+---
+
 ## 3.5.0
 
 ### Updates

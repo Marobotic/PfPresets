@@ -55,8 +55,20 @@ namespace PfPresets
 
                 int rows = players + (npcs > 0 ? 1 : 0);
 
-                // Your own row, and the progress control, both only appear alongside a real party.
-                if (players > 0)
+                // Your own row, and the progress control, appear alongside a real party - or when
+                // you are recruiting for one on your own.
+                //
+                // THE SOLO LISTING IS THE CASE THIS EXISTS FOR. Posting a party finder and waiting
+                // is exactly when somebody wants to see their own prog point: the listing is up,
+                // the fight is decided, and there is nobody else in the party yet to look at. It
+                // used to draw nothing at all - no name, no progress, no way to fetch it - until
+                // the first person joined, so the one moment the information was worth having was
+                // the one moment it was missing.
+                //
+                // Still nothing when you are simply standing about in a party of one: a one-row
+                // list of yourself, with no listing and no fight in question, is the noise this
+                // guard was written to keep out.
+                if (players > 0 || SoloRecruiting(players))
                 {
                     if (pfAutomation.GetLocalPartyMember() != null)
                         rows++;
@@ -153,6 +165,22 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// Whether the list should show you on your own: no party around you, but a listing up.
+        ///
+        /// Asked in both the measure pass and the draw pass, and they must agree - a count that
+        /// says one row while the drawing says none leaves a gap in the card, and the other way
+        /// round draws a row over whatever is beneath it.
+        /// </summary>
+        private bool SoloRecruiting(int otherPlayers)
+        {
+            if (otherPlayers > 0)
+                return false;
+
+            try { return pfAutomation.IsRecruiting(); }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>
         /// Draws the member rows and returns the height used, so the recruitment card can reserve
         /// space for them when it embeds the list.
         /// </summary>
@@ -169,9 +197,6 @@ namespace PfPresets
                 return 0f;
             }
 
-            if (members.Count == 0)
-                return 0f;
-
             // Square Enix's NPCs are split out before anything else looks at the list: they are not
             // people, so they must not be rated, reported, prefetched or counted as company.
             var players = new List<PartyMemberInfo>(members.Count + 1);
@@ -184,11 +209,18 @@ namespace PfPresets
                     players.Add(m);
             }
 
-            // You, first, because that is where you are in the game's own party list. Only worth
-            // drawing when there is a party to be part of - a one-row list of yourself standing
-            // alone is noise.
+            // Nothing to draw, and nothing to say about it. Checked here rather than on the raw
+            // member list, so a listing posted by somebody standing alone still gets their own row
+            // below - see SoloRecruiting.
+            if (players.Count == 0 && supportNpcs == 0 && !SoloRecruiting(players.Count))
+                return 0f;
+
+            // You, first, because that is where you are in the game's own party list. Worth drawing
+            // whenever there is a party to be part of, and when there is a listing up with nobody
+            // in it yet - which is the case where your own prog point is the only thing there is
+            // to show.
             PartyMemberInfo? self = null;
-            if (players.Count > 0)
+            if (players.Count > 0 || SoloRecruiting(players.Count))
             {
                 try { self = pfAutomation.GetLocalPartyMember(); }
                 catch (Exception) { self = null; }
@@ -365,7 +397,13 @@ namespace PfPresets
             if (Ratings == null || !ShowsProgressRow() || !DutyHasProgress(dutyRowId))
                 return null;
 
-            var p = Ratings.ProgressFor(who);
+            // NAMED ONCE AND USED FOR EVERY QUESTION BELOW. Progress is stored per fight as well
+            // as per character, so asking about a character without saying which fight is not a
+            // question the store can answer - and every "what do we know about this person" here
+            // has to be about the fight this row is being drawn against.
+            string duty = dutyName ?? string.Empty;
+
+            var p = Ratings.ProgressFor(duty, who);
 
             switch (p?.Status)
             {
@@ -409,11 +447,10 @@ namespace PfPresets
 
             // Nobody has a number for this person. Whether that is worth a button depends on
             // there being a fight to ask about and a region to ask in.
-            string duty = dutyName ?? string.Empty;
             if (!Ratings.HasEncounterFor(duty) || Worlds?.GetFfLogsRegion(who.World) == null)
                 return null;
 
-            if (Ratings.PlayerProgressPending(who) || (p?.Queued ?? false))
+            if (Ratings.PlayerProgressPending(duty, who) || (p?.Queued ?? false))
             {
                 // The length of the line, when the server has told us. A bare "Queued" gives no
                 // way to tell a five-second wait from a two-minute one, which is the whole of
@@ -433,7 +470,7 @@ namespace PfPresets
 
             // Tried and failed, rather than never tried. Same press underneath - the belt will
             // take them again - but it must not be dressed up as an untouched row.
-            if (Ratings.PlayerProgressFailed(who))
+            if (Ratings.PlayerProgressFailed(duty, who))
             {
                 return new ProgressCell("Retry", AccentYellow,
                     "The server tried this character and got nothing back.\n\n"
@@ -488,7 +525,7 @@ namespace PfPresets
             // Offered but refused while the server is inside its own cooldown for them. It would
             // take the press either way and match it against the stored row without queueing
             // anything, which from here is indistinguishable from a button that does nothing.
-            TimeSpan wait = Ratings.PlayerRefreshWait(who);
+            TimeSpan wait = Ratings.PlayerRefreshWait(duty, who);
             if (wait > TimeSpan.Zero)
             {
                 return new ProgressCell(label, TextMuted,
@@ -867,15 +904,16 @@ namespace PfPresets
         /// Anybody with no stored row at all reports zero, so a party containing one never-fetched
         /// character still offers the press - there is real work to do for them.
         /// </summary>
-        private TimeSpan PartyRefreshWait(List<(CharacterIdentity Who, string Region)> party)
+        private TimeSpan PartyRefreshWait(string dutyName,
+            List<(CharacterIdentity Who, string Region)> party)
         {
-            if (Ratings == null || party.Count == 0)
+            if (Ratings == null || party.Count == 0 || string.IsNullOrWhiteSpace(dutyName))
                 return TimeSpan.Zero;
 
             TimeSpan soonest = TimeSpan.MaxValue;
             foreach (var (who, _) in party)
             {
-                TimeSpan wait = Ratings.PlayerRefreshWait(who);
+                TimeSpan wait = Ratings.PlayerRefreshWait(dutyName, who);
 
                 // Somebody is fetchable now: the press has work to do, so there is nothing to wait
                 // for and no reason to look at the rest.
@@ -934,9 +972,9 @@ namespace PfPresets
 
             bool loaded = ratings.HasProgressFor(duty);
 
-            if (ratings.ProgressQueued)
+            int waiting = ratings.ProgressQueuedCountFor(duty, party);
+            if (waiting > 0)
             {
-                int waiting = ratings.ProgressQueuedCount;
                 string queued = waiting > 1 ? $"Queued · {waiting}" : "Queued";
 
                 ImGui.BeginDisabled(true);
@@ -954,7 +992,7 @@ namespace PfPresets
             // Two different reasons the press can be refused, and they want different words: the
             // short throttle on the button itself, and the server's much longer per-character
             // window with every member already inside it.
-            TimeSpan cooling = PartyRefreshWait(party);
+            TimeSpan cooling = PartyRefreshWait(duty, party);
             bool ready = ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
 
             string label = ready
@@ -1011,14 +1049,19 @@ namespace PfPresets
             Ratings.EnsureProgressLoaded(duty, party);
 
             bool loaded = Ratings.HasProgressFor(duty);
-            string? note = Ratings.ProgressNote;
+            string? note = Ratings.ProgressNoteFor(duty);
 
-            if (Ratings.ProgressQueued)
+            int queuedHere = Ratings.ProgressQueuedCountFor(duty, party);
+            if (queuedHere > 0)
             {
                 // Queued, not loading. The server fetches one character at a time for everybody
                 // using the plugin, so a press joins a line rather than starting a lookup - and
                 // the button has to say which of those two things happened.
-                DrawQueuedButton(Ratings.ProgressQueuedCount, maxWidth);
+                //
+                // Counted for THIS party on THIS fight. The service-wide figure counts everybody
+                // this session has queued anywhere, so fetching one person off a party finder
+                // listing used to put the party's own button into "Queued · 3".
+                DrawQueuedButton(queuedHere, maxWidth);
             }
             // No state for the request itself.
             //
@@ -1048,7 +1091,7 @@ namespace PfPresets
 
                 // Same two refusals as the card's copy of this button - the short throttle, and the
                 // server's per-character window with everybody already inside it.
-                TimeSpan cooling = PartyRefreshWait(party);
+                TimeSpan cooling = PartyRefreshWait(duty, party);
                 bool ready = Ratings.ProgressButtonReady && cooling <= TimeSpan.Zero;
 
                 ImGui.BeginDisabled(!ready);

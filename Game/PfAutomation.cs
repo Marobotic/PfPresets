@@ -1206,6 +1206,18 @@ namespace PfPresets
                 preset.ResolveCommentBytes(MaxCommentLength), MaxCommentLength + 1);
         }
 
+        /// <summary>
+        /// How many of the eight slot flags the listing currently in memory actually recruits for,
+        /// or 0 when nothing has been applied this session.
+        ///
+        /// Written here because it cannot be worked out afterwards. A closed seat and a seat the
+        /// game has reset both read as a mask of zero, and the only moment anybody knows which is
+        /// which is when the preset - the thing that says "omit this one" - is being written. The
+        /// locked-slot adjuster runs minutes later off nothing but game memory, and this is what
+        /// stops it treating an omitted seat as a free one and recruiting for it.
+        /// </summary>
+        private int activeSlotCount;
+
         private unsafe void WriteSlotFlagsToMemory(PfPresetData preset)
         {
             var agent = AgentLookingForGroup.Instance();
@@ -1222,6 +1234,10 @@ namespace PfPresets
                 for (int i = 0; i < 8; i++)
                     pSlotFlags[i] = i < autoSlots.Count ? GetAutoSlotGameMask(autoSlots[i]) : 0;
 
+                // An auto-adjusted composition is built from the seats the party still needs, so
+                // it has no omissions in it - every slot it produces is one being recruited for.
+                activeSlotCount = Math.Min(autoSlots.Count, 8);
+
                 if (preset.AllowDoubleCaster)
                     ApplyDoubleCasterSlot(pSlotFlags, autoSlots);
 
@@ -1231,22 +1247,44 @@ namespace PfPresets
             // Slot 1 is locked to the player's current class/job (when not auto-adjusting).
             pSlotFlags[0] = GetLockedJobGameMask(GetLocalPlayerJobId());
 
-            for (int i = 1; i < 8; i++)
-            {
-                if (i >= preset.Slots.Count)
-                {
-                    pSlotFlags[i] = 0;
-                    continue;
-                }
+            // OMITTED SLOTS ARE MOVED TO THE END, NOT LEFT WHERE THEY WERE WRITTEN.
+            //
+            // The game keeps its eight slots as a run: the ones being recruited for come first and
+            // the closed ones come last, and it will shuffle a listing into that shape itself. So
+            // omitting slots 3 and 7 of eight does not produce two holes - it produces six seats
+            // followed by two closed ones, with everything below a hole sliding up into it.
+            //
+            // This used to write each slot where the preset put it, holes included, which left the
+            // plugin's idea of the listing disagreeing with the game's the moment the game tidied
+            // it. Everything downstream then read the wrong seat: the locked-slot adjuster in
+            // particular saw a zero in the middle, took it for a seat somebody had just vacated,
+            // and recruited for a slot the user had deliberately closed.
+            //
+            // Doing the same move here first means what we write is already what the game will
+            // settle on. The preset itself is untouched - the editor still shows the slots where
+            // they were put, because that is where the user put them.
+            int next = 1;
 
+            for (int i = 1; i < preset.Slots.Count && i < 8; i++)
+            {
                 var slot = preset.Slots[i];
+
+                // Skipped rather than written as zero. The seat it would have occupied belongs to
+                // whichever slot comes next, and the zeros are laid down together at the end.
                 if (slot.Role == RoleType.Omit)
-                    pSlotFlags[i] = 0; // Empty / disabled slot
-                else if (slot.AcceptedJobFlags != 0)
-                    pSlotFlags[i] = JobMasks.ToGameMask(slot.AcceptedJobFlags);
-                else
-                    pSlotFlags[i] = JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role));
+                    continue;
+
+                pSlotFlags[next++] = slot.AcceptedJobFlags != 0
+                    ? JobMasks.ToGameMask(slot.AcceptedJobFlags)
+                    : JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role));
             }
+
+            activeSlotCount = next;
+
+            // The tail: every seat past the last real one, whether it was omitted or was never in
+            // this preset to begin with. Both are closed, and the game reads them the same way.
+            for (int i = next; i < 8; i++)
+                pSlotFlags[i] = 0;
         }
 
         /// <summary>Game mask for one auto-adjusted slot: the locked job when known, else the

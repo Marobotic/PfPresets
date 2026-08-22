@@ -86,6 +86,12 @@ namespace PfPresets
 
                     // The listing is gone, so any time-left reading is stale.
                     ResetTimeTracking();
+
+                    // And so is the seat count that went with it. Left standing, it would describe
+                    // the listing just taken down to whatever is posted next - including a listing
+                    // made by hand, which this plugin knows nothing about. Cleared back to "work it
+                    // out from the flags" rather than to a guess.
+                    activeSlotCount = 0;
                 }
                 catch (Exception ex)
                 {

@@ -1046,39 +1046,130 @@ namespace PfPresets
         // ══════════════════════════════════════════════════════════
 
         /// <summary>
-        /// What every row draws from, replaced wholesale rather than edited in place.
+        /// EVERY SURFACE'S ANSWER ABOUT EVERY CHARACTER, keyed by fight AND character.
         ///
-        /// Not readonly, and that is the point - see <see cref="Apply"/>. The UI reads this on the
-        /// main thread every frame while responses land on background ones, so an update has to be
-        /// a single reference swap rather than a clear followed by a refill.
+        /// ONE STORE, ONE ANSWER. The recruit tab's party list, the same list after the party has
+        /// filled, and the panel beside a party finder listing all read this, and they must agree:
+        /// the same person on the same fight is the same number wherever it is drawn.
+        ///
+        /// THE KEY IS WHY. This used to be keyed by character alone, with the fight held beside it
+        /// in a single `progressDuty` field - which quietly meant the store could only ever
+        /// describe one (fight, group) at a time. Two panels asking about different groups took
+        /// turns wiping each other: a read for a listing replaced the party's rows wholesale, so
+        /// your own party's prog points vanished and every row fell back to offering "Fetch" while
+        /// the server held the answers all along. Keying by fight and character is what lets both
+        /// panels be right at once, and it is what makes the read below safe to share.
+        ///
+        /// WRITTEN IN PLACE, not swapped. The swap existed because a Clear()-then-refill left a
+        /// window where the UI thread could see a half-empty dictionary; writing one entry at a
+        /// time never has that window, because a key holds either the old answer or the new one
+        /// and never neither. It is also what lets two responses land at once without one of them
+        /// losing.
         /// </summary>
-        private volatile ConcurrentDictionary<string, PlayerProgress> progress = new();
-        private string progressDuty = string.Empty;
+        private readonly ConcurrentDictionary<string, PlayerProgress> progress = new();
+
         /// <summary>
-        /// A request is in flight. Guards re-entrancy only - it is deliberately not surfaced.
+        /// How many answers are kept before the oldest are dropped.
         ///
-        /// It used to drive a "fetching..." line in the panel, from when the request did the
-        /// fetching itself and took seconds. It now hands the party to the server's queue and
-        /// returns almost at once, and the same call is what the panel makes automatically when
-        /// it opens - so showing it announced work the user hadn't asked for, for one frame.
+        /// Only a bound, not a policy. Entries are small and an evening's raiding touches a few
+        /// dozen characters across two or three fights; this exists so that a very long session
+        /// browsing listing after listing cannot grow the store without limit.
         /// </summary>
-        private volatile bool progressFetching;
+        private const int MaxProgressEntries = 512;
 
-        private volatile string? progressNote;
+        /// <summary>
+        /// The key both halves of the plugin have to agree on: this fight, this character.
+        ///
+        /// Duty names arrive from two places - the game's own duty sheet for a party, and the
+        /// listing's duty for the panel - so they are folded to a common case here rather than
+        /// trusted to match exactly.
+        /// </summary>
+        private static string ProgressKey(string dutyName, string characterKey)
+            => $"{dutyName.Trim().ToLowerInvariant()}\u0001{characterKey}";
 
-        private DateTime progressNoteUntil = DateTime.MaxValue;
+        private static string ProgressKey(string dutyName, CharacterIdentity who)
+            => ProgressKey(dutyName, who.Key);
+        /// <summary>
+        /// The reads currently in flight, one entry per (fight + group) asked about.
+        ///
+        /// A SET RATHER THAN A LATCH, and the difference is a bug people actually hit. This was a
+        /// single bool meaning "a progress request is in flight", and every caller was refused
+        /// while it was set - so the panel beside a listing, which re-reads on its own, could sit
+        /// on that latch at the exact moment somebody pressed Update progress on their party. The
+        /// press was swallowed in silence and the button went on saying "Update progress", which
+        /// is the whole of "the button does nothing sometimes".
+        ///
+        /// Keyed by the same signature the read bookkeeping uses, so a read only ever blocks
+        /// another read of the same thing - which is the only case where blocking is right.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, byte> progressInFlight = new();
+
+        /// <summary>
+        /// What went wrong, per fight, or nothing when there is nothing to say.
+        ///
+        /// Kept per duty for the same reason everything else here is. As one field, a listing for
+        /// a fight neither provider has heard of set "No progress data for this duty." - and the
+        /// party list, six inches away and looking at a fight both of them know, displayed it.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, (string Text, DateTime Until)> progressNotes
+            = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>A sentence to show instead of badges, or null when there is nothing to say.
         /// Transient failures expire so the row recovers without a reload.</summary>
-        public string? ProgressNote =>
-            DateTime.UtcNow <= progressNoteUntil ? progressNote : null;
+        public string? ProgressNoteFor(string dutyName)
+        {
+            if (string.IsNullOrWhiteSpace(dutyName)
+                || !progressNotes.TryGetValue(dutyName.Trim(), out var note))
+            {
+                return null;
+            }
+
+            return DateTime.UtcNow <= note.Until ? note.Text : null;
+        }
+
+        private void SetProgressNote(string dutyName, string? text, TimeSpan? forHowLong = null)
+        {
+            if (string.IsNullOrWhiteSpace(dutyName))
+                return;
+
+            string key = dutyName.Trim();
+
+            if (text == null)
+                progressNotes.TryRemove(key, out _);
+            else
+                progressNotes[key] = (text, DateTime.UtcNow + (forHowLong ?? TimeSpan.FromDays(1)));
+        }
 
         /// <summary>Whether anything has been fetched for this duty yet.</summary>
         public bool HasProgressFor(string dutyName)
-            => !progress.IsEmpty && string.Equals(progressDuty, dutyName, StringComparison.OrdinalIgnoreCase);
+        {
+            if (string.IsNullOrWhiteSpace(dutyName) || progress.IsEmpty)
+                return false;
 
-        /// <summary>The duty the server has confirmed it can answer about, or empty.</summary>
-        private string progressEncounter = string.Empty;
+            string prefix = ProgressKey(dutyName, string.Empty);
+
+            // Enumerated as pairs rather than through .Keys, which hands back a fresh copy of the
+            // whole key collection - an allocation this would make every frame, twice, for a
+            // question that only decides which of two tooltips to show.
+            foreach (var entry in progress)
+            {
+                if (entry.Key.StartsWith(prefix, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The duties the server has confirmed it can answer about.
+        ///
+        /// A set rather than the single string this used to be, for the same reason the store is
+        /// keyed by fight: the panel beside a listing and the party list are often looking at two
+        /// different fights, and "the last duty anybody asked about" is not an answer either of
+        /// them can use. A listing for a fight the server has never heard of used to blank the
+        /// party list's whole column on its way past.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, byte> progressEncounters = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Whether the server recognises this duty as an encounter it has data for.
@@ -1089,12 +1180,12 @@ namespace PfPresets
         /// button exists for - so it asks this instead.
         /// </summary>
         public bool HasEncounterFor(string dutyName)
-            => !string.IsNullOrEmpty(progressEncounter)
-               && string.Equals(progressEncounter, dutyName, StringComparison.OrdinalIgnoreCase);
+            => !string.IsNullOrWhiteSpace(dutyName) && progressEncounters.ContainsKey(dutyName.Trim());
 
         /// <summary>
         /// Characters asked about individually and not yet answered, keyed like
-        /// <see cref="progress"/>.
+        /// <see cref="progress"/> - by fight as well as by character, so a name queued for one
+        /// fight does not read as queued on another.
         ///
         /// Not a rate limit - the server holds its own per-character cooldown and is the authority
         /// on that. This only stops one person being put on the queue twice by an impatient second
@@ -1109,8 +1200,11 @@ namespace PfPresets
         private static readonly TimeSpan SinglePressRest = TimeSpan.FromSeconds(30);
 
         /// <summary>True while this character has been asked about and hasn't answered yet.</summary>
-        public bool PlayerProgressPending(CharacterIdentity who)
-            => who.IsValid && playerAsked.TryGetValue(who.Key, out var until) && DateTime.UtcNow < until;
+        public bool PlayerProgressPending(string dutyName, CharacterIdentity who)
+            => who.IsValid
+               && !string.IsNullOrWhiteSpace(dutyName)
+               && playerAsked.TryGetValue(ProgressKey(dutyName, who), out var until)
+               && DateTime.UtcNow < until;
 
         /// <summary>Characters put on the belt this session, so an answer that never came can be
         /// told apart from a character nobody ever asked about.</summary>
@@ -1127,8 +1221,10 @@ namespace PfPresets
         /// inviting "Fetch" as though the last eight minutes hadn't happened. Somebody who presses
         /// a button, waits, and is handed the same button back is owed the difference.
         /// </summary>
-        public bool PlayerProgressFailed(CharacterIdentity who)
-            => who.IsValid && playerFailed.ContainsKey(who.Key);
+        public bool PlayerProgressFailed(string dutyName, CharacterIdentity who)
+            => who.IsValid
+               && !string.IsNullOrWhiteSpace(dutyName)
+               && playerFailed.ContainsKey(ProgressKey(dutyName, who));
 
         /// <summary>The server's per-character cooldown in seconds, or 0 before it has said.</summary>
         private volatile int progressRefreshAfterSec;
@@ -1141,12 +1237,12 @@ namespace PfPresets
         /// is correct, and it is also indistinguishable from a broken button unless the row that
         /// offers the press knows about the window too - which is what this is for.
         /// </summary>
-        public TimeSpan PlayerRefreshWait(CharacterIdentity who)
+        public TimeSpan PlayerRefreshWait(string dutyName, CharacterIdentity who)
         {
             if (progressRefreshAfterSec <= 0)
                 return TimeSpan.Zero;
 
-            var p = ProgressFor(who);
+            var p = ProgressFor(dutyName, who);
 
             // No stored row on the server, so nothing to be inside the cooldown of.
             if (p == null || string.IsNullOrEmpty(p.Status) || p.Status is "unfetched" or "queued")
@@ -1160,9 +1256,13 @@ namespace PfPresets
             return left > 0 ? TimeSpan.FromSeconds(left) : TimeSpan.Zero;
         }
 
-        /// <summary>This character's standing on the duty last fetched, or null if not fetched.</summary>
-        public PlayerProgress? ProgressFor(CharacterIdentity who)
-            => who.IsValid && progress.TryGetValue(who.Key, out var found) ? found : null;
+        /// <summary>This character's standing on this duty, or null if nobody has fetched it.</summary>
+        public PlayerProgress? ProgressFor(string dutyName, CharacterIdentity who)
+            => who.IsValid
+               && !string.IsNullOrWhiteSpace(dutyName)
+               && progress.TryGetValue(ProgressKey(dutyName, who), out var found)
+                   ? found
+                   : null;
 
         /// <summary>
         /// Fetches progression for a party.
@@ -1174,17 +1274,22 @@ namespace PfPresets
         /// <summary>When the refresh button becomes pressable again.</summary>
         private DateTime progressButtonUntil = DateTime.MinValue;
 
-        /// <summary>Duty + party the last read covered, so opening a panel reads once rather than
-        /// every frame.</summary>
-        private string progressReadFor = string.Empty;
+        /// <summary>
+        /// When each (duty + group) was last read, so opening a panel reads once rather than every
+        /// frame.
+        ///
+        /// One entry per thing being looked at rather than one slot for the most recent, because
+        /// there is more than one panel and they look at different things. As a single slot, two
+        /// panels overwrote each other's entry every frame and each one's next frame saw a slot
+        /// that had "moved" - so both re-read forever, each answer replacing the other's, which is
+        /// why a prog point could appear and disappear while nothing on screen had changed.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, DateTime> progressReadAt = new();
 
         public bool ProgressButtonReady => DateTime.UtcNow >= progressButtonUntil;
 
         public TimeSpan ProgressButtonWait =>
             progressButtonUntil > DateTime.UtcNow ? progressButtonUntil - DateTime.UtcNow : TimeSpan.Zero;
-
-        /// <summary>When the last read went out, so the wait below is measured from something.</summary>
-        private DateTime progressReadAt = DateTime.MinValue;
 
         /// <summary>
         /// How often the panel reads again while it is still waiting on the belt.
@@ -1195,21 +1300,42 @@ namespace PfPresets
         /// </summary>
         private static readonly TimeSpan ReadAgainAfter = TimeSpan.FromSeconds(15);
 
-        /// <summary>Whether anything on screen is still waiting on the server's queue.</summary>
-        private bool AnythingQueued()
-        {
-            foreach (var p in progress.Values)
-            {
-                if (p.Queued)
-                    return true;
-            }
+        /// <summary>
+        /// How long a scope's last read stands before it is worth asking again, even with nobody
+        /// queued and nothing on screen having changed.
+        ///
+        /// Needed because a scope is now remembered as read rather than being forgotten the moment
+        /// another panel looked at something else. That is the point of the change - but without a
+        /// bound it also means a party sat in the same listing all evening would never pick up a
+        /// prog point somebody else's client fetched for them. Five minutes is far longer than the
+        /// queue watch and far shorter than an evening, and it costs one database read on our own
+        /// server.
+        /// </summary>
+        private static readonly TimeSpan ReadStaleAfter = TimeSpan.FromMinutes(5);
 
-            // Asked about but not yet answered even once. Entries here lapse by time rather than
-            // being removed, so an unexpired one is the thing to look for.
+        /// <summary>
+        /// Whether anyone in THIS group, on THIS fight, is still waiting on the server's queue.
+        ///
+        /// Asked about the group in front of the caller rather than about the store as a whole.
+        /// Globally, somebody somewhere is nearly always queued once a second panel is open, and
+        /// answering that question made every panel re-read every fifteen seconds on account of
+        /// work being done for a different panel about different people.
+        /// </summary>
+        private bool AnythingQueued(string dutyName,
+            IReadOnlyList<(CharacterIdentity Who, string Region)> party)
+        {
             var now = DateTime.UtcNow;
-            foreach (var until in playerAsked.Values)
+
+            foreach (var (who, _) in party)
             {
-                if (now < until)
+                string key = ProgressKey(dutyName, who);
+
+                if (progress.TryGetValue(key, out var p) && p.Queued)
+                    return true;
+
+                // Asked about but not yet answered even once. Entries here lapse by time rather
+                // than being removed, so an unexpired one is the thing to look for.
+                if (playerAsked.TryGetValue(key, out var until) && now < until)
                     return true;
             }
 
@@ -1237,39 +1363,75 @@ namespace PfPresets
             if (string.IsNullOrWhiteSpace(dutyName) || party.Count == 0)
                 return;
 
-            var sig = new System.Text.StringBuilder(dutyName);
-            foreach (var (who, _) in party)
-            {
-                sig.Append('|');
-                sig.Append(who.Key);
-            }
-            string signature = sig.ToString();
+            string signature = ScopeSignature(dutyName, party);
 
-            bool moved = signature != progressReadFor;
-            bool due = !moved
-                && AnythingQueued()
-                && DateTime.UtcNow - progressReadAt >= ReadAgainAfter;
+            bool read = progressReadAt.TryGetValue(signature, out var lastRead);
+            TimeSpan since = DateTime.UtcNow - lastRead;
 
-            if (!moved && !due)
+            // Two reasons to ask again: somebody here is still owed an answer, or what we have has
+            // simply been sitting long enough to be worth refreshing.
+            bool due = read
+                && ((AnythingQueued(dutyName, party) && since >= ReadAgainAfter)
+                    || since >= ReadStaleAfter);
+
+            if (read && !due)
                 return;
 
             // STAMPED ONLY IF THE READ ACTUALLY WENT OUT.
             //
-            // These two lines used to run before the call and unconditionally, which quietly broke
-            // the whole panel whenever a request happened to already be in flight: RequestPartyProgress
-            // returns without doing anything while progressFetching is set, but the signature had
-            // already been recorded as read. From then on `moved` is false for this party, and
-            // `due` needs AnythingQueued() - which is false, because nothing was ever asked. So the
-            // panel never reads again for that party and every member sits on "Fetch" for the rest
-            // of the evening, including people the server has answers for.
+            // This line used to run before the call and unconditionally, which quietly broke the
+            // whole panel whenever a request was already in flight: RequestPartyProgress returns
+            // without doing anything, but the scope had already been recorded as read. From then
+            // on it counts as read, and a re-read needs somebody to be queued - which nobody is,
+            // because nothing was ever asked. So the panel never read again for that party and
+            // every member sat on "Fetch" for the rest of the evening, including people the server
+            // had answers for.
             //
             // It looked like a caching problem and it is an ordering one. Two frames is all it
             // takes: the panel opening while a press from the previous party is still resolving.
             if (!RequestPartyProgress(dutyName, party, refresh: false))
                 return;
 
-            progressReadFor = signature;
-            progressReadAt = DateTime.UtcNow;
+            progressReadAt[signature] = DateTime.UtcNow;
+
+            // An evening spent opening one listing after another is a scope apiece, and none of
+            // them is worth remembering once it is this far past its staleness bound - a read that
+            // would be redone on sight is the same as never having been recorded.
+            if (progressReadAt.Count > MaxProgressEntries)
+            {
+                var cutoff = DateTime.UtcNow - ReadStaleAfter;
+                foreach (var entry in progressReadAt)
+                {
+                    if (entry.Value < cutoff)
+                        progressReadAt.TryRemove(entry.Key, out _);
+                }
+            }
+        }
+
+        /// <summary>
+        /// One fight and one group of people, named the same way every time.
+        ///
+        /// Sorted, because the same party read twice is the same scope even when the game hands
+        /// its members back in a different order - and an unsorted signature made that read as a
+        /// new group and re-read the lot.
+        /// </summary>
+        private static string ScopeSignature(string dutyName,
+            IReadOnlyList<(CharacterIdentity Who, string Region)> party)
+        {
+            var keys = new List<string>(party.Count);
+            foreach (var (who, _) in party)
+                keys.Add(who.Key);
+
+            keys.Sort(StringComparer.Ordinal);
+
+            var sig = new System.Text.StringBuilder(dutyName.Trim().ToLowerInvariant());
+            foreach (string k in keys)
+            {
+                sig.Append('|');
+                sig.Append(k);
+            }
+
+            return sig.ToString();
         }
 
         /// <summary>Whether the request actually went out. A caller that records having read must
@@ -1278,14 +1440,31 @@ namespace PfPresets
         public bool RequestPartyProgress(string dutyName,
             IReadOnlyList<(CharacterIdentity Who, string Region)> party, bool refresh = true)
         {
-            if (progressFetching || party.Count == 0 || string.IsNullOrWhiteSpace(dutyName))
+            if (party.Count == 0 || string.IsNullOrWhiteSpace(dutyName))
                 return false;
 
             if (refresh && !ProgressButtonReady)
                 return false;
 
-            progressFetching = true;
-            progressNote = null;
+            string signature = ScopeSignature(dutyName, party);
+
+            // Already asking this exact question. Only a read of the SAME fight and the SAME
+            // people is refused here - another panel's read no longer blocks this one.
+            if (!progressInFlight.TryAdd(signature, 0))
+            {
+                // A press that lands on one has to say so. Silence here is what made the button
+                // look dead: it was refused, nothing changed, and nothing explained why.
+                if (refresh)
+                {
+                    SetProgressNote(dutyName,
+                        "Still reading the last answer - try that again in a moment.",
+                        TimeSpan.FromSeconds(4));
+                }
+
+                return false;
+            }
+
+            SetProgressNote(dutyName, null);
 
             if (refresh)
             {
@@ -1303,17 +1482,18 @@ namespace PfPresets
             // prog point is already on screen, ahead of the row that is still blank, is the wrong
             // way round: the blank row is the reason the button was pressed.
             var ordered = refresh
-                ? party.OrderBy(p => ProgressPriority(p.Who)).ToList()
+                ? party.OrderBy(p => ProgressPriority(dutyName, p.Who)).ToList()
                 : (IReadOnlyList<(CharacterIdentity Who, string Region)>)party;
 
             var players = ToRequestPlayers(ordered);
             if (players.Count == 0)
             {
-                progressFetching = false;
+                progressInFlight.TryRemove(signature, out _);
                 return false;
             }
 
-            Send(dutyName, players, refresh, merge: false, () => progressFetching = false);
+            Send(dutyName, players, refresh, single: false,
+                () => progressInFlight.TryRemove(signature, out _));
             return true;
         }
 
@@ -1330,12 +1510,12 @@ namespace PfPresets
             if (!who.IsValid || string.IsNullOrEmpty(region) || string.IsNullOrWhiteSpace(dutyName))
                 return;
 
-            if (PlayerProgressPending(who))
+            if (PlayerProgressPending(dutyName, who))
                 return;
 
             // Held until the answer lands, and released early by Apply when it does. The row's own
             // button reads this, so a second press can't queue the same person twice.
-            playerAsked[who.Key] = DateTime.UtcNow.Add(PlayerAskWait);
+            playerAsked[ProgressKey(dutyName, who)] = DateTime.UtcNow.Add(PlayerAskWait);
 
             // The party button rests too, briefly.
             //
@@ -1350,11 +1530,11 @@ namespace PfPresets
             var players = ToRequestPlayers(new[] { (who, region) });
             if (players.Count == 0)
             {
-                playerAsked.TryRemove(who.Key, out _);
+                playerAsked.TryRemove(ProgressKey(dutyName, who), out _);
                 return;
             }
 
-            Send(dutyName, players, refresh: true, merge: true, null);
+            Send(dutyName, players, refresh: true, single: true, null);
         }
 
         private static List<ProgressPlayer> ToRequestPlayers(
@@ -1376,9 +1556,11 @@ namespace PfPresets
         /// with no stored row comes back as, so it means the same as having no entry here at all.
         /// Reading it as data was the whole bug this ordering exists to avoid.
         /// </summary>
-        private int ProgressPriority(CharacterIdentity who)
+        private int ProgressPriority(string dutyName, CharacterIdentity who)
         {
-            if (!who.IsValid || !progress.TryGetValue(who.Key, out var p) || string.IsNullOrEmpty(p.Status))
+            if (!who.IsValid
+                || !progress.TryGetValue(ProgressKey(dutyName, who), out var p)
+                || string.IsNullOrEmpty(p.Status))
                 return 0;   // never looked up - the blank row
 
             if (p.Status is "unfetched" or "queued")
@@ -1393,11 +1575,13 @@ namespace PfPresets
         /// <summary>
         /// One request out, one answer applied, and a queue watch if the server parked any of it.
         ///
-        /// <paramref name="merge"/> separates the two callers: a party answer is the whole truth
-        /// for the duty and replaces what was on screen, a single-character answer is one row of
-        /// it and must not blank the other seven.
+        /// <paramref name="single"/> separates the two callers: a party read speaks for everybody
+        /// it asked about, a single-character ask speaks for one row. Since the store became
+        /// per-fight-and-character, neither one replaces anything - answers are written where they
+        /// belong and nothing else is touched - so this now only decides what to do when the
+        /// request FAILS, which is where the two differ.
         /// </summary>
-        private void Send(string dutyName, List<ProgressPlayer> players, bool refresh, bool merge,
+        private void Send(string dutyName, List<ProgressPlayer> players, bool refresh, bool single,
             Action? done)
         {
             var request = new ProgressRequest { DutyName = dutyName, Refresh = refresh };
@@ -1416,7 +1600,7 @@ namespace PfPresets
 
                 foreach (var p in players)
                 {
-                    string key = new CharacterIdentity(p.Name, p.World).Key;
+                    string key = ProgressKey(dutyName, new CharacterIdentity(p.Name, p.World));
                     playerRequested[key] = 0;
                     playerFailed.TryRemove(key, out _);
                 }
@@ -1430,21 +1614,21 @@ namespace PfPresets
 
                     if (!result.IsOk || result.Value == null)
                     {
-                        progressNote = !string.IsNullOrWhiteSpace(result.Message)
-                            ? result.Message
-                            : result.Status == ApiStatus.Offline
-                                ? "Couldn't reach the server."
-                                : "Couldn't fetch progress right now.";
-
                         // Cleared after a while so the row recovers on its own. It used to sit
                         // there permanently, which made a single failed call look like the feature
                         // was broken until the plugin was reloaded.
-                        progressNoteUntil = DateTime.UtcNow.AddSeconds(12);
+                        SetProgressNote(dutyName,
+                            !string.IsNullOrWhiteSpace(result.Message)
+                                ? result.Message
+                                : result.Status == ApiStatus.Offline
+                                    ? "Couldn't reach the server."
+                                    : "Couldn't fetch progress right now.",
+                            TimeSpan.FromSeconds(12));
 
                         // A failure shouldn't cost the whole cooldown either. A single-character
                         // ask never touches the party button at all: it didn't spend the party's
                         // turn, so it has no business disabling the party's button.
-                        if (merge)
+                        if (single)
                             ReleaseAsked(request);
                         else
                             progressButtonUntil = DateTime.UtcNow.AddSeconds(10);
@@ -1454,16 +1638,17 @@ namespace PfPresets
                     // The server fetches nothing inside the request any more - a refresh puts the
                     // stale names on its global queue and answers with what it already had.
                     // Anyone still pending is waited on below.
-                    if (Apply(result.Value, dutyName, merge))
-                        WaitForQueue(dutyName, request, result.Value.Queue, merge);
-                    else if (merge)
+                    if (Apply(result.Value, dutyName))
+                        WaitForQueue(dutyName, request, result.Value.Queue, single);
+                    else if (single)
                         ReleaseAsked(request);
                 }
                 catch (Exception ex)
                 {
                     log.Debug($"[Ratings] Progress fetch failed: {ex.Message}");
-                    progressNote = "Couldn't fetch progress right now.";
-                    if (merge)
+                    SetProgressNote(dutyName, "Couldn't fetch progress right now.",
+                        TimeSpan.FromSeconds(12));
+                    if (single)
                         ReleaseAsked(request);
                 }
                 finally
@@ -1473,54 +1658,61 @@ namespace PfPresets
             });
         }
 
+        /// <summary>
+        /// Keeps the store to <see cref="MaxProgressEntries"/>, oldest answers first.
+        ///
+        /// Only ever drops what nothing is looking at: a row still on screen is re-read on its own
+        /// schedule and comes straight back, and the oldest entries are by definition the fights
+        /// and parties furthest from whatever is being looked at now.
+        /// </summary>
+        private void TrimProgress()
+        {
+            int over = progress.Count - MaxProgressEntries;
+            if (over <= 0)
+                return;
+
+            foreach (var entry in progress.ToArray().OrderBy(e => e.Value.AppliedAt).Take(over))
+                progress.TryRemove(entry.Key, out _);
+        }
+
         /// <summary>Lets go of the per-character hold, so the row's button comes back rather than
         /// sitting out the full minute over a request that failed in a second.</summary>
         private void ReleaseAsked(ProgressRequest request)
         {
             foreach (var p in request.Players)
-                playerAsked.TryRemove(new CharacterIdentity(p.Name, p.World).Key, out _);
+            {
+                playerAsked.TryRemove(
+                    ProgressKey(request.DutyName, new CharacterIdentity(p.Name, p.World)), out _);
+            }
         }
 
         /// <summary>
-        /// Takes one server answer and makes it what the panel shows.
+        /// Takes one server answer and writes it into the store, under this duty.
         ///
-        /// Replaces rather than merges: the server holds the whole truth for this duty, and a
-        /// merge would keep showing a character who has since dropped out of the party.
+        /// NOTHING IS REPLACED AND NOTHING IS CLEARED. Every answer is written at its own
+        /// (fight, character) key, so an answer about one group cannot disturb what is known about
+        /// another - which is the whole reason the store is keyed that way. A character who has
+        /// dropped out of the party simply stops being asked about and stops being drawn; their
+        /// stale row sits harmlessly until it ages out of the bound below.
         /// </summary>
         /// <returns>False when the response was an answer with nothing in it to display.</returns>
-        private bool Apply(ProgressResponse response, string dutyName, bool merge)
+        private bool Apply(ProgressResponse response, string dutyName)
         {
-            bool sameDuty = string.Equals(progressDuty, dutyName, StringComparison.OrdinalIgnoreCase);
-
-            // Built alongside the live one and swapped in at the end, never cleared in place.
-            //
-            // This used to Clear() and refill, which left a window where the dictionary was empty
-            // or half-populated - and the UI reads it every frame from another thread. A frame
-            // landing in that window drew a party with no progress at all, so a row showing
-            // "(Cleared)" flicked back to "Fetch" and then back again. Rare enough to look random
-            // until the panel started re-reading every fifteen seconds, which made it frequent.
-            //
-            // A single-character answer is folded into what is already there: it speaks for one
-            // row, and replacing on it would blank the other seven to update one of them. Changing
-            // duty still starts empty, merge or not - the old fight's numbers mean nothing here.
-            var next = merge && sameDuty
-                ? new ConcurrentDictionary<string, PlayerProgress>(progress)
-                : new ConcurrentDictionary<string, PlayerProgress>();
-
-            progressDuty = dutyName;
-
             if (response.Encounter == null)
             {
-                progress = next;
                 // Names no provider on purpose. Progression comes from Tomestone with FFLogs
                 // behind it, and which one answered is not the user's problem - naming one made a
                 // mapping gap read as that site being down.
-                progressEncounter = string.Empty;
-                progressNote = "No progress data for this duty.";
+                //
+                // Recorded against THIS duty only. As a single field, a listing for a fight
+                // neither provider knows took the whole progress column down with it - including
+                // the party list, which was looking at a fight both of them know perfectly well.
+                progressEncounters.TryRemove(dutyName.Trim(), out _);
+                SetProgressNote(dutyName, "No progress data for this duty.");
                 return false;
             }
 
-            progressEncounter = dutyName;
+            progressEncounters[dutyName.Trim()] = 0;
 
             if (response.RefreshAfterSec > 0)
                 progressRefreshAfterSec = response.RefreshAfterSec;
@@ -1542,35 +1734,34 @@ namespace PfPresets
 
                 // Stamped on arrival so AgeSec keeps counting afterwards - see PlayerRefreshWait.
                 p.AppliedAt = DateTime.UtcNow;
-                next[p.Key] = p;
+
+                string key = ProgressKey(dutyName, p.Key);
+                progress[key] = p;
 
                 // Still on the belt: nothing is settled, and the hold stays.
                 if (p.Queued)
                     continue;
 
                 // Answered, one way or another, so the row's button comes back.
-                playerAsked.TryRemove(p.Key, out _);
+                playerAsked.TryRemove(key, out _);
 
                 // Off the queue with still nothing stored, having been put there by us. The belt
                 // spent its attempts and gave up - which is a fact worth keeping, because the
                 // alternative is offering the same press again as if it were fresh.
                 if (p.Status == "unfetched")
                 {
-                    if (playerRequested.TryRemove(p.Key, out _))
-                        playerFailed[p.Key] = 0;
+                    if (playerRequested.TryRemove(key, out _))
+                        playerFailed[key] = 0;
                     continue;
                 }
 
-                playerRequested.TryRemove(p.Key, out _);
-                playerFailed.TryRemove(p.Key, out _);
+                playerRequested.TryRemove(key, out _);
+                playerFailed.TryRemove(key, out _);
             }
 
-            // The swap. Every row goes from the old answer to the new one between two frames,
-            // with no frame in between that sees neither.
-            progress = next;
+            TrimProgress();
 
-            progressNote = null;
-            progressNoteUntil = DateTime.MaxValue;
+            SetProgressNote(dutyName, null);
             return true;
         }
 
@@ -1592,11 +1783,42 @@ namespace PfPresets
         private volatile int queuedCount;
         private DateTime queueWaitUntil = DateTime.MinValue;
 
-        /// <summary>True while we are waiting on the server's queue for this party.</summary>
-        public bool ProgressQueued => queuedCount > 0 && DateTime.UtcNow < queueWaitUntil;
+        /// <summary>
+        /// How many of THESE people, on THIS fight, are still on the queue.
+        ///
+        /// THE ONLY WAY TO ASK. There were service-wide `ProgressQueued` / `ProgressQueuedCount`
+        /// properties here and they are gone rather than merely unused: they counted every
+        /// character this session had queued anywhere, so fetching somebody off a party finder
+        /// listing put the party's own button into "Queued · 3" over work that had nothing to do
+        /// with the party. A panel asking what is happening has to name what it is asking about.
+        /// </summary>
+        public int ProgressQueuedCountFor(string dutyName,
+            IReadOnlyList<(CharacterIdentity Who, string Region)> party)
+        {
+            if (string.IsNullOrWhiteSpace(dutyName) || party.Count == 0)
+                return 0;
 
-        /// <summary>How many party members are still on the queue.</summary>
-        public int ProgressQueuedCount => queuedCount;
+            var now = DateTime.UtcNow;
+            int waiting = 0;
+
+            foreach (var (who, _) in party)
+            {
+                string key = ProgressKey(dutyName, who);
+
+                if ((progress.TryGetValue(key, out var p) && p.Queued)
+                    || (playerAsked.TryGetValue(key, out var until) && now < until))
+                {
+                    waiting++;
+                }
+            }
+
+            return waiting;
+        }
+
+        /// <summary>Whether this fight and this group have anybody on the queue right now.</summary>
+        public bool ProgressQueuedFor(string dutyName,
+            IReadOnlyList<(CharacterIdentity Who, string Region)> party)
+            => ProgressQueuedCountFor(dutyName, party) > 0;
 
         private volatile int progressQueueSize;
         private volatile int progressQueuePollSec = 3;
@@ -1624,10 +1846,9 @@ namespace PfPresets
         /// <summary>What the running loop reads each time round, and how to apply it. Held in a
         /// field rather than captured, so a wider request can take the loop over - see below.</summary>
         private volatile ProgressRequest? pollRequest;
-        private volatile bool pollMerge;
 
         private void WaitForQueue(string dutyName, ProgressRequest request, ProgressQueueInfo? queue,
-            bool merge)
+            bool single)
         {
             int pending = queue?.Pending ?? 0;
             if (pending <= 0)
@@ -1651,16 +1872,13 @@ namespace PfPresets
             {
                 var current = pollRequest;
                 if (current == null || read.Players.Count > current.Players.Count)
-                {
                     pollRequest = read;
-                    pollMerge = merge;
-                }
+
                 return;
             }
 
             watchingQueue = true;
             pollRequest = read;
-            pollMerge = merge;
 
             int pollSec = Math.Clamp(queue?.PollAfterSec ?? 3, 2, 10);
 
@@ -1684,7 +1902,7 @@ namespace PfPresets
                         if (!result.IsOk || result.Value == null)
                             continue;
 
-                        if (!Apply(result.Value, dutyName, pollMerge))
+                        if (!Apply(result.Value, dutyName))
                             break;
 
                         int left = result.Value.Queue?.Pending ?? 0;

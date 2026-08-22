@@ -1153,12 +1153,13 @@ namespace PfPresets
             {
                 ImGui.Separator();
 
-                bool waiting = Ratings?.PlayerProgressPending(who) ?? false;
+                // CanFetchProgressFor has already established there is a fight here.
+                bool waiting = Ratings?.PlayerProgressPending(dutyName!, who) ?? false;
 
                 // The server's own per-character cooldown, which it applies whether or not the
                 // menu knows about it. Offering the press anyway would take it, drop it, and look
                 // exactly like a broken menu item.
-                TimeSpan cooling = Ratings?.PlayerRefreshWait(who) ?? TimeSpan.Zero;
+                TimeSpan cooling = Ratings?.PlayerRefreshWait(dutyName!, who) ?? TimeSpan.Zero;
                 bool blocked = waiting || cooling > TimeSpan.Zero;
 
                 // Disabled rather than omitted, unusually for this menu: an item vanishing is

@@ -159,6 +159,37 @@ namespace PfPresets
         }
 
         /// <summary>
+        /// How many of the eight seats this listing is actually recruiting for.
+        ///
+        /// CLOSED SEATS ARE AT THE END, which is both what the game settles a listing into and what
+        /// <see cref="WriteSlotFlagsToMemory"/> writes deliberately - so the count is where the
+        /// zeros start. Two ways of finding it, because they fail in different places:
+        ///
+        ///   * <see cref="activeSlotCount"/>, recorded when the preset was applied, is the one that
+        ///     knows the difference between a seat that was omitted and a seat somebody just left -
+        ///     both of which are a mask of zero by the time anybody looks.
+        ///   * counting back from the end covers everything else: a listing posted by hand, or one
+        ///     applied before the plugin was reloaded.
+        ///
+        /// The recorded count wins where there is one. The fallback is deliberately the cautious
+        /// reading of an ambiguous listing - a trailing zero is left closed rather than recruited
+        /// for, because filling a seat the user closed is the louder mistake of the two.
+        /// </summary>
+        private unsafe int ActiveSlotCount(ulong* pSlotFlags)
+        {
+            if (activeSlotCount > 0)
+                return Math.Clamp(activeSlotCount, 1, 8);
+
+            for (int i = 7; i >= 0; i--)
+            {
+                if (pSlotFlags[i] != 0)
+                    return i + 1;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
         /// Adjusts the current listing's per-slot job masks in StoredRecruitmentInfo:
         ///  - a slot locked to exactly one battle job widens to that job's sub-category
         ///    (White Mage -> regen healers, Red Mage -> casters, Viper -> melee);
@@ -166,6 +197,13 @@ namespace PfPresets
         ///    and the game reset it) falls back to the same auto-fill composition the Auto-Adjust
         ///    apply path uses, so the freed seat becomes whatever role the party actually needs.
         /// Multi-job role/preset filters are left untouched. Returns the number of slots changed.
+        ///
+        /// ONLY EVER SEATS THE LISTING IS RECRUITING FOR. A closed seat - one the preset omitted -
+        /// is a mask of zero, which is the same thing an emptied seat looks like, and this used to
+        /// read every one of them as "All" and auto-fill it. The effect was that omitting a slot
+        /// worked exactly until the first person left, at which point every omitted seat came back
+        /// and the listing started recruiting for roles the user had struck off it. Seats past the
+        /// count are not examined at all, so there is nothing there to resurrect.
         /// </summary>
         private unsafe int AdjustListingSlots()
         {
@@ -176,7 +214,9 @@ namespace PfPresets
             int changed = 0;
             List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)>? autoSlots = null;
 
-            for (int i = 0; i < 8; i++)
+            int active = ActiveSlotCount(pSlotFlags);
+
+            for (int i = 0; i < active; i++)
             {
                 ulong mask = pSlotFlags[i];
                 bool singleJob = mask != 0 && (mask & (mask - 1)) == 0; // exactly one bit set

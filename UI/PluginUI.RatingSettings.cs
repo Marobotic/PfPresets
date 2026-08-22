@@ -561,10 +561,12 @@ namespace PfPresets
         /// comes back, because "hidden" and "deleted" are very different promises.
         /// </summary>
         /// <summary>
-        /// Confirms before this character starts or stops being published to the party finder.
+        /// Confirms before this client starts or stops publishing the party it is sitting in.
         ///
-        /// Asked in both directions like the others, and the ON dialog is specific about the one
-        /// thing people will want to know: it publishes YOU, not the people sitting next to you.
+        /// Asked in both directions like the others, and the ON dialog is specific about the thing
+        /// people will not guess: this publishes the PARTY, not only you. Anybody who would rather
+        /// it did not has to be able to find that out here, before they turn it on, rather than
+        /// from somebody else's screen afterwards.
         /// </summary>
         private void AskThenSetCrowdsource(bool enabled)
         {
@@ -574,24 +576,26 @@ namespace PfPresets
             if (enabled)
             {
                 AskConfirm(
-                    "Share your spot in the party finder?",
-                    "While your party is listed, other people running this plugin will see you in it.",
+                    "Share who is in your party finder listing?",
+                    "While your party is listed, other people running this plugin will see who is "
+                    + "in it - the whole party, not only you.",
                     "Share it",
                     () =>
                     {
                         config.PfCrowdsourceEnabled = true;
                         config.Save();
                     },
-                    detail: "Sent: your name, world and job, filed against the listing's leader. "
-                        + "Nothing about anybody else in your party. It is withdrawn when the "
+                    detail: "Sent: the name, world and job of everybody in your party, filed "
+                        + "against the listing's leader. It is only ever sent while your party is "
+                        + "publicly listed, never for a private one; it is withdrawn when the "
                         + "listing ends, and the server forgets it within the hour regardless.",
                     danger: false);
                 return;
             }
 
             AskConfirm(
-                "Stop sharing your spot?",
-                "You will no longer appear to other people looking at your party's listing.",
+                "Stop sharing your listing's party?",
+                "Your party will no longer be shown to other people looking at its listing.",
                 "Stop sharing",
                 () =>
                 {
@@ -602,8 +606,9 @@ namespace PfPresets
                     // should not still be on somebody else's screen for the next hour.
                     Crowd?.Withdraw();
                 },
-                detail: "Anything currently published about you is taken down straight away. You "
-                    + "can still see other people who are sharing.");
+                detail: "Anything this client has published is taken down straight away - though "
+                    + "another member of the same party who is also sharing will still be "
+                    + "describing it. You can still see listings other people are sharing.");
         }
 
         private void AskThenSetBroadcast(bool enabled)
@@ -816,13 +821,15 @@ namespace PfPresets
 #if PFP_RATINGS
             if (config.ListingDetailsEnabled)
             {
-                DrawSetting("Share my spot in the party finder",
+                DrawSetting("Share who is in my party finder listing",
                     () => config.PfCrowdsourceEnabled,
                     AskThenSetCrowdsource,
-                    "While your party is listed, publishes YOU - your name, world and job - so "
-                    + "other people running this plugin can see you in that listing. Nothing about "
-                    + "anybody else in your party is sent. It comes down when the listing ends, "
-                    + "and the server forgets it within the hour either way.",
+                    "While your party is listed, publishes the party - each member's name, world "
+                    + "and job - so other people running this plugin can see who is already in "
+                    + "that listing. One person sharing is enough to describe the whole party, "
+                    + "which is what makes the panel opposite worth reading. Only a listed party "
+                    + "is ever sent; it comes down when the listing ends, and the server forgets "
+                    + "it within the hour either way.",
                     last: true);
             }
 #endif
@@ -905,28 +912,12 @@ namespace PfPresets
             EndSettingsSection();
         }
 
-        /// <summary>
-        /// The post about the plugin and where it is going.
-        ///
-        /// IT LIVES HERE BECAUSE THE ONE PLACE THAT LINKED IT IS GONE. The Vote tab carried it, and
-        /// the Vote tab only existed while the server said a poll was running - so with the poll
-        /// down there was no route from the plugin to the post at all. About is where somebody
-        /// already goes to read the changelog, which is the same errand.
-        /// </summary>
-        private const string BlogUrl = "https://pfa.marobotic.dev/blog";
-
         private void DrawAboutSettings()
         {
             BeginSettingsSection("About");
 
             if (DrawNeutralButton("View changelog##OpenChangelog", new Vector2(180, ButtonHeight)))
                 isChangelogVisible = true;
-
-            ImGui.Dummy(new Vector2(0, 8));
-            if (DrawNeutralButton("Read the update##OpenBlog", new Vector2(180, ButtonHeight)))
-                Dalamud.Utility.Util.OpenLink(BlogUrl);
-            if (ImGui.IsItemHovered())
-                PaddedTooltip("A post from the developer on where the plugin is going.\nOpens pfa.marobotic.dev/blog in your browser.");
 
             ImGui.Dummy(new Vector2(0, 8));
             if (DrawNeutralButton("Show welcome again##OpenWelcome", new Vector2(180, ButtonHeight)))
