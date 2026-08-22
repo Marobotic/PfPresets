@@ -320,67 +320,67 @@ namespace PfPresets
             leaderWorld = string.Empty;
 
             var snapshot = pfAutomation.GetSnapshot(frameCount);
-            if (!snapshot.IsRecruiting)
-                return false;
 
-            // Leading it ourselves is the unambiguous case: the listing is ours, so the key is us.
+            // THE RECRUIT TAB'S OWN ANSWER, AND NOTHING BESIDE IT. Whatever that tab is willing to
+            // show - your listing, or the listing of the party you are sitting in - is exactly what
+            // gets published, under exactly the leader it names. This used to be a second opinion
+            // assembled here out of party reads and captured listings, which is how the tab could
+            // be showing a party while the reporting half had decided there was no listing at all.
+            if (!snapshot.IsRecruiting)
+            {
+                Skipped("not in a listing");
+                return false;
+            }
+
+            // Leading it ourselves: the listing is ours, so the key is us.
             if (snapshot.IsLeader || pfAutomation.IsPartyLeader())
             {
                 var me = localIdentity();
                 if (me is not { IsValid: true })
+                {
+                    Skipped("own character not readable");
                     return false;
+                }
 
                 leaderName = me.Name;
                 leaderWorld = me.World;
                 return true;
             }
 
-            // A member of somebody else's listing. THE LEADER COMES FROM THE PARTY, not from the
-            // snapshot.
-            //
-            // This used to read snapshot.LeaderName and then match it against the party list by
-            // name. That name comes from the game's LastViewedListing - the listing this client
-            // last opened in a detail window - so it is there right after joining through the
-            // browser and gone once anything else has been looked at. The result was a report that
-            // fired for a minute or two after joining and then silently stopped for the rest of the
-            // listing, which reads from the outside as the feature not working at all: everybody in
-            // the party is running the plugin and the panel still knows nobody.
-            //
-            // The party knows who leads it at all times and needs no window to have been opened, so
-            // it is asked directly. Same character either way, so the key is the same string a
-            // viewer builds from the listing.
-            if (pfAutomation.TryGetPartyLeader(out string partyLeader, out uint leaderWorldId))
-            {
-                string partyLeaderWorld = worlds.GetWorldName(leaderWorldId);
-                if (!string.IsNullOrWhiteSpace(partyLeaderWorld))
-                {
-                    leaderName = partyLeader;
-                    leaderWorld = partyLeaderWorld;
-                    return true;
-                }
-            }
+            string world = snapshot.LeaderWorldId != 0
+                ? worlds.GetWorldName(snapshot.LeaderWorldId)
+                : string.Empty;
 
-            // The captured listing, as a fallback for the case the party read cannot cover: a
-            // cross-world party whose proxy has not filled in yet.
-            if (string.IsNullOrWhiteSpace(snapshot.LeaderName))
+            if (string.IsNullOrWhiteSpace(snapshot.LeaderName) || string.IsNullOrWhiteSpace(world))
+            {
+                Skipped($"leader not named by the snapshot (name='{snapshot.LeaderName}', "
+                    + $"worldId={snapshot.LeaderWorldId})");
                 return false;
-
-            foreach (var member in pfAutomation.GetOtherPartyMemberDetails())
-            {
-                if (!string.Equals(member.Name, snapshot.LeaderName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                string world = worlds.GetWorldName(member.HomeWorldId);
-                if (string.IsNullOrWhiteSpace(world))
-                    return false;
-
-                leaderName = member.Name;
-                leaderWorld = world;
-                return true;
             }
 
-            return false;
+            leaderName = snapshot.LeaderName;
+            leaderWorld = world;
+            return true;
         }
+
+        /// <summary>
+        /// Says once why nothing was published, and then stays quiet until the reason changes.
+        ///
+        /// This half of the plugin fails by doing nothing, which from the outside is identical to
+        /// it working and there being nobody to report - and telling those two apart by reading the
+        /// server's table afterwards has already cost more than one wrong diagnosis. A line in
+        /// /xllog naming the reason turns that into a question anybody can answer in a moment.
+        /// </summary>
+        private void Skipped(string why)
+        {
+            if (why == lastSkipReason)
+                return;
+
+            lastSkipReason = why;
+            log.Debug($"[PF] Not publishing: {why}.");
+        }
+
+        private string lastSkipReason = string.Empty;
 
         // ── Reading ───────────────────────────────────────────────
 

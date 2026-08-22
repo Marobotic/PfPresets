@@ -108,6 +108,19 @@ namespace PfPresets
         /// <summary>Name of the listing's leader, when someone else owns it and we've seen it.</summary>
         public string LeaderName { get; init; } = string.Empty;
 
+        /// <summary>
+        /// The leader's home world row id, beside their name, because a name on its own is not a
+        /// character - two worlds can hold the same one. An id rather than a name because turning
+        /// one into the other needs the world sheet, which lives in WorldHelper and not here.
+        ///
+        /// ONE ANSWER FOR EVERY CONSUMER. The recruit tab names the leader on screen and the
+        /// crowdsourcing publishes a party under that same leader; those two must agree exactly or
+        /// they are describing different listings. They used to work it out separately - the tab
+        /// from the listing the game last showed it, the reporting half from the party list - and
+        /// separately is how they came to disagree.
+        /// </summary>
+        public uint LeaderWorldId { get; init; }
+
         /// <summary>True when someone else is recruiting and we have no trustworthy read of their
         /// listing, so the card should say so instead of showing our own stale settings.</summary>
         public bool DetailsUnavailable { get; init; }
@@ -300,6 +313,12 @@ namespace PfPresets
             var viewed = agent->LastViewedListing;
             ulong partyLeaderId = GetPartyLeaderContentId();
 
+            // WHO LEADS THIS PARTY IS KNOWN EVEN WHEN ITS LISTING IS NOT. The party itself says so,
+            // and it says so without any window having been opened - unlike LastViewedListing
+            // below, which is only the leader's listing while it happens to be the one the game is
+            // holding. Read first, so both branches below carry the same answer.
+            bool havePartyLeader = TryGetPartyLeader(out string partyLeaderName, out uint partyLeaderWorldId);
+
             if (!CapturedListingIsUsable(partyLeaderId))
             {
                 return new RecruitmentSnapshot
@@ -307,6 +326,12 @@ namespace PfPresets
                     Activity = common.Activity,
                     IsRecruiting = common.IsRecruiting,
                     IsLeader = false,
+
+                    // Named even here. The details of the listing are what is unavailable; the
+                    // person leading the party is not, and the reporting half needs only them.
+                    LeaderName = havePartyLeader ? partyLeaderName : string.Empty,
+                    LeaderWorldId = havePartyLeader ? partyLeaderWorldId : 0,
+
                     DutyName = string.Empty,
                     Filled = filled,
                     SlotsTotal = filled.Count,
@@ -330,7 +355,12 @@ namespace PfPresets
                 Activity = common.Activity,
                 IsRecruiting = common.IsRecruiting,
                 IsLeader = false,
-                LeaderName = viewed.LeaderString.ToString() ?? string.Empty,
+                // The party's answer wins over the listing's: same character, but the party is
+                // current and the captured listing is a copy of a moment.
+                LeaderName = havePartyLeader
+                    ? partyLeaderName
+                    : viewed.LeaderString.ToString() ?? string.Empty,
+                LeaderWorldId = havePartyLeader ? partyLeaderWorldId : 0,
                 DutyName = viewedDutyName,
                 DutyRowId = viewed.DutyId,
                 Comment = CommentText.Decode(viewed.Comment),
