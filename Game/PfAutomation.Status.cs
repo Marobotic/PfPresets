@@ -430,6 +430,50 @@ namespace PfPresets
 
         /// <summary>The party leader's content id, or 0 when solo or unavailable. Used to tell
         /// whether a viewed listing belongs to the party we're actually in.</summary>
+        /// <summary>
+        /// The party leader's name and home world, read from the party itself.
+        ///
+        /// NOT FROM THE LISTING, and that is the whole point of it existing. The snapshot's
+        /// <c>LeaderName</c> comes from <c>agent-&gt;LastViewedListing</c> - whatever listing this
+        /// client last opened in a detail window - so it is populated only while the party's own
+        /// listing happens to still be the captured one. Somebody who joined a party through the
+        /// browser and then went about their business has an empty LeaderName within minutes, and
+        /// anything keyed on it silently stops working for them.
+        ///
+        /// The party is always there and always current, so this answers whenever there is a party
+        /// with a leader who is not us.
+        /// </summary>
+        /// <returns>False when solo, when the leader cannot be identified, or when the leader is
+        /// the local player - the caller knows its own name and world already.</returns>
+        public bool TryGetPartyLeader(out string name, out uint homeWorldId)
+        {
+            name = string.Empty;
+            homeWorldId = 0;
+
+            try
+            {
+                ulong leaderId = GetPartyLeaderContentId();
+                if (leaderId == 0 || leaderId == playerState.ContentId)
+                    return false;
+
+                foreach (var member in GetOtherPartyMemberDetails())
+                {
+                    if (member.ContentId != leaderId || member.IsSupportNpc)
+                        continue;
+
+                    name = member.Name;
+                    homeWorldId = member.HomeWorldId;
+                    return name.Length > 0 && homeWorldId != 0;
+                }
+            }
+            catch (Exception)
+            {
+                // A party read must never throw into the caller's loop; not knowing is an answer.
+            }
+
+            return false;
+        }
+
         private unsafe ulong GetPartyLeaderContentId()
         {
             var crossRealmProxy = FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyCrossRealm.Instance();

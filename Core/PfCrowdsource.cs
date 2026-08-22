@@ -329,13 +329,36 @@ namespace PfPresets
                 return true;
             }
 
+            // A member of somebody else's listing. THE LEADER COMES FROM THE PARTY, not from the
+            // snapshot.
+            //
+            // This used to read snapshot.LeaderName and then match it against the party list by
+            // name. That name comes from the game's LastViewedListing - the listing this client
+            // last opened in a detail window - so it is there right after joining through the
+            // browser and gone once anything else has been looked at. The result was a report that
+            // fired for a minute or two after joining and then silently stopped for the rest of the
+            // listing, which reads from the outside as the feature not working at all: everybody in
+            // the party is running the plugin and the panel still knows nobody.
+            //
+            // The party knows who leads it at all times and needs no window to have been opened, so
+            // it is asked directly. Same character either way, so the key is the same string a
+            // viewer builds from the listing.
+            if (pfAutomation.TryGetPartyLeader(out string partyLeader, out uint leaderWorldId))
+            {
+                string partyLeaderWorld = worlds.GetWorldName(leaderWorldId);
+                if (!string.IsNullOrWhiteSpace(partyLeaderWorld))
+                {
+                    leaderName = partyLeader;
+                    leaderWorld = partyLeaderWorld;
+                    return true;
+                }
+            }
+
+            // The captured listing, as a fallback for the case the party read cannot cover: a
+            // cross-world party whose proxy has not filled in yet.
             if (string.IsNullOrWhiteSpace(snapshot.LeaderName))
                 return false;
 
-            // A member of somebody else's listing. The name is known; the world comes from the
-            // party list, which carries a home world per member - matched by name rather than by a
-            // leader flag, because the cross-world party proxy does not expose one usefully and a
-            // name that is in the party is the leader we were just told about.
             foreach (var member in pfAutomation.GetOtherPartyMemberDetails())
             {
                 if (!string.Equals(member.Name, snapshot.LeaderName, StringComparison.OrdinalIgnoreCase))
