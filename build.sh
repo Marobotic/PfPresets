@@ -45,7 +45,27 @@ else
   OUT_ARG=" -o '$OUT_DIR'"
 fi
 
-BUILD_CMD="cd '$SCRIPT_DIR' && APPDATA=\$HOME/.xlcore/msbuild-appdata dotnet build PfPresets.csproj -c Release -p:EnableWindowsTargeting=true -p:EnableRatings=$ENABLE_RATINGS --no-incremental$OUT_ARG"
+# APPDATA IS ONLY SHIMMED WHERE THE SHIM ACTUALLY LEADS TO DALAMUD.
+#
+# The csproj finds Dalamud through $(appdata)\XIVLauncher\addon\Hooks\dev. On Linux there is no
+# APPDATA, so this points it at the xlcore symlink described in the header.
+#
+# Under git-bash on Windows there IS an APPDATA and it is already right. Overriding it made every
+# Dalamud type in the project unresolvable - 546 "type or namespace not found" errors, which reads
+# like the source is broken rather than the environment. package.sh calls this script, so it took
+# release packaging down with it.
+#
+# TESTED ON Dalamud.dll, NOT ON THE DIRECTORY. A build that runs with the wrong APPDATA still
+# creates $APPDATA/NuGet on its way to failing, so after one bad run the directory exists and a
+# directory test says "shim is present" forever after - which is how the first version of this
+# guard passed while changing nothing.
+if [ -f "$HOME/.xlcore/msbuild-appdata/XIVLauncher/addon/Hooks/dev/Dalamud.dll" ]; then
+  APPDATA_PREFIX="APPDATA=\$HOME/.xlcore/msbuild-appdata "
+else
+  APPDATA_PREFIX=""
+fi
+
+BUILD_CMD="cd '$SCRIPT_DIR' && ${APPDATA_PREFIX}dotnet build PfPresets.csproj -c Release -p:EnableWindowsTargeting=true -p:EnableRatings=$ENABLE_RATINGS --no-incremental$OUT_ARG"
 
 # --no-incremental for the same reason as build.bat: Dalamud only reloads a dev
 # plugin when the DLL's timestamp changes, so always force a fresh write.

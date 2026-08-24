@@ -32,7 +32,7 @@ namespace PfPresets
                 "Everyone's vote on you counts once. Rating the same person again used to stack another vote on top of the last one, so a group who play together every week piled up hundreds between them - a score of +300 could be eight people rather than three hundred.",
                 "Your vote is now a position, like a link aggregator: upvote somebody and you have upvoted them, however many times you press it.",
                 "You can change your mind whenever you like. Downvoting someone you upvoted moves your one vote across instead of adding to it, and there is no day to wait out first - what counts is the last thing you said.",
-                "Every vote is worth the same. An upvote is +1 and a downvote is -1, from anybody: no more half a vote for a friend or a quarter for a new account. A vote either counts or it is held, and held votes were always the part that stopped fake ones.",
+                "Every vote is worth the same. An upvote is +1 and a downvote is -1, from anybody: no more half a vote for a friend or a quarter for a new account. A vote from an account that has not earned its place yet simply doesn't count, which is what keeps fake ones out.",
                 "Existing scores were rebuilt to match. Almost nobody's percentage moved - the totals came down because the duplicates went, not because opinions changed.",
                 "Clears loads sixteen at a time and fetches the next sixteen as you scroll, instead of numbered pages. It also remembers where you were when you come back to the tab.",
                 "Clears arriving while you are reading no longer shove the list around. A button floats at the top of it instead, and pressing it takes you to the newest.",
