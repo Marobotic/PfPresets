@@ -2,7 +2,7 @@
   "Author": "Mayo Botic, Ultranova Violet",
   "Name": "PF Analysis",
   "InternalName": "PfPresets",
-  "AssemblyVersion": "3.5.1.0",
+  "AssemblyVersion": "3.5.1.1",
   "Description": "Manage your Party Finder recruitment and see who you are playing with. Save duty, objective, role and condition setups as presets and apply any of them in one click; watch your listing and party as it fills; and look up party members' progression and community ratings.",
   "Punchline": "Run your Party Finder: presets, party progression, and player lookups.",
   "Changelog": "The panel beside a party finder listing now shows who is already in that party - one person in it running the plugin is enough to fill it in for everyone looking. Recruiting on your own now lists you, with your own progression, instead of showing nothing until somebody joins. Fixes: progression no longer drops back to \"Fetch\" while the server has the answer, Update progress no longer silently swallows a press, and an omitted slot stays omitted after somebody leaves the party instead of being recruited for again.",

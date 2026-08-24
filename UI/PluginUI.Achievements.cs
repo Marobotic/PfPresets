@@ -1,5 +1,6 @@
 #if PFP_RATINGS
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -42,22 +43,61 @@ namespace PfPresets
         private const float FeedJobIconSize = 18f;
         private const float FeedActionHeight = 34f;
 
-        /// <summary>The pager's row, reserved out of the list's height when there is more than one
-        /// page.</summary>
-        /// <summary>
-        /// The strip the page numbers live in: the rule, the gap under it, the 30px cells, and a
-        /// gutter of air below them.
-        ///
-        /// Summed rather than guessed at, because this number is BOTH the height reserved off the
-        /// bottom of the scroll region and the offset the pager positions itself from. A constant
-        /// that only matched one of those is what put the numbers against the bottom edge.
-        /// </summary>
-        private const float FeedPagerCell = 30f;
-        private const float FeedPagerHeight = 1f + Space.Gap + FeedPagerCell + Space.Gutter;
-
         /// <summary>Gap between the text column and the chip stack on the right, so a long fight
         /// name stops rather than running under a timestamp.</summary>
         private const float FeedRightGutter = 16f;
+
+        /// <summary>
+        /// How close to the bottom the list gets before the next page is asked for.
+        ///
+        /// A whole screen's worth, so the page is already on its way while there is still a
+        /// screen of clears to read - which is the difference between a feed that goes on and a
+        /// feed that stops at the bottom and then jerks.
+        /// </summary>
+        private static float FeedLoadMoreMargin => ImGui.GetWindowHeight();
+
+        /// <summary>The two halves of this tab: everybody's clears, and your own.</summary>
+        private enum ClearsView
+        {
+            Broadcast = 0,
+            Mine = 1,
+        }
+
+        private ClearsView clearsView = ClearsView.Broadcast;
+
+        /// <summary>In <see cref="ClearsView"/>'s own order, and held rather than built - this is
+        /// read on every frame the tab is open.</summary>
+        private static readonly string[] ClearsViewLabels = { "Broadcast", "My clears" };
+
+        /// <summary>
+        /// Where one of the two lists had got to, and what to do about it on the next frame.
+        ///
+        /// One per list rather than one shared: they are two different lists at two different
+        /// depths, and remembering a single number would put the feed back at wherever "My clears"
+        /// happened to be left.
+        /// </summary>
+        private sealed class PostListScroll
+        {
+            public float Y;
+
+            /// <summary>Put it back where it was: the tab is being returned to.</summary>
+            public bool Restore;
+
+            /// <summary>Take it to the top: the list underneath has been replaced.</summary>
+            public bool ToTop;
+        }
+
+        private readonly PostListScroll broadcastScroll = new();
+        private readonly PostListScroll mineScroll = new();
+
+        /// <summary>
+        /// The last frame this tab drew, so returning to it can be told apart from staying on it.
+        ///
+        /// Scroll position is remembered rather than reset, and "remembered" only means anything if
+        /// the moment of coming back is identifiable - ImGui hands out no such event, so it is
+        /// derived from the frame counter skipping.
+        /// </summary>
+        private int feedLastFrame = -2;
 
         /// <summary>
         /// The fight's own art, by the roster's slug.
@@ -66,8 +106,6 @@ namespace PfPresets
         /// next patch draws a crown in a frame until an image is dropped in - which needs no code
         /// change, only a file named after the slug.
         /// </summary>
-        private float feedScrollY;
-        private bool feedScrollToTop;
 
         /// <summary>
         /// The fight's own art.
@@ -110,13 +148,20 @@ namespace PfPresets
             if (ratings == null || !config.CommunityEnabled)
                 return;
 
+            // Both lists are kept fresh whichever half is showing, so the pill and the tab strip
+            // are right the moment somebody switches rather than two minutes afterwards. Both are
+            // reads of our own tables and cost nobody a provider lookup.
             ratings.EnsureFeedLoaded();
+            ratings.EnsureMyClearsLoaded();
 
-            // Being here is what reads the feed - not clicking the tab, and not scrolling to the
-            // bottom of it. Somebody who opens the tab, sees the top three posts and leaves has
-            // been told what the badge was for, and asking them to scroll before it clears would
-            // make the number a chore rather than a notice. See MarkFeedSeen.
-            ratings.MarkFeedSeen();
+            // Coming back to the tab, as opposed to sitting on it. See feedLastFrame.
+            int frame = ImGui.GetFrameCount();
+            if (frame - feedLastFrame > 1)
+            {
+                broadcastScroll.Restore = true;
+                mineScroll.Restore = true;
+            }
+            feedLastFrame = frame;
 
             float avail = ImGui.GetContentRegionAvail().X;
             float width = Math.Max(160f, avail - FeedMargin * 2f);
@@ -126,16 +171,57 @@ namespace PfPresets
             // THE TAB'S OWN TOP MARGIN. Every other tab gets this for free from the toolbar at the
             // top of it - the search field is centred in a 64px bar, so there is a gutter of air
             // above the first heading. Clears has no toolbar, so its heading was the first thing in
-            // the body and sat hard against the header strip: seven pixels below a divider, and
-            // twenty above the card it belongs to.
+            // the body and sat hard against the header strip.
             ImGui.Dummy(new Vector2(0, Space.Gutter));
 
-            DrawFeedHeader();
-            DrawNewPostsPill(ratings, width);
+            // THE CHOICE DISAPPEARS WHEN THERE IS NOTHING TO CHOOSE. A tab strip whose second half
+            // is empty is a strip advertising a dead end, and for anybody who has not cleared
+            // anything since installing the plugin it would be one. It arrives with their first
+            // clear and not before.
+            bool haveMine = ratings.MyClearsCount > 0;
+            if (!haveMine)
+                clearsView = ClearsView.Broadcast;
+
+            // Same heading as "Your profile" and "Everyone you have met" - one primitive, so the
+            // three cannot drift into three sizes.
+            DrawListHeading(clearsView == ClearsView.Mine ? "My clears" : "Recent clears");
+
+            if (haveMine)
+            {
+                int selected = (int)clearsView;
+                if (DrawSegmentedControl("clearsview", ClearsViewLabels, ref selected, width))
+                {
+                    clearsView = (ClearsView)selected;
+
+                    // Whichever list is coming back should land where it was left, not at whatever
+                    // offset the other one happens to be sitting at.
+                    broadcastScroll.Restore = true;
+                    mineScroll.Restore = true;
+                }
+
+                ImGui.Dummy(new Vector2(0, Space.Gap));
+            }
+
+            if (clearsView == ClearsView.Mine)
+            {
+                // NO MARK CLAIMED HERE. The badge counts other people's clears, and somebody
+                // reading their own has not been shown any - see the note above MarkFeedSeen about
+                // the one thing that number must never do.
+                DrawMyClearsList(ratings, width);
+                ImGui.Unindent(FeedMargin);
+                return;
+            }
+
+            // Being here is what reads the feed - not clicking the tab, and not scrolling to the
+            // bottom of it. Somebody who opens the tab, sees the top three posts and leaves has
+            // been told what the badge was for, and asking them to scroll before it clears would
+            // make the number a chore rather than a notice. See MarkFeedSeen.
+            ratings.MarkFeedSeen();
 
             // Already at the top: nothing to lose your place in, so newer posts just appear. The
-            // pill is for somebody who has scrolled away.
-            if (ratings.HasNewPosts && feedScrollY <= 2f)
+            // pill is for somebody who has scrolled away, and is drawn inside the list itself so it
+            // can float over whatever they are reading - see DrawFloatingNewPostsPill.
+            if (ratings.HasNewPosts && broadcastScroll.Y <= 2f)
                 ratings.ApplyNewPosts();
 
             var posts = ratings.Feed();
@@ -146,226 +232,242 @@ namespace PfPresets
             }
             else
             {
-                bool paged = ratings.FeedPages > 1;
-                // The pager already carries its own bottom gutter, so the list stops exactly
-                // where the pager starts - it used to subtract a second margin on top and then
-                // lose it again to item spacing.
-                float listBottom = paged ? -FeedPagerHeight : -Space.Gutter;
+                // The service asks for the top when it has replaced the list under somebody - their
+                // own clear landing, broadcasting switched off. Taken here rather than inside the
+                // list so the flag cannot be swallowed by a frame the feed did not draw.
+                if (ratings.TakeFeedScrollRequest())
+                    broadcastScroll.ToTop = true;
 
-                ImGui.BeginChild("##FeedScroll", new Vector2(width, listBottom), false);
-                try
-                {
-                    feedScrollY = ImGui.GetScrollY();
-
-                    if (feedScrollToTop || ratings.TakeFeedScrollRequest())
+                DrawPostList("##FeedScroll", posts, width, broadcastScroll,
+                    ratings.FeedHasMore, ratings.FeedLoadingMore, ratings.LoadMoreFeed,
+                    "That's every clear on the feed.",
+                    newPosts: ratings.HasNewPosts,
+                    onNewPosts: () =>
                     {
-                        ImGui.SetScrollY(0f);
-                        feedScrollToTop = false;
-                    }
+                        ratings.ApplyNewPosts();
 
-                    // Measured HERE, not outside, because this is the number that knows whether a
-                    // scrollbar is taking a slice out of the right-hand side. Measuring outside is
-                    // what put every card's timestamp underneath the bar - "Today 12:3" and then
-                    // nothing. Card height does not depend on width, so the scrollbar's appearance
-                    // cannot feed back into the layout and make it oscillate.
-                    float region = ImGui.GetContentRegionAvail().X;
-
-                    // TWO ACROSS ON A TABLET, one on a phone.
-                    //
-                    // A clear is a short card - a name, a fight, a time, two buttons - and a single
-                    // column of them across a 900px body was three lines of text with half the row
-                    // empty beside them. Two columns fit twice as many clears on screen without
-                    // making any of them wider than they have anything to put in.
-                    int columns = region >= FeedTwoColumnWidth ? 2 : 1;
-                    float cardWidth = columns == 1
-                        ? region
-                        : (region - FeedGap) * 0.5f;
-
-                    // Zero spacing for the grid: the row's height is measured from where the
-                    // cursor lands after a card, and ImGui's own gap between items would be counted
-                    // into it on top of FeedGap - two gaps where the layout intends one.
-                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
-
-                    for (int i = 0; i < posts.Count; i += columns)
-                    {
-                        // The row is as tall as its tallest card, and the next row starts below
-                        // that. Laid out by letting each card advance the cursor itself, the second
-                        // card of a pair would start where the first one ended.
-                        float rowTop = ImGui.GetCursorPosY();
-                        float rowHeight = 0f;
-
-                        for (int c = 0; c < columns && i + c < posts.Count; c++)
-                        {
-                            ImGui.SetCursorPos(new Vector2(c * (cardWidth + FeedGap), rowTop));
-                            DrawAchievementCard(posts[i + c], cardWidth);
-                            rowHeight = MathF.Max(rowHeight, ImGui.GetCursorPosY() - rowTop);
-                        }
-
-                        ImGui.SetCursorPos(new Vector2(0, rowTop + rowHeight + FeedGap));
-                    }
-
-                    ImGui.PopStyleVar();
-                }
-                finally
-                {
-                    ImGui.EndChild();
-                }
-
-                if (paged)
-                    DrawFeedPager(ratings, width);
+                        // The list underneath has just been replaced with a newer one, so it is
+                        // read from the top. Set on the feed's own scroll state rather than a
+                        // shared flag: the two halves of this tab remember their places apart.
+                        broadcastScroll.ToTop = true;
+                    });
             }
 
             ImGui.Unindent(FeedMargin);
         }
 
         /// <summary>
-        /// Page numbers, under the list.
+        /// Your own clears, as this server recorded them - the same posts the feed carries,
+        /// filtered to you.
         ///
-        /// Drawn in the same language as everything else here - flat, ruled, zero rounding, the
-        /// current page filled with the accent - rather than as a row of ImGui buttons, which would
-        /// be the one place in this tab with chrome nobody else has.
+        /// NOT THE PROFILE CARD'S CLEARS, which are what Tomestone and FFLogs say you have ever
+        /// killed. This is the shorter and more particular list: what the plugin was running for,
+        /// checked, and posted. See the header on RatingService.MyClears.cs for why the two are
+        /// kept apart rather than merged into one "clears" idea.
         ///
-        /// Only appears when there is a second page. A pager showing "1" is a control that has
-        /// never had anything to do.
+        /// Drawn with the feed's own card. The card already knows what to do with a post of your
+        /// own - the heart is not offered, because the server would refuse it - so there is nothing
+        /// to special-case here and one renderer to keep right.
         /// </summary>
-        private void DrawFeedPager(RatingService ratings, float width)
+        private void DrawMyClearsList(RatingService ratings, float width)
         {
-            var dl = ImGui.GetWindowDrawList();
+            var posts = ratings.MyClears();
 
-            // PLACED FROM THE BOTTOM, not flowed to it. Flowed, ImGui adds its item spacing after
-            // the scroll child and after each spacer in here - a dozen pixels the arithmetic never
-            // saw - so the numbers drifted down until they were touching the bottom edge of the
-            // window with nothing under them.
-            ImGui.SetCursorPosY(ImGui.GetWindowHeight() - FeedPagerHeight);
-
-            Vector2 origin = ImGui.GetCursorScreenPos();
-
-            dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + 1f),
-                ImGui.ColorConvertFloat4ToU32(RuleHair));
-
-            int pages = ratings.FeedPages;
-            int current = ratings.FeedPage;
-
-            // A window of pages around the current one, so a feed with forty pages does not draw
-            // forty buttons.
-            int from = Math.Max(0, Math.Min(current - 2, pages - 5));
-            int to = Math.Min(pages - 1, Math.Max(current + 2, 4));
-
-            // NUMBERS ONLY. The row used to be bracketed by < and >, which is two more controls
-            // for a job the numbers already do - every page they could reach is sitting right
-            // there, named, one press away. They also went dead at the ends, so a two-page feed
-            // showed four cells and two of them were furniture.
-            const float cell = FeedPagerCell;
-            const float gap = 4f;
-            int shown = to - from + 1;
-            float total = (cell + gap) * shown - gap;
-
-            float x = origin.X + Math.Max(0f, (width - total) * 0.5f);
-            float y = origin.Y + 1f + Space.Gap;
-
-            for (int p = from; p <= to; p++)
+            if (posts.Count == 0)
             {
-                int target = p;
-                x += DrawPagerCell(dl, x, y, cell, (p + 1).ToString(), true, p == current,
-                    () => ratings.ShowFeedPage(target)) + gap;
+                // Only reachable in the moment between the strip appearing and a read emptying the
+                // list - the strip is not drawn at all until there is something behind it.
+                using (UiBodyFont.Push())
+                    ImGui.TextColored(Faint, "Nothing recorded yet.");
+                return;
             }
 
-            // The strip's own height, claimed so nothing after it overlaps - there is nothing
-            // after it today, and a region that does not account for what it drew is the kind of
-            // thing that only shows up when something is added below.
-            ImGui.SetCursorScreenPos(origin);
-            ImGui.Dummy(new Vector2(width, FeedPagerHeight));
-        }
-
-        /// <summary>One square in the pager. Returns its width so the row can be laid out by
-        /// walking it.</summary>
-        private float DrawPagerCell(ImDrawListPtr dl, float x, float y, float size, string label,
-            bool enabled, bool active, Action onClick)
-        {
-            var min = new Vector2(x, y);
-            var max = new Vector2(x + size, y + size);
-
-            ImGui.SetCursorScreenPos(min);
-            ImGui.InvisibleButton($"##page{label}{x:F0}", new Vector2(size, size));
-
-            bool hovered = enabled && ImGui.IsItemHovered();
-            if (enabled && ImGui.IsItemClicked())
-                onClick();
-
-            if (active)
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
-            else if (hovered)
-                dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
-
-            dl.AddRect(min, max,
-                ImGui.ColorConvertFloat4ToU32(active ? Accent : RuleStrong),
-                Radius.Small, ImDrawFlags.None, 1f);
-
-            var colour = active ? OnAccent : enabled ? (hovered ? Ink : Dim) : Faint;
-
-            Vector2 text = ImGui.CalcTextSize(label);
-            dl.AddText(new Vector2(min.X + (size - text.X) * 0.5f, min.Y + (size - text.Y) * 0.5f),
-                ImGui.ColorConvertFloat4ToU32(colour), label);
-
-            return size;
+            DrawPostList("##MyClearsScroll", posts, width, mineScroll,
+                ratings.MyClearsHasMore, ratings.MyClearsLoadingMore, ratings.LoadMoreMyClears,
+                "That's every clear this server has of yours.");
         }
 
         /// <summary>
-        /// The one line above the feed.
+        /// A scrolling column of clear cards that loads more as it is scrolled, and remembers where
+        /// it was.
         ///
-        /// No refresh button. The feed refreshes itself, and a button that says "Refresh" parked
-        /// permanently in the corner is a piece of plumbing showing through the floor - nobody
-        /// presses refresh on a feed unless it has already failed them. What replaces it appears
-        /// only when there is something to press it for: see DrawNewPostsPill.
+        /// One implementation for both halves of the tab. They differ only in which list they are
+        /// of and what the bottom of it says; everything that was fiddly to get right - the grid's
+        /// row heights, when to ask for another page, the three things a scroll position can mean -
+        /// is the same problem twice and was worth solving once.
         /// </summary>
-        /// <summary>
-        /// The one line above the feed: the plugin's own section heading, at the feed's own width.
-        ///
-        /// Drawn here rather than through DrawListHeading only because that one rules to the
-        /// content region's edge, and the feed keeps a margin the content region does not know
-        /// about - so the line ran a margin's width past the cards under it. Same face, same
-        /// tracking, same rule; just told where to stop.
-        /// </summary>
-        private void DrawFeedHeader()
+        private void DrawPostList(string id, IReadOnlyList<AchievementPost> posts, float width,
+            PostListScroll scroll, bool hasMore, bool loadingMore, Action loadMore, string endNote,
+            bool newPosts = false, Action? onNewPosts = null)
         {
-            ImGui.Dummy(new Vector2(0, FeedMargin));
-
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 p = ImGui.GetCursorScreenPos();
-            float width = ImGui.GetContentRegionAvail().X;
-
-            dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + 2f),
-                ImGui.ColorConvertFloat4ToU32(RuleStrong));
-
-            ImGui.Dummy(new Vector2(0, 10));
-
-            using (UiHeadingFont.Push())
+            ImGui.BeginChild(id, new Vector2(width, -Space.Gutter), false);
+            try
             {
+                // WHERE THEY WERE, in three cases and this order.
+                //
+                // A list that has been replaced from the top goes to the top - the whole reason it
+                // was replaced is that something above them changed. A list being returned to is
+                // put back where it was left, because the pages they scrolled through are still
+                // loaded and still say the same thing. Every other frame simply records the
+                // position, which is what makes the second case possible at all.
+                if (scroll.ToTop)
+                {
+                    ImGui.SetScrollY(0f);
+                    scroll.Y = 0f;
+                    scroll.ToTop = false;
+                    scroll.Restore = false;
+                }
+                else if (scroll.Restore)
+                {
+                    // Clamped by ImGui against the content it can see, so a list that came back
+                    // shorter lands at its own bottom rather than past it.
+                    ImGui.SetScrollY(scroll.Y);
+                    scroll.Restore = false;
+                }
+                else
+                {
+                    scroll.Y = ImGui.GetScrollY();
+                }
+
+                // Measured HERE, not outside, because this is the number that knows whether a
+                // scrollbar is taking a slice out of the right-hand side. Measuring outside is what
+                // put every card's timestamp underneath the bar - "Today 12:3" and then nothing.
+                // Card height does not depend on width, so the scrollbar's appearance cannot feed
+                // back into the layout and make it oscillate.
+                float region = ImGui.GetContentRegionAvail().X;
+
+                // TWO ACROSS ON A TABLET, one on a phone.
+                //
+                // A clear is a short card - a name, a fight, a time, two buttons - and a single
+                // column of them across a 900px body was three lines of text with half the row
+                // empty beside them. Two columns fit twice as many clears on screen without making
+                // any of them wider than they have anything to put in.
+                int columns = region >= FeedTwoColumnWidth ? 2 : 1;
+                float cardWidth = columns == 1
+                    ? region
+                    : (region - FeedGap) * 0.5f;
+
+                // Zero spacing for the grid: the row's height is measured from where the cursor
+                // lands after a card, and ImGui's own gap between items would be counted into it on
+                // top of FeedGap - two gaps where the layout intends one.
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+
+                for (int i = 0; i < posts.Count; i += columns)
+                {
+                    // The row is as tall as its tallest card, and the next row starts below that.
+                    // Laid out by letting each card advance the cursor itself, the second card of a
+                    // pair would start where the first one ended.
+                    float rowTop = ImGui.GetCursorPosY();
+                    float rowHeight = 0f;
+
+                    for (int c = 0; c < columns && i + c < posts.Count; c++)
+                    {
+                        ImGui.SetCursorPos(new Vector2(c * (cardWidth + FeedGap), rowTop));
+                        DrawAchievementCard(posts[i + c], cardWidth);
+                        rowHeight = MathF.Max(rowHeight, ImGui.GetCursorPosY() - rowTop);
+                    }
+
+                    ImGui.SetCursorPos(new Vector2(0, rowTop + rowHeight + FeedGap));
+                }
+
+                ImGui.PopStyleVar();
+
+                DrawListTail(loadingMore, hasMore, posts.Count, endNote, region);
+
+                // ASKED FOR HERE, at the bottom of the list, because this is the only place that
+                // knows how much of it is left. Reading the scroll before the cards are laid out
+                // would be reading last frame's content height, which on the frame a page lands is
+                // exactly one page out of date - and that is the frame this decision is made on.
+                //
+                // Safe every frame: the load calls keep their own in-flight guard and return
+                // immediately once there is nothing more to give.
+                if (hasMore && ImGui.GetScrollMaxY() - ImGui.GetScrollY() < FeedLoadMoreMargin)
+                    loadMore();
+
+                // LAST, and inside the child. See the note on the pill itself for why both of
+                // those are load-bearing rather than tidiness.
+                if (newPosts && onNewPosts != null)
+                    DrawFloatingNewPostsPill(region, onNewPosts);
+            }
+            finally
+            {
+                ImGui.EndChild();
+            }
+        }
+
+        /// <summary>
+        /// The foot of a list: whether there is more coming, or that there is not.
+        ///
+        /// Both lines exist for the same reason. A list that loads as you scroll and then simply
+        /// stops gives no way to tell "the end" from "still loading" from "broken", and the reader
+        /// is left holding the scroll wheel to find out which. Neither line is a button: there is
+        /// nothing to press, because scrolling is the gesture that asks.
+        /// </summary>
+        private void DrawListTail(bool loadingMore, bool hasMore, int loaded, string endNote,
+            float width)
+        {
+            if (loadingMore)
+            {
+                DrawListTailNote("Loading more clears...", width);
+                return;
+            }
+
+            // Only once there has been enough to scroll through. On a list of six the bottom is
+            // visible from the top, and announcing it would be telling somebody something they can
+            // already see.
+            if (!hasMore && loaded > 12)
+                DrawListTailNote(endNote, width);
+        }
+
+        private void DrawListTailNote(string text, float width)
+        {
+            ImGui.Dummy(new Vector2(0, Space.Gap));
+
+            using (UiCaptionFont.Push())
+            {
+                var dl = ImGui.GetWindowDrawList();
                 Vector2 at = ImGui.GetCursorScreenPos();
-                float used = DrawTrackedCaps(dl, at, "Recent clears", Dim);
-                ImGui.Dummy(new Vector2(used, ImGui.GetTextLineHeight()));
+                Vector2 size = ImGui.CalcTextSize(text);
+
+                dl.AddText(new Vector2(at.X + MathF.Max(0f, (width - size.X) * 0.5f), at.Y),
+                    ImGui.ColorConvertFloat4ToU32(Faint), text);
+
+                ImGui.Dummy(new Vector2(width, size.Y));
             }
 
-            ImGui.Dummy(new Vector2(0, 10));
+            ImGui.Dummy(new Vector2(0, Space.Gutter));
         }
 
+
         /// <summary>
-        /// Newer posts, waiting.
+        /// Newer clears, waiting - floating over the top of the list wherever it has been scrolled
+        /// to.
         ///
         /// The poll does not replace the list under somebody who is reading it. When it finds
-        /// something new it holds it and this appears - press it and the feed takes the newer
-        /// posts and goes back to the top, and the pill is gone until the next time. That is the
-        /// only refresh control in the tab and it exists only while it has a reason to.
+        /// something new it holds it and this appears; press it and the feed takes the newer posts
+        /// and goes back to the top, and it is gone until the next time. That is the only refresh
+        /// control in the tab and it exists only while it has a reason to.
+        ///
+        /// DRAWN INSIDE THE SCROLL REGION, LAST, AND PINNED TO THE SCROLL OFFSET. All three matter:
+        ///
+        ///   inside  - a widget submitted to the parent window cannot be clicked where a child
+        ///             window covers it. The child owns the pointer inside its own rectangle, so an
+        ///             overlay drawn outside it is decoration that eats presses. That is why the
+        ///             earlier version sat in the gap ABOVE the list rather than over it.
+        ///   last    - within one window ImGui gives the hover to the most recently submitted item,
+        ///             so this takes the click in preference to whatever card is underneath it.
+        ///   pinned  - positioned at GetScrollY() rather than at the top of the content, so it
+        ///             stays put on screen while the list moves behind it.
+        ///
+        /// Only ever while scrolled away from the top: at the top there is nothing to lose your
+        /// place in, and the tab applies newer posts silently instead - see the caller.
         /// </summary>
-        private void DrawNewPostsPill(RatingService ratings, float width)
+        private void DrawFloatingNewPostsPill(float width, Action onPressed)
         {
-            if (!ratings.HasNewPosts)
-                return;
-
             var dl = ImGui.GetWindowDrawList();
 
             const string label = "New clears";
-            const float height = 26f;
+            const float height = 30f;
 
             float glyph;
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
@@ -375,47 +477,50 @@ namespace PfPresets
             using (UiCaptionFont.Push())
                 text = ImGui.CalcTextSize(label).X;
 
-            float pillWidth = 14f + glyph + 7f + text + 14f;
+            float pillWidth = 16f + glyph + 8f + text + 16f;
 
-            // In the gap between the rule and the list rather than floating over it. Overlapping
-            // a scrolling child means fighting it for the pointer, and the twenty pixels the list
-            // moves down are worth rather less than a button that reliably takes a click.
-            Vector2 origin = ImGui.GetCursorScreenPos();
-            float x = origin.X + (width - pillWidth) * 0.5f;
+            // Where the cursor was, so none of this disturbs the list's own layout.
+            Vector2 resume = ImGui.GetCursorPos();
 
-            ImGui.SetCursorScreenPos(new Vector2(x, origin.Y));
+            ImGui.SetCursorPos(new Vector2(
+                MathF.Max(0f, (width - pillWidth) * 0.5f),
+                ImGui.GetScrollY() + 10f));
+
+            Vector2 min = ImGui.GetCursorScreenPos();
             ImGui.InvisibleButton("##feedNewPosts", new Vector2(pillWidth, height));
 
             bool hovered = ImGui.IsItemHovered();
             if (ImGui.IsItemClicked())
-            {
-                ratings.ApplyNewPosts();
-                feedScrollToTop = true;
-            }
+                onPressed();
 
-            var min = new Vector2(x, origin.Y);
-            var max = new Vector2(x + pillWidth, origin.Y + height);
+            var max = new Vector2(min.X + pillWidth, min.Y + height);
+            float corner = height * 0.5f;
 
+            // A capsule with a shadow under it, because it is the one thing on this tab that is
+            // floating rather than laid out - and something hovering over a list has to look like
+            // it is above the list rather than punched into it.
+            dl.AddRectFilled(new Vector2(min.X, min.Y + 2f), new Vector2(max.X, max.Y + 2f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.35f)), corner);
             dl.AddRectFilled(min, max,
-                ImGui.ColorConvertFloat4ToU32(hovered ? AccentHover : Accent));
+                ImGui.ColorConvertFloat4ToU32(hovered ? AccentHover : Accent), corner);
 
             uint ink = ImGui.ColorConvertFloat4ToU32(OnAccent);
-            float midY = origin.Y + height * 0.5f;
+            float midY = min.Y + height * 0.5f;
 
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
             {
                 string arrow = FontAwesomeIcon.ArrowUp.ToIconString();
                 Vector2 gs = ImGui.CalcTextSize(arrow);
-                dl.AddText(new Vector2(x + 14f, midY - gs.Y * 0.5f), ink, arrow);
+                dl.AddText(new Vector2(min.X + 16f, midY - gs.Y * 0.5f), ink, arrow);
             }
 
             using (UiCaptionFont.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(label);
-                dl.AddText(new Vector2(x + 14f + glyph + 7f, midY - ts.Y * 0.5f), ink, label);
+                dl.AddText(new Vector2(min.X + 16f + glyph + 8f, midY - ts.Y * 0.5f), ink, label);
             }
 
-            ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + height + 10f));
+            ImGui.SetCursorPos(resume);
         }
 
         private void DrawFeedEmpty(RatingService ratings, float width)

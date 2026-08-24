@@ -91,27 +91,71 @@ play with them again and little else, and a five-point scale invited deliberatio
 doesn't support. Two options also give a brigade far less room to nudge a score without it being
 obvious.
 
-Scores are reported as the **share of votes that are positive**, raw and weighted — see
+Scores are reported as the **share of votes that are positive**, and as a net tally — see
 `presentAggregate` in the backend's `weights.js`.
 
-## Trust weighting
+## One vote per person, per person
+
+**Each voter holds exactly one vote on each target.** Casting again replaces it. Upvoting somebody
+you have already upvoted changes nothing at all; downvoting them moves your single vote from the up
+column to the down column. It works the way a link aggregator does, and the most recent press is the
+one that counts.
+
+Changing your mind is not rate-limited. The daily ceiling and the shared-duty claim govern *having*
+an opinion about somebody; neither applies to revising one you have already given, because a
+revision cannot inflate anything — `applyVote` subtracts the previous position before adding the new
+one, so a thousand flips leave the totals where one vote left them.
+
+The first vote still needs a shared duty. That is what establishes you met the person at all.
+
+Backend: `applyVote` in `db.js`, the `revising` branch in `submitVote`, and migration
+`042_one_vote_per_pair.sql` for the historical collapse.
+
+## Weighting
 
 ```
-weight = 1.0 × social × repeat
-
-  social  0.5 for a friend or FC member, else 1.0
-  repeat  0.1 for the 2nd+ rating of the same target by the same voter, else 1.0
+weight = 1.0, always
 ```
 
-Multiplicative, so a friend's repeat vote lands at 0.05. The stacking is intentional: a friend
-group rating each other repeatedly is the exact pattern the engine exists to flatten.
+**Every counted vote is the same size**, up or down, from anybody. This used to be multiplicative —
+half for a friend, a quarter for an identity with no history, a tenth for a repeat — and the
+fractions were removed in migration `045_one_vote_one_weight.sql`. They produced numbers nobody
+could check: six people upvoting somebody and one downvoting them scored 8, because the downvote
+weighed 0.25 and `round(8 − 0.25)` is 8. The downvoter was simply not in the number.
 
-The weight is always computed **server-side** from the server's own ledger. The client sends a
-social-link claim, never a weight.
+A vote is now **all or nothing**: full strength, or held. There is no third thing that counts a
+little.
 
-The friend/FC link is detected by `Game/SocialLinkResolver.cs` **while the duty is still running**
-and stored on the encounter. It cannot be worked out afterwards — once the duty ends the party is
-gone and with it the members' FC tags.
+The protection the fractions provided has not gone with them — it was always mostly elsewhere. A
+vote from an identity that has not engaged with `POLICY.votesBeforeCounting` (16) different people
+is **held**: kept in full, applied to nobody, released the moment it qualifies. That is what stops a
+sybil, and it covers the attack that actually happened — on 2026-08-10 nineteen identities were
+minted from one address and each voted on exactly one character. Every one of those votes is held
+today. A held vote beats a quarter-vote, because a quarter still moves a score.
+
+What the trade costs: an attacker patient enough to have each identity rate sixteen people first now
+lands at full strength rather than a quarter. That is sixteen times more expensive to mount than the
+attack that happened, and the age requirement no longer applies to it. If it stops looking like the
+right trade, the fix is to **hold** votes from identities under a day old, not to bring fractions
+back.
+
+The weight is still computed **server-side**. The client sends a social-link claim, never a weight.
+
+The friend/FC link is still detected by `Game/SocialLinkResolver.cs` **while the duty is still
+running** and stored on the encounter — it cannot be worked out afterwards, once the duty ends the
+party is gone and with it the members' FC tags. It no longer scales anything, and is kept because it
+is a real signal for a moderator looking at a suspicious cluster.
+
+## Two totals, and they mean different things
+
+| Figure | Source | Question it answers |
+|---|---|---|
+| A player's score | `aggregates` | What do people currently think of them — one vote per voter |
+| Votes cast, all time | `vote_totals` | How much has the rating system been used |
+
+`vote_totals` only ever goes up. A recast increments it while moving nobody's score, because a vote
+that has happened does not stop having happened. This is why the dashboard's all-time figure is
+larger than the sum of everybody's standing. See migration `046_vote_totals.sql`.
 
 ---
 

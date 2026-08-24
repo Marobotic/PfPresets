@@ -41,9 +41,53 @@ namespace PfPresets
         private DateTime feedReadAt = DateTime.MinValue;
         private int feedInFlight;
 
-        /// <summary>Which page is on screen, and how many there are.</summary>
-        public int FeedPage { get; private set; }
-        public int FeedPages { get; private set; } = 1;
+        // ── How the feed grows ────────────────────────────────────
+        //
+        // ONE LIST THAT ONLY GETS LONGER, not a page at a time. The feed used to be numbered, and
+        // numbering it was the wrong shape for what it is: a river of other people's clears, read
+        // top-down until you lose interest. Nobody wants "page four" of that - page four is not a
+        // place, it is however far down you happened to get - and the numbers meant losing your
+        // place was one misclick away.
+        //
+        // The pieces below are what makes appending safe:
+        //
+        //   feedCursor    The instant the first page was read, in the SERVER's clock. Every page
+        //                 after the first is asked for against it, so the read is of the feed as it
+        //                 stood then. Without it, a clear posted mid-scroll shifts every row down
+        //                 by one and the next page hands back a post already on screen while
+        //                 quietly skipping another.
+        //   feedNextPage  Which page has not been asked for yet.
+        //   feedPagesKnown How many the server said there are, under that cursor.
+        //
+        // Newer posts are not lost by the cursor - the top-of-feed poll still finds them, and they
+        // are offered as the pill exactly as before. Pressing it starts a new list from the top,
+        // which is the one moment it is right to throw the accumulated pages away.
+
+        /// <summary>Unix ms in the server's clock, or zero before the first page has landed (and
+        /// against a server too old to send one, where paging falls back to plain offsets).</summary>
+        private long feedCursor;
+
+        private int feedNextPage;
+        private int feedPagesKnown = 1;
+        private int feedMoreInFlight;
+
+        /// <summary>Pages and cursor belonging to a read parked behind the pill, promoted with it
+        /// in <see cref="ApplyNewPosts"/> - the held list is a different feed from the one on
+        /// screen, and its pagination has to travel with it or the first scroll after pressing the
+        /// pill would append the old feed's page two to the new feed's page one.</summary>
+        private int pendingPages = 1;
+        private long pendingCursor;
+
+        /// <summary>Whether there is more feed below what has been handed over. False also while
+        /// nothing has loaded at all, so the tab does not offer to extend an empty list.</summary>
+        public bool FeedHasMore
+        {
+            get { lock (feedLock) return feed.Count > 0 && feedNextPage < feedPagesKnown; }
+        }
+
+        /// <summary>True while the next page is out, so the foot of the list can say so rather
+        /// than ending in a way that looks like the end.</summary>
+        public bool FeedLoadingMore => feedMoreInFlight != 0;
 
         /// <summary>Set when the change came from this client - their own clear, their own share,
         /// their own opt-out. Offering somebody a pill to see a thing they just did themselves
@@ -231,12 +275,20 @@ namespace PfPresets
                 feed.AddRange(incoming);
                 incoming.Clear();
 
+                // A NEW LIST, so its pagination starts over. Whatever had been scrolled into view
+                // belonged to the older feed; keeping those pages and appending the new feed's
+                // second page under them would interleave two different reads of the same table.
+                feedPagesKnown = pendingPages;
+                feedCursor = pendingCursor;
+                feedNextPage = 1;
+
                 // These are on screen now, so their mark is finally ours to claim. Pressing the
                 // pill is the only thing that turns a held read into a shown one.
                 if (pendingMark > feedMark)
                     feedMark = pendingMark;
 
                 pendingMark = 0;
+                pendingCursor = 0;
             }
         }
 
@@ -269,21 +321,96 @@ namespace PfPresets
             RefreshFeed();
         }
 
-        /// <summary>Asks for the top of the feed now. The tab's own refresh, and what the poll
-        /// calls.</summary>
-        /// <summary>Moves to a page and reads it. Out of range is ignored rather than clamped -
-        /// the buttons already know the bounds and a silent correction would hide a bug.</summary>
-        public void ShowFeedPage(int page)
+        /// <summary>
+        /// Adds the next page to the bottom of the list.
+        ///
+        /// Called by the tab as the list nears its own end, so it is safe to call on any frame and
+        /// does nothing on nearly all of them. A failed read is silent and leaves everything as it
+        /// was: the next scroll asks again, which is a better answer than an error message at the
+        /// foot of somebody's feed.
+        /// </summary>
+        public void LoadMoreFeed()
         {
-            if (page < 0 || page >= FeedPages || page == FeedPage)
+            if (!config.CommunityEnabled)
                 return;
 
-            FeedPage = page;
-            feedScrollWanted = true;
-            RefreshFeed();
+            int page;
+            long cursor;
+
+            lock (feedLock)
+            {
+                if (feed.Count == 0 || feedNextPage >= feedPagesKnown)
+                    return;
+
+                page = feedNextPage;
+                cursor = feedCursor;
+            }
+
+            if (Interlocked.CompareExchange(ref feedMoreInFlight, 1, 0) != 0)
+                return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.GetFeedAsync(page, cursor).ConfigureAwait(false);
+
+                    if (!result.IsOk || result.Value == null)
+                        return;
+
+                    lock (feedLock)
+                    {
+                        // The list may have been replaced while this was in flight - the pill
+                        // pressed, their own clear landing, broadcasting switched off. That read
+                        // owns the feed now and this page is of one that no longer exists.
+                        if (feedNextPage != page || feedCursor != cursor)
+                            return;
+
+                        var posts = result.Value.Posts;
+
+                        // Nothing came back where the count said there would be. Believe what
+                        // arrived rather than the arithmetic, and stop asking - otherwise the tab
+                        // reaches the bottom, asks, gets nothing, and asks again every frame.
+                        if (posts.Count == 0)
+                        {
+                            feedPagesKnown = page;
+                            return;
+                        }
+
+                        // Deduped by id. The cursor makes a duplicate unlikely rather than
+                        // impossible: a reshare re-ranks a post to the top, which lifts it out of
+                        // the page it used to sit in and shuffles everything below it up one.
+                        var known = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var p in feed)
+                            known.Add(p.Id);
+
+                        foreach (var p in posts)
+                        {
+                            if (known.Add(p.Id))
+                                feed.Add(p);
+                        }
+
+                        feedPagesKnown = Math.Max(feedPagesKnown, Math.Max(1, result.Value.Pages));
+                        feedNextPage = page + 1;
+                    }
+
+                    // NO MARK IS CLAIMED HERE, for the same reason page one used to be the only
+                    // page that could claim one: the mark is a time, and reading further DOWN the
+                    // feed proves nothing about what has arrived at the top of it.
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Feed page {page} failed: {ex.Message}");
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref feedMoreInFlight, 0);
+                }
+            });
         }
 
-        /// <summary>Set when a page change wants the list back at the top.</summary>
+        /// <summary>Set when a read has replaced the whole list, so it is drawn from the top rather
+        /// than at whatever offset the previous one had been left at.</summary>
         private bool feedScrollWanted;
 
         public bool TakeFeedScrollRequest()
@@ -302,13 +429,12 @@ namespace PfPresets
 
             _ = Task.Run(async () =>
             {
-                // The page this read is OF, kept rather than re-read afterwards: FeedPage can move
-                // under a request in flight, and the mark below is only ever page one's to claim.
-                int askedFor = FeedPage;
-
                 try
                 {
-                    var result = await api.GetFeedAsync(askedFor).ConfigureAwait(false);
+                    // ALWAYS THE TOP OF THE FEED, and never against the cursor. This is the read
+                    // that answers "has anything new appeared?", and asking it inside the snapshot
+                    // the rest of the pages are pinned to would be asking it to answer no.
+                    var result = await api.GetFeedAsync(0).ConfigureAwait(false);
 
                     if (!result.IsOk || result.Value == null)
                     {
@@ -326,7 +452,7 @@ namespace PfPresets
                     }
 
                     var posts = result.Value.Posts;
-                    FeedPages = Math.Max(1, result.Value.Pages);
+                    int pages = Math.Max(1, result.Value.Pages);
 
                     // The mark this read is entitled to claim - IF its posts end up in front of
                     // somebody. Whether they do is decided below, and the two cases are not the
@@ -342,41 +468,64 @@ namespace PfPresets
                         ? result.Value.Now
                         : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-                    // A page that has emptied out from under you - somebody opted out, a post was
-                    // removed - lands you on the last one that still exists rather than on nothing.
-                    if (posts.Count == 0 && FeedPage > 0 && FeedPage >= FeedPages)
-                    {
-                        FeedPage = FeedPages - 1;
-                        feedReadAt = DateTime.MinValue;
-                    }
+                    // The cursor every page after the first is read against. Only ever taken from
+                    // the server's own clock: the fallback above is fine for a mark, which is only
+                    // ever compared against itself, and wrong for this, which the server compares
+                    // against its own timestamps. Zero leaves paging on plain offsets, which is
+                    // what this did before the cursor existed and is still correct - just no longer
+                    // proof against a post arriving mid-scroll.
+                    long cursor = result.Value.Now;
 
                     lock (feedLock)
                     {
-                        // Nothing on screen yet, or the same top post: apply it. Anything else is
-                        // held, because replacing a list somebody is reading loses their place and
-                        // moves the thing they were about to press.
-                        // Only page one can be "current"; the pages behind it do not move under
-                        // somebody reading them.
-                        bool nothingShown = feed.Count == 0 || FeedPage > 0;
+                        // Nothing on screen yet, or the same top post. Anything else is held,
+                        // because replacing a list somebody is reading loses their place and moves
+                        // the thing they were about to press.
+                        bool nothingShown = feed.Count == 0;
                         bool sameTop = !nothingShown && posts.Count > 0
                             && string.Equals(posts[0].Id, feed[0].Id, StringComparison.Ordinal);
 
-                        if (nothingShown || sameTop || applyNextRead)
+                        if (nothingShown || applyNextRead)
                         {
+                            // A NEW LIST FROM THE TOP. Everything scrolled into view belonged to
+                            // the feed being replaced, so the pages start over with it.
                             feed.Clear();
                             feed.AddRange(posts);
                             incoming.Clear();
                             pendingMark = 0;
+                            pendingCursor = 0;
 
-                            // ONLY PAGE ONE CAN CLAIM THE MARK. The mark is a time, not a place,
-                            // and a page further down the feed proves nothing about what has
-                            // arrived at the top of it - so reading page three would otherwise
-                            // silently mark every new clear read without drawing one of them.
-                            //
-                            // Only ever forward: two reads can land out of order, a page change
-                            // racing the poll, and taking the earlier answer's mark would un-see
-                            // posts that had already been shown.
-                            if (askedFor == 0 && mark > feedMark)
+                            feedPagesKnown = pages;
+                            feedCursor = cursor;
+                            feedNextPage = 1;
+
+                            // Only when something was actually displaced. The first read of all has
+                            // nothing to scroll back to and would only be fighting a restored
+                            // position for no reason.
+                            if (!nothingShown)
+                                feedScrollWanted = true;
+
+                            // Only ever forward: two reads can land out of order, and taking the
+                            // earlier answer's mark would un-see posts already shown.
+                            if (mark > feedMark)
+                                feedMark = mark;
+                        }
+                        else if (sameTop)
+                        {
+                            // NOTHING NEW AT THE TOP, so the pages below it are still the right
+                            // pages and are left exactly where they are. What this read is good for
+                            // is the counts: hearts move on posts that are already on screen, and
+                            // throwing away everything scrolled into view to collect them would be
+                            // the pagination bug this rewrite exists to remove, wearing a poll's
+                            // clothes.
+                            for (int i = 0; i < posts.Count && i < feed.Count; i++)
+                                feed[i] = posts[i];
+
+                            // Trusted downward as well as up: a post coming off the feed - somebody
+                            // opting out, a removal - genuinely shortens it.
+                            feedPagesKnown = Math.Max(pages, feedNextPage);
+
+                            if (mark > feedMark)
                                 feedMark = mark;
                         }
                         else
@@ -384,10 +533,14 @@ namespace PfPresets
                             incoming.Clear();
                             incoming.AddRange(posts);
 
-                            // Held, and so is its mark - see pendingMark. What is on screen is
-                            // still the older feed, and that is all anybody has been shown.
+                            // Held, and so are its mark and its pagination - see pendingMark. What
+                            // is on screen is still the older feed, and that is all anybody has
+                            // been shown.
                             if (mark > pendingMark)
                                 pendingMark = mark;
+
+                            pendingPages = pages;
+                            pendingCursor = cursor;
 
                             // We have just learned first-hand that there is something they have not
                             // been shown, so the badge does not sit out the rest of a three-minute
@@ -739,6 +892,11 @@ namespace PfPresets
                         // Their own clear should be at the top the next time they look.
                         applyNextRead = true;
                         feedReadAt = DateTime.MinValue;
+
+                        // And on their own list, which has just gained a row. Marked rather than
+                        // read: the tab may not be open, and a list nobody is looking at can wait
+                        // until somebody is - see EnsureMyClearsLoaded.
+                        mineReadAt = DateTime.MinValue;
                     }
                     else if (!result.IsOk)
                     {

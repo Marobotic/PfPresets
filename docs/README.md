@@ -1,5 +1,12 @@
 # docs/
 
+## ratings.md
+
+How the community half works: identities and the two peppers, what a vote is, the one-vote-per-pair
+rule and where it is enforced, and what stops a sybil now that votes are not weighted fractionally.
+**Read the weighting section before changing anything about how a vote is counted** — the fractions
+were removed for a reason and the note there says what replaced them.
+
 ## building.md
 
 How to build, which output the in-game dev plugin actually loads, and the build trap that made the

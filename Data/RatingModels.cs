@@ -394,9 +394,13 @@ namespace PfPresets
         /// The rating: a net weighted tally, not a share.
         ///
         /// An upvote is +1 and a downvote -1, each scaled by how much that voter counts - friends
-        /// and FC members less, a repeat voter on the same person far less. A percentage cannot
-        /// express that, because three unanimous friends and thirty unanimous strangers both read
-        /// 100%, and only one of those is worth anything.
+        /// and FC members less than strangers. A percentage cannot express that, because three
+        /// unanimous friends and thirty unanimous strangers both read 100%, and only one of those
+        /// is worth anything.
+        ///
+        /// Everybody counts ONCE. Rating the same person again used to add a discounted vote on top
+        /// of the last one; it now replaces it, so a number here is a number of people rather than
+        /// a number of times they pressed the button.
         /// </summary>
         public int Score { get; set; }
 

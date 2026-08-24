@@ -5,6 +5,55 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "3.5.1.1",
+      "date": "2026-08-24",
+      "published": false,
+      "headline": "Everyone's vote counts once, and Clears loads as you scroll",
+      "notes": "The vote change is server-side as well as client-side: existing scores were rebuilt so that every voter counts once. The migrations behind that live in the backend repository.",
+      "changes": [
+        {
+          "type": "changed",
+          "title": "Everyone's vote on you counts once",
+          "body": "Rating the same person again used to stack another vote on top of the last one, worth a tenth but still another one, so a group who play together every week piled up hundreds between them - a score of +300 could be eight people rather than three hundred. Your vote is now a position rather than a tally: upvote somebody and you have upvoted them, however many times you press it."
+        },
+        {
+          "type": "changed",
+          "title": "You can change your mind whenever you like",
+          "body": "Downvoting somebody you upvoted moves your one vote across instead of adding to it, and there is no longer a day to wait out before you can. The button used to grey itself out for twenty-four hours, which made changing your mind impossible rather than merely slow. What counts is the last thing you said."
+        },
+        {
+          "type": "changed",
+          "title": "Every vote is worth the same",
+          "body": "An upvote is +1 and a downvote is -1, from anybody: no more half a vote from a friend or a quarter from an account with no history. A vote either counts in full or it is held until the account has earned its place, and holding is what stopped fake votes in the first place - a quarter of a vote still moved a score."
+        },
+        {
+          "type": "changed",
+          "title": "Existing scores were rebuilt to match",
+          "body": "Almost everybody's percentage is unchanged. The totals came down because the duplicates went, not because anybody's opinion changed."
+        },
+        {
+          "type": "changed",
+          "title": "Clears loads as you scroll",
+          "body": "Sixteen at a time, with the next sixteen fetched as you approach the bottom, instead of numbered pages. It also remembers where you were when you come back to the tab."
+        },
+        {
+          "type": "changed",
+          "title": "New clears no longer shove the list around",
+          "body": "A clear arriving while you are reading used to move everything under your cursor. A button floats at the top of the list instead, and pressing it takes you to the newest."
+        },
+        {
+          "type": "new",
+          "title": "My clears",
+          "body": "Clears has two tabs: Broadcast, the feed of everybody's clears as before, and My clears, every clear of your own that has gone up on it. My clears appears with your first clear and is not there before that."
+        },
+        {
+          "type": "changed",
+          "title": "Removed the divider above \"Recent clears\"",
+          "body": "It drew a line between the tab's own header and the first thing inside the tab, which is not a boundary that needed marking."
+        }
+      ]
+    },
+    {
       "version": "3.5.1",
       "date": "2026-08-22",
       "published": false,

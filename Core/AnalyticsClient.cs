@@ -20,13 +20,31 @@ namespace PfPresets
     ///   - how many presets have been created, applied, imported and exported on this install, ever
     ///   - how many player progress lookups have been made
     ///   - which duties presets have been applied for, and how often
+    ///   - where the CURRENT CHARACTER plays: its home world ("Malboro"), that world's data centre
+    ///     ("Crystal") and the region the data centre sits in (NA, EU, JP or OCE), plus a one-way
+    ///     hashed key so the server can tell two different characters apart
     ///
-    /// That last one is the only thing here that is not a bare number, and it is deliberate: it is
-    /// what tells the plugin's author whether the work is going into the content people actually
-    /// use it for. It is the duty's own name, as the game prints it on a Party Finder listing -
-    /// public information about content, not about a person.
+    /// The duty names are the only thing here that is not a bare number or a place, and it is
+    /// deliberate: it is what tells the plugin's author whether the work is going into the content
+    /// people actually use it for. It is the duty's own name, as the game prints it on a Party
+    /// Finder listing - public information about content, not about a person.
     ///
-    /// That is the entire payload. No character name, account id, world, party, preset contents or
+    /// The world used to be withheld, and only the region sent, on the reasoning that "NA" doesn't
+    /// narrow anyone down and "Balmung" does. That reasoning holds for one install in isolation; it
+    /// does not hold for the only shape this data is ever in, which is a population count. The
+    /// dashboard prints "20 characters on Gilgamesh" beside every other world and nothing else -
+    /// never a character next to a world - and a world with twenty thousand people on it is not a
+    /// hiding place anybody is being taken out of. What it buys is the difference between "the
+    /// plugin is used in NA" and knowing which communities actually run it.
+    ///
+    /// All of it is scoped to the character, not the install, because one install can be several
+    /// alts: without a way to tell them apart the server can only remember whichever character was
+    /// logged in at the moment of the last ping, so three alts on three worlds would read as one.
+    /// The character key exists to fix exactly that and nothing more - it is a one-way hash of the
+    /// character's own content id (see AnalyticsRegion.ResolveCharacterKey), never the id itself
+    /// and never a name, so nothing stored beside a world can be walked back to who is on it.
+    ///
+    /// That is the entire payload. No character name, account id, party, preset contents or
     /// anything typed into a preset is collected, and the server discards IP addresses.
     ///
     /// It is built to be irrelevant when it fails: every call is fire-and-forget on a background
@@ -54,17 +72,32 @@ namespace PfPresets
         private readonly Configuration config;
         private readonly IPluginLog log;
         private readonly string version;
+        private readonly IDataManager dataManager;
+        private readonly IObjectTable objectTable;
+        private readonly IPlayerState playerState;
+        private readonly IFramework framework;
         private readonly HttpClient http;
         private readonly CancellationTokenSource cancel = new();
 
         /// <summary>Set after the first failure so a dead endpoint doesn't fill the log every cycle.</summary>
         private bool loggedFailure;
 
-        public AnalyticsClient(Configuration config, IPluginLog log, string version)
+        public AnalyticsClient(
+            Configuration config,
+            IPluginLog log,
+            string version,
+            IDataManager dataManager,
+            IObjectTable objectTable,
+            IPlayerState playerState,
+            IFramework framework)
         {
             this.config = config;
             this.log = log;
             this.version = version;
+            this.dataManager = dataManager;
+            this.objectTable = objectTable;
+            this.playerState = playerState;
+            this.framework = framework;
 
             http = new HttpClient { Timeout = RequestTimeout };
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"PfPresets/{version}");
@@ -124,6 +157,38 @@ namespace PfPresets
                     payload["presetsImported"] = config.LifetimePresetsImported;
                     payload["presetsExported"] = config.LifetimePresetsExported;
                     payload["progressFetches"] = config.LifetimeProgressFetches;
+
+                    // Both read game state (the object table, the client state), so both have to
+                    // happen on the framework thread - this loop runs on a background Task and
+                    // touching either from here is unsafe and, in practice, returns null far more
+                    // often than it should. One hop reads both at once rather than two separate
+                    // ones, since a character switch mid-read would otherwise pair a home world
+                    // from one character with a content id from another.
+                    var (place, characterKey) = await framework.RunOnFrameworkThread(() =>
+                        (AnalyticsRegion.Resolve(dataManager, objectTable, log),
+                         AnalyticsRegion.ResolveCharacterKey(playerState))).ConfigureAwait(false);
+
+                    // Sent together or not at all: a place with no key can't be attributed to a
+                    // character server-side, and a key with no place has nothing to record next
+                    // to it. "Unknown" and "somewhere this build doesn't recognise" are different
+                    // facts and only one of them is worth a slot in a size-capped body, so a miss
+                    // here is simply omitted rather than sent as a guess.
+                    //
+                    // The region gates the whole group because it is the one field the server has
+                    // always required, and because Resolve fills all three or none of them.
+                    if (place.Region != null && characterKey != null)
+                    {
+                        payload["region"] = place.Region;
+                        payload["characterKey"] = characterKey;
+
+                        // Sent separately rather than folded into the region, so the server keeps
+                        // aggregating regions exactly as it does for every older build still in
+                        // the wild - the world is additive, not a replacement.
+                        if (place.World != null)
+                            payload["world"] = place.World;
+                        if (place.DataCenter != null)
+                            payload["dataCenter"] = place.DataCenter;
+                    }
 
                     // Busiest first and capped, because the endpoint takes a 2KB body and a
                     // long-lived install accumulates a long tail of ones. A truncated list still

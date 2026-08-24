@@ -70,8 +70,12 @@ namespace PfPresets
             AnalyticsMode.Off =>
                 "Nothing is sent. This install stops being counted.",
             _ =>
-                "Adds counts of how often plugin features are used to the install id and version. "
-                + "Still no names, no duties and nothing you type.",
+                "Adds counts of how often plugin features are used, which duties presets are applied "
+                + "for, and your current character's home world, its data centre and its region "
+                + "(NA/EU/JP/OCE), to the install id and version. The world is only ever counted - "
+                + "\"20 characters on Gilgamesh\" - never listed against anyone. An alt elsewhere is "
+                + "counted separately, via a one-way hash of its content id rather than anything that "
+                + "identifies it. Still no names and nothing you type.",
         };
     }
 }
