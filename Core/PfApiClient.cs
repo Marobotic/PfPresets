@@ -326,11 +326,41 @@ namespace PfPresets
                 HttpMethod.Post, "achievements", request).ConfigureAwait(false);
         }
 
-        /// <summary>The feed, newest first. Reaches our own table and nothing else.</summary>
-        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(int page = 0)
+        /// <summary>
+        /// The feed, newest first. Reaches our own table and nothing else.
+        ///
+        /// <paramref name="before"/> pins the read to the feed as it stood at that instant, in the
+        /// server's own unix ms. Zero asks for the live top of the feed, which is what the first
+        /// page does; every page after it carries the cursor the first one came back with, so a
+        /// clear posted while somebody is scrolling cannot shift the page boundaries underneath
+        /// them and hand them a post twice or skip one. Those newer posts are not lost - the next
+        /// top-of-feed read finds them and offers them as the "New clears" pill.
+        /// </summary>
+        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(int page = 0, long before = 0)
             => await SendAsync<AchievementFeedResponse>(
                 HttpMethod.Post, "achievements/feed",
-                new AchievementFeedRequest { Page = Math.Max(0, page) }).ConfigureAwait(false);
+                new AchievementFeedRequest
+                {
+                    Page = Math.Max(0, page),
+                    Before = before > 0 ? before : null,
+                }).ConfigureAwait(false);
+
+        /// <summary>
+        /// This session character's own clears, as this server holds them - newest cleared first.
+        ///
+        /// Not a filter the caller could have applied to the feed itself: the server answers about
+        /// whoever the session is, so there is no character to pass and no way to ask about anybody
+        /// else's. Paged and cursored exactly like <see cref="GetFeedAsync"/>.
+        /// </summary>
+        public async Task<ApiResult<AchievementFeedResponse>> GetMyClearsAsync(
+            int page = 0, long before = 0)
+            => await SendAsync<AchievementFeedResponse>(
+                HttpMethod.Post, "achievements/mine",
+                new AchievementFeedRequest
+                {
+                    Page = Math.Max(0, page),
+                    Before = before > 0 ? before : null,
+                }).ConfigureAwait(false);
 
         /// <summary>How many posts have appeared since the mark. The badge's whole conversation with
         /// the server, and deliberately the cheapest call in this file.</summary>

@@ -439,33 +439,24 @@ namespace PfPresets
         // ══════════════════════════════════════════════════════════
 
         /// <summary>
-        /// When the local player may next rate this target, or null if they may now. This is the
-        /// first of the two cooldown checks and exists purely so the button greys out instantly
-        /// with no round-trip - the server's check in the submit transaction is the one that
-        /// actually enforces the rule, and it is authoritative if the two ever disagree.
+        /// When the local player may next rate this target, or null if they may now.
+        ///
+        /// ALWAYS NULL ONCE THEY HAVE RATED THEM, which is to say: always null in every case this
+        /// used to answer. It greyed the button out for a day after a vote so the refusal was
+        /// instant rather than a round-trip, and that was right while a second vote was a second
+        /// vote. It is not any more - a vote is a position now, one per person, and pressing the
+        /// other arrow REPLACES the one you hold rather than adding to it. The server allows that
+        /// with no wait at all (see the revision path in submitVote), so a client that greys the
+        /// button for twenty-four hours is enforcing a rule nothing else has, and the feature it
+        /// blocks is the whole point of the change.
+        ///
+        /// Kept as a method rather than deleted because the surfaces that call it want to ask the
+        /// question, and because the server can still say no for reasons this cannot see - a vote
+        /// of theirs that was held rather than applied, a duty they have not shared. Those come
+        /// back as SubmitOutcome.OnCooldown carrying the server's own nextEligibleAt, which is the
+        /// answer that was always authoritative anyway.
         /// </summary>
-        public DateTime? LocalCooldownUntil(CharacterIdentity who)
-        {
-            if (!who.IsValid)
-                return null;
-
-            DateTime? last = null;
-
-            if (config.LocalCooldowns.TryGetValue(who.Key, out var fromConfig))
-                last = Normalise(fromConfig);
-
-            // Checked as well as the cooldown list, not instead of it. Two independent files
-            // record the same fact, so losing or hand-editing one doesn't reopen the window.
-            var fromHistory = history.LastRated(who);
-            if (fromHistory.HasValue && (last == null || fromHistory.Value > last.Value))
-                last = Normalise(fromHistory.Value);
-
-            if (last == null)
-                return null;
-
-            var until = last.Value.AddHours(Math.Max(1, Policy.CooldownHours));
-            return until > DateTime.UtcNow ? until : null;
-        }
+        public DateTime? LocalCooldownUntil(CharacterIdentity who) => null;
 
         /// <summary>Forces a timestamp to UTC. A value round-tripped through JSON can come back
         /// Unspecified or Local, and comparing that against UtcNow is wrong by the offset.</summary>
@@ -2046,10 +2037,11 @@ namespace PfPresets
             };
         }
 
-        // ForgetServerHistoryAsync is gone, with the endpoint it called. It erased this
-        // player's cooldown ledger on the server, which is the record that stops the same person
-        // being rated twice - and since the repeat-vote discount is computed from the vote count on
-        // those rows, erasing them made every subsequent repeat count at full weight again.
+        // ForgetServerHistoryAsync is gone, with the endpoint it called. It erased this player's
+        // ledger on the server, which is the record of who has already voted on whom - and that
+        // record is now what makes a vote replaceable rather than repeatable, so erasing it would
+        // let one person's opinion be counted twice over. It was already wrong when the ledger only
+        // fed a discount; it is worse now.
 
         public void Dispose()
         {

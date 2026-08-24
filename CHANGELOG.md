@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.5.1.1
+
+### Updates
+
+Everybody's vote on you counts once. Rating the same person again used to add another vote on top of the last one - worth a tenth, but still another one - so people who play together every week piled up hundreds of votes between them, and a score of +300 could be eight people rather than three hundred. Your vote is now a position rather than a tally: upvote somebody and you have upvoted them, however many times you press it.
+
+You can change your mind whenever you like. Downvoting somebody you upvoted moves your one vote across instead of adding to it, and there is no longer a day to wait out before you can - the button used to grey itself out for twenty-four hours, which made changing your mind impossible rather than merely slow. What counts is the last thing you said.
+
+Every vote is worth the same now. An upvote is +1 and a downvote is -1, from anybody: no more half a vote from a friend or a quarter from an account with no history. A vote either counts in full or it is held until the account has earned its place, and holding is what stopped fake votes in the first place - a quarter of a vote still moved a score.
+
+Existing scores were rebuilt to match. Almost everybody's percentage is unchanged - the totals came down because the duplicates went, not because opinions changed.
+
+Clears now loads sixteen at a time and fetches the next sixteen as you approach the bottom, instead of being split into numbered pages. It remembers where you were when you come back to the tab.
+
+Clears arriving while you are reading no longer shove the list around. A button floats at the top of the list instead, and pressing it takes you to the newest.
+
+Clears has two tabs: Broadcast, which is the feed of everybody's clears as before, and My clears, which is every clear of your own that has gone up on it. My clears appears with your first clear and is not there before that.
+
+Removed the divider above "Recent clears".
+
 ## 3.5.1
 
 ### Updates

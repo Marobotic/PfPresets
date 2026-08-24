@@ -198,7 +198,11 @@ namespace PfPresets
             this.analytics = new AnalyticsClient(
                 this.config,
                 pluginLog,
-                pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown");
+                pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown",
+                dataManager,
+                this.objectTable,
+                playerState,
+                this.framework);
             this.ui.Analytics = this.analytics;
 
             // Erased entirely in an ordinary build - the implementation is not in this repository.
