@@ -47,6 +47,11 @@ namespace PfPresets
         /// server nothing and stores nothing about anybody, so it is not part of that system.</summary>
         private readonly ListingXray listingXray;
 
+        /// <summary>Puts the real duty name on a locked Party Finder listing, when the player has
+        /// asked for it. Outside the ratings guard for the same reason: it reads what this client
+        /// already has and tells nobody.</summary>
+        private readonly LockedDutyReveal lockedDutyReveal;
+
         public Plugin(
             IDalamudPluginInterface pluginInterface,
             ICommandManager commandManager,
@@ -63,7 +68,8 @@ namespace PfPresets
             ICondition condition,
             ISigScanner sigScanner,
             IDutyState dutyState,
-            IGameInteropProvider interop)
+            IGameInteropProvider interop,
+            IPartyFinderGui partyFinderGui)
         {
             this.pluginInterface = pluginInterface;
             this.commandManager = commandManager;
@@ -141,6 +147,12 @@ namespace PfPresets
             this.listingXray = new ListingXray(
                 this.pluginInterface, interop, pluginLog,
                 () => this.config.ListingDetailsEnabled);
+
+            // Constructed always, inert until the setting is on: it subscribes to the listing feed
+            // and touches the window only while ShowLockedDutyNames says to.
+            this.lockedDutyReveal = new LockedDutyReveal(
+                partyFinderGui, gameGui, dataManager, pluginLog, this.dutyDataHelper,
+                () => this.config.ShowLockedDutyNames);
 #if PFP_RATINGS
             // Suppressed by PFRadar for the same reason the panel is: it already does this, and two
             // plugins publishing the same party is two rows saying the same thing.
@@ -359,21 +371,10 @@ namespace PfPresets
             // Set the criteria by hand in the game's own window - PvP then Crystalline Conflict, or
             // FATEs then a zone - and run this before pressing Recruit. It prints the two numbers
             // the client put there.
-            if (args.Trim().Equals("criteria", StringComparison.OrdinalIgnoreCase))
+            string criteriaArgs = args.Trim();
+            if (criteriaArgs.StartsWith("criteria", StringComparison.OrdinalIgnoreCase))
             {
-                var lfg = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
-                if (lfg == null)
-                {
-                    chatGui.Print("[PF Analysis Debug] Party Finder agent not available.");
-                    return;
-                }
-
-                var stored = lfg->StoredRecruitmentInfo;
-                chatGui.Print("[PF Analysis Debug] Recruitment criteria as the client has them:");
-                chatGui.Print($"  SelectedCategory = {(uint)stored.SelectedCategory} ({stored.SelectedCategory})");
-                chatGui.Print($"  SelectedDutyId   = {stored.SelectedDutyId}");
-                chatGui.Print($"  Objective        = {(uint)stored.Objective} ({stored.Objective})");
-                chatGui.Print($"  SlotsInMainParty = {stored.NumberOfSlotsInMainParty}");
+                OnCriteriaCommand(criteriaArgs.Substring("criteria".Length).Trim());
                 return;
             }
 
@@ -410,6 +411,124 @@ namespace PfPresets
             }
         }
 
+        /// <summary>
+        /// The last recruitment-memory snapshot taken by "/pfpdebug criteria snap".
+        ///
+        /// Deliberately not persisted. It is one half of a comparison whose other half is "what the
+        /// window looks like right now", and a snapshot from a previous session is a comparison
+        /// against a different set of criteria.
+        /// </summary>
+        private byte[]? criteriaSnapshot;
+
+        /// <summary>How much of StoredRecruitmentInfo the raw dump covers.
+        ///
+        /// More than the struct's named fields, on purpose. The field this is used to hunt for is by
+        /// definition one nobody has mapped yet, so a dump that stopped at the last known member
+        /// would stop exactly short of the thing being looked for. Reading a few bytes past the end
+        /// of a struct that lives inside a much larger agent costs nothing.
+        /// </summary>
+        private const int CriteriaDumpBytes = 0x40;
+
+        /// <summary>
+        /// "/pfpdebug criteria" and its two comparison modes.
+        ///
+        /// THE PROCEDURE THAT FOUND 0x12, MADE REPEATABLE. That byte - the one that decides whether
+        /// a listing carries a specific duty or says "All" - was found by diffing recruitment memory
+        /// either side of setting the duty by hand, and every category the plugin cannot post yet is
+        /// waiting on the same question being asked again: which bytes move when the client itself
+        /// selects this duty, and what does it put in them.
+        ///
+        /// Deep Dungeons is the current one. There is no ContentFinderCondition row for "the Palace
+        /// of the Dead" - the sheet only has its floor sets - so the number the field wants cannot be
+        /// read out of the sheets at all, and guessing at it is what this exists to avoid.
+        ///
+        ///   1. Open the Recruitment Criteria window and set the category, nothing else.
+        ///   2. "/pfpdebug criteria snap"
+        ///   3. Pick the duty from the game's own dropdown.
+        ///   4. "/pfpdebug criteria diff"
+        ///
+        /// What it prints is every byte that moved, at its offset from the start of the struct, so
+        /// the answer is both which field and what value.
+        /// </summary>
+        private unsafe void OnCriteriaCommand(string mode)
+        {
+            var lfg = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
+            if (lfg == null)
+            {
+                chatGui.Print("[PF Analysis Debug] Party Finder agent not available.");
+                return;
+            }
+
+            byte* baseAddr = (byte*)&lfg->StoredRecruitmentInfo;
+            var now = new byte[CriteriaDumpBytes];
+            for (int i = 0; i < CriteriaDumpBytes; i++)
+                now[i] = baseAddr[i];
+
+            if (mode.Equals("snap", StringComparison.OrdinalIgnoreCase))
+            {
+                criteriaSnapshot = now;
+                chatGui.Print($"[PF Analysis Debug] Snapshot taken ({CriteriaDumpBytes} bytes). Set the duty, then run \"/pfpdebug criteria diff\".");
+                return;
+            }
+
+            if (mode.Equals("diff", StringComparison.OrdinalIgnoreCase))
+            {
+                if (criteriaSnapshot == null)
+                {
+                    chatGui.Print("[PF Analysis Debug] No snapshot yet - run \"/pfpdebug criteria snap\" first.");
+                    return;
+                }
+
+                int changed = 0;
+                for (int i = 0; i < CriteriaDumpBytes; i++)
+                {
+                    if (criteriaSnapshot[i] == now[i])
+                        continue;
+
+                    changed++;
+                    chatGui.Print($"  +0x{i:X2}: {criteriaSnapshot[i]} -> {now[i]}  (0x{criteriaSnapshot[i]:X2} -> 0x{now[i]:X2})");
+                }
+
+                chatGui.Print(changed == 0
+                    ? "[PF Analysis Debug] Nothing moved. The client did not take that selection."
+                    : $"[PF Analysis Debug] {changed} byte(s) moved since the snapshot.");
+                return;
+            }
+
+            var stored = lfg->StoredRecruitmentInfo;
+
+            // WHERE, NOT JUST WHAT. A diff names an offset and the struct names a field, and until
+            // those two are printed side by side there is no way to tell whether the byte that moved
+            // is the field the plugin writes or one nobody has mapped sitting next to it. That
+            // distinction is the whole difference between "our value is wrong" and "our value is
+            // going somewhere the game does not read".
+            int dutyIdOffset = (int)((byte*)&lfg->StoredRecruitmentInfo.SelectedDutyId - baseAddr);
+            int categoryOffset = (int)((byte*)&lfg->StoredRecruitmentInfo.SelectedCategory - baseAddr);
+            int objectiveOffset = (int)((byte*)&lfg->StoredRecruitmentInfo.Objective - baseAddr);
+
+            chatGui.Print("[PF Analysis Debug] Recruitment criteria as the client has them:");
+            chatGui.Print($"  SelectedCategory = {(uint)stored.SelectedCategory} ({stored.SelectedCategory})  (+0x{categoryOffset:X2})");
+            chatGui.Print($"  SelectedDutyId   = {stored.SelectedDutyId}  (+0x{dutyIdOffset:X2})");
+            chatGui.Print($"  Objective        = {(uint)stored.Objective} ({stored.Objective})  (+0x{objectiveOffset:X2})");
+            chatGui.Print($"  SlotsInMainParty = {stored.NumberOfSlotsInMainParty}");
+            chatGui.Print($"  specific-duty    = {baseAddr[0x12]} (+0x12)");
+
+            var line = new System.Text.StringBuilder();
+            for (int i = 0; i < CriteriaDumpBytes; i++)
+            {
+                if (i % 16 == 0)
+                {
+                    if (i > 0)
+                        chatGui.Print(line.ToString());
+                    line.Clear();
+                    line.Append($"  +0x{i:X2}:");
+                }
+                line.Append($" {now[i]:X2}");
+            }
+            chatGui.Print(line.ToString());
+            return;
+        }
+
         private void OnFrameworkUpdate(IFramework _)
         {
             this.pfAutomation.UpdateAutoRefresher(this.framework.UpdateDelta.TotalMinutes);
@@ -419,6 +538,11 @@ namespace PfPresets
             // Cheap, and throttles its own expensive half. Done here rather than from a draw call
             // so the hook follows the setting even while no window of ours is open.
             this.listingXray.Sync();
+
+            // Framework rather than draw: the window it rewrites is the game's, not ours, so it has
+            // to run whether or not any window of this plugin is open. Costs two addon lookups on a
+            // frame with the Party Finder closed, and nothing at all while the setting is off.
+            this.lockedDutyReveal.Tick();
 
 #if PFP_RATINGS
             // Framework rather than draw, for the same reason: a listing goes up and comes down
@@ -480,6 +604,10 @@ namespace PfPresets
             // produced it is being torn down.
             this.listingXray.Dispose();
 
+            // Puts any name it revealed back before the plugin stops existing, so unloading does not
+            // leave a spoiler sitting on the game's own window.
+            this.lockedDutyReveal.Dispose();
+
 #if PFP_RATINGS
             // Takes our row down on the way out. Unloading the plugin is a clearer "I am no longer
             // publishing this" than letting the row sit until the server expires it, and somebody
@@ -495,6 +623,7 @@ namespace PfPresets
             this.commandManager.RemoveHandler("/pfpresets");
             this.commandManager.RemoveHandler("/pfa");
             this.commandManager.RemoveHandler("/pfanalysis");
+
             this.commandManager.RemoveHandler("/pfpdebug");
 
 #if PFP_RATINGS

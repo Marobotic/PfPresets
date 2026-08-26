@@ -49,7 +49,8 @@ namespace PfPresets
             // Custom header (no ImGui title bar) to match the main window's design.
             if (ImGui.Begin("##Checklist",
                 ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize |
-                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoTitleBar))
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoTitleBar
+                | PromptBlockFlags))
             {
                 Vector2 origin = ImGui.GetCursorScreenPos();
                 float innerW = ImGui.GetContentRegionAvail().X;
@@ -164,6 +165,8 @@ namespace PfPresets
                     dl.AddText(new Vector2(origin.X + (innerW - hs.X) * 0.5f, btnY + (btnH - lineH) * 0.5f),
                         ImGui.ColorConvertFloat4ToU32(TextMuted), hint);
                 }
+
+                SealOverlayIfPrompted();
             }
             ImGui.End();
             ImGui.PopStyleVar(3);

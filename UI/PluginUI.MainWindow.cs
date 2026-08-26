@@ -691,8 +691,12 @@ namespace PfPresets
             // Presets for a category the plugin cannot post are not shown. They are not deleted -
             // the category is expected back - but a card offering an Apply button that would put up
             // a wrong listing is worse than the preset being out of sight for a patch.
+            //
+            // IsOffered rather than IsSupported so the developer override can bring them back to be
+            // fixed - see DutyComposition.OfferUnsupported. The card says (Unsupported) on its title
+            // line when it is only here because of that.
             var visible = config.Presets
-                .Where(p => DutyComposition.IsSupported(p.DutyCategoryId))
+                .Where(p => DutyComposition.IsOffered(p.DutyCategoryId))
                 .ToList();
 
             var filteredPresets = visible;
@@ -887,6 +891,13 @@ namespace PfPresets
                     dutyTitle = $"{dutyTitle} (Locked)";
                 }
             }
+
+            // AND WHETHER THE PLUGIN CAN POST IT AT ALL. A card that is only on screen because the
+            // developer override is on has to say so on the same line, or the six broken categories
+            // become six cards indistinguishable from the working ones - which is exactly the
+            // confusion the card was hidden to avoid, just moved somewhere harder to notice.
+            if (DutyComposition.OfferUnsupported && !DutyComposition.IsSupported(preset.DutyCategoryId))
+                dutyTitle = $"{dutyTitle} (Unsupported)";
 
             using (UiNameFont.Push())
                 dl.AddText(new Vector2(tx, ty), ImGui.ColorConvertFloat4ToU32(titleColour),

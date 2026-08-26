@@ -116,10 +116,12 @@ namespace PfPresets
                 if (ImGui.Begin("###PfAnalysisWelcome",
                         ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking
                         | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoTitleBar
-                        | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings))
+                        | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings
+                        | PromptBlockFlags))
                 {
                     welcomeAnim = Math.Min(1f, welcomeAnim + ImGui.GetIO().DeltaTime * 4.5f);
                     DrawWelcomeCard();
+                    SealOverlayIfPrompted();
                 }
             }
             finally

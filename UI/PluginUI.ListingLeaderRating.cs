@@ -102,7 +102,7 @@ namespace PfPresets
 
             try
             {
-                if (ImGui.Begin("##PfPresetsListingLeaderRating", flags))
+                if (ImGui.Begin("##PfPresetsListingLeaderRating", flags | PromptBlockFlags))
                 {
                     if (hasScore)
                     {
@@ -122,6 +122,8 @@ namespace PfPresets
                         ImGui.AlignTextToFramePadding();
                         ImGui.TextColored(TextMuted, dots);
                     }
+
+                    SealOverlayIfPrompted();
                 }
             }
             finally

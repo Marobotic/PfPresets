@@ -44,51 +44,97 @@ namespace PfPresets
             || categoryId == 6;  // High-end Duty
 
         /// <summary>
-        /// Categories the plugin does not post listings for yet.
+        /// The one category the plugin does not post listings for yet.
         ///
-        /// BROKEN, NOT UNWANTED. Every one of these fails in the same place: the recruitment
-        /// window's duty field is a single number read against the category, and for these six the
-        /// number is not a ContentFinderCondition row - it is a ContentRoulette row, a TerritoryType
-        /// row, or something the game's own sheets do not carry at all. The listing goes up filed
-        /// under the wrong duty, or under no duty, or under the wrong category entirely.
+        /// BROKEN, NOT UNWANTED. Gold Saucer fails where the other five used to: the recruitment
+        /// window's duty field is a single number, and most of what this category holds is a
+        /// GoldSaucerContent row rather than a ContentFinderCondition one. Until somebody reads back
+        /// what the client actually puts there, offering it is offering a listing that does not say
+        /// what it claims to.
         ///
-        /// Each one needs the same thing before it can come back: the number the client itself puts
-        /// in that field when the criteria are set by hand. "/pfpdebug criteria" prints it. Until
-        /// somebody reads it for a given category, offering that category is offering a listing
-        /// that does not say what it claims to.
+        /// It needs exactly what the other five needed, and the recipe is now known:
         ///
-        /// TO FIX IN A LATER PATCH:
-        ///   Duty Roulette  - the roulette id is written but the client does not keep it.
-        ///   PvP            - Crystalline Conflict is a ContentRoulette row posted under PvP, where
-        ///                    the same number means an unrelated duty.
-        ///   Gold Saucer    - most of it is GoldSaucerContent, a fourth id space again.
-        ///   FATEs          - locations are TerritoryType rows; there is no duty to point at.
-        ///   Treasure Hunt  - the maps have InstanceContent rows that the field does not accept.
-        ///   Deep Dungeons  - same.
+        ///   1. Set the criteria by hand in the game's own window.
+        ///   2. "/pfpdebug criteria" - it prints SelectedDutyId AND the byte beside it.
+        ///   3. Read both. The byte says which sheet the number is a row of; see
+        ///      DutyDataHelper.SpecificDutyFlag.
+        ///   4. Endpoints first. The first and last entry in a category's list usually settle
+        ///      whether the numbering is a sheet row or a position, and the count has to come out
+        ///      exactly - that is what checked the treasure map list as well as its numbering.
+        ///
+        /// THE FIVE THAT CAME BACK, 2026-08-25, all failed on the same misreading. The duty field is
+        /// not interpreted against the category at all; the byte beside it says which sheet the
+        /// number belongs to, and it has three values rather than two:
+        ///
+        ///   Duty Roulette  - a ContentRoulette row, byte 1. "The roulette id is written but the
+        ///                    client does not keep it" was the byte saying 2, so the client read the
+        ///                    number out of ContentFinderCondition and discarded it.
+        ///   PvP            - Crystalline Conflict is that same ContentRoulette case, row 40 byte 1;
+        ///                    the Frontline and Rival Wings maps are ordinary duty rows, byte 2.
+        ///                    There was never a collision between the two id spaces to work around.
+        ///   FATEs          - the TerritoryType row after all, byte 0. 134 for Middle La Noscea,
+        ///                    1192 for Living Memory.
+        ///   Treasure Hunt  - the map's position in the list, 1 to 24, byte 0. The list was the
+        ///                    bigger error: it offered the dungeons a map opens into.
+        ///   Deep Dungeons  - the category's own numbering, 29 to 32, byte 0, in no sheet anywhere.
+        ///                    Its list was per floor set where the window asks for the dungeon.
+        ///
+        /// A LIST CAN BE AS WRONG AS A NUMBER, and it is quieter about it. Three of those five were
+        /// offering names the recruitment window has never had, so no selection could match them.
+        /// Check the list against the game's own dropdown before trusting anything measured through
+        /// it.
         /// </summary>
         public static bool IsSupported(int categoryId) => categoryId switch
         {
-            1 => false,   // Duty Roulette
-            7 => false,   // PvP
             8 => false,   // Gold Saucer
-            9 => false,   // FATEs
-            10 => false,  // Treasure Hunt
-            13 => false,  // Deep Dungeons
             _ => true,
         };
+
+        /// <summary>
+        /// Developer override: offer the categories above anyway.
+        ///
+        /// NOTHING IN AN ORDINARY BUILD WRITES THIS, and that is deliberate rather than an
+        /// oversight to be tidied up. The only setter lives in the moderator files, which are
+        /// gitignored and exist on the two machines that hold a key - see UI/PluginUI.AdminHooks.cs
+        /// for why that is the mechanism. A released assembly carries this property and never
+        /// assigns it, so every category the table calls broken stays out of reach.
+        ///
+        /// It exists because the six above cannot be fixed without being usable. Each one needs the
+        /// number the client itself writes into the recruitment window's duty field, and reading it
+        /// back means making a preset for that category, applying it, and looking at what went up -
+        /// none of which is possible while the picker refuses the category, the list hides the card
+        /// and Apply is greyed out with "not supported yet".
+        /// </summary>
+        public static bool OfferUnsupported { get; set; }
+
+        /// <summary>
+        /// Whether the plugin should offer this category to the person using it: normally the same
+        /// answer as <see cref="IsSupported"/>, and everything else when the developer override is
+        /// on.
+        ///
+        /// THE SPLIT IS THE POINT. <see cref="IsSupported"/> keeps saying what is true - whether a
+        /// listing for this category goes up correctly - and nothing about the override changes
+        /// that. This says what the UI does about it, which is the question the preset list, the
+        /// category picker and the Apply button are all actually asking.
+        /// </summary>
+        public static bool IsOffered(int categoryId) => OfferUnsupported || IsSupported(categoryId);
 
         /// <summary>
         /// Content that only exists on the world you are standing on.
         ///
         /// A FATE is a thing happening in a zone right now and the hunt is a train walking through
-        /// one, so neither survives the trip: somebody who travels to you arrives after it. The
-        /// game will happily post either across a data centre and the listing is simply wrong, so
-        /// the plugin does not offer the choice - "limit recruiting to my world" is forced on for
-        /// these two, in the editor and again when the listing is written, which covers presets
-        /// saved before this existed.
+        /// one, so neither survives the trip: somebody who travels to you arrives after it. A
+        /// treasure hunt is the same bargain with a shorter fuse - the portal is dug in an overworld
+        /// zone on one world and the party has to be standing there when it opens.
+        ///
+        /// The game will happily post any of the three across a data centre and the listing is
+        /// simply wrong, so the plugin does not offer the choice - "limit recruiting to my world" is
+        /// forced on for them, in the editor and again when the listing is written, which covers
+        /// presets saved before this existed.
         /// </summary>
         public static bool RequiresHomeWorld(int categoryId) =>
             categoryId == 9       // FATEs
+            || categoryId == 10   // Treasure Hunt
             || categoryId == 11;  // The Hunt
 
         /// <summary>

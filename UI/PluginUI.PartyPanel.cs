@@ -82,32 +82,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The panel's heading. Inside a duty it names the duty, because that is the one thing in
-        /// there the player cannot read off the party list itself - a bare "IN DUTY WITH" withheld
-        /// it even though the snapshot had already resolved the name from the territory.
-        ///
-        /// The name is only present when that resolution succeeded, and the listing path uses the
-        /// literal "None" for a listing with no specific duty, so both fall back to the unnamed
-        /// wording rather than heading the panel with a gap or the word "None".
-        ///
-        /// "with" is dropped when there is nobody to be with - solo content, an unrestricted
-        /// dungeon run alone - since the panel below it is then just the way out.
-        /// </summary>
-        private static string PartyPanelHeading(bool inDuty, string dutyName, bool hasCompany)
-        {
-            if (!inDuty)
-                return "PARTY";
-
-            bool named = !string.IsNullOrWhiteSpace(dutyName)
-                && !dutyName.Equals("None", StringComparison.OrdinalIgnoreCase);
-
-            if (!hasCompany)
-                return named ? $"In {dutyName}" : "In duty";
-
-            return named ? $"In {dutyName} with" : "In duty with";
-        }
-
-        /// <summary>
         /// The standalone party panel, shown when the recruitment card isn't carrying the list
         /// itself - which in practice means inside a duty, or in a party with no listing up.
         /// </summary>
@@ -132,12 +106,21 @@ namespace PfPresets
                 return;
 
             ImGui.Dummy(new Vector2(0, 2));
-            ImGui.Indent(10);
-            // Fit against the width left after the indent, so a long duty name ellipsises instead
-            // of being clipped by the border.
-            DrawSectionLabel(Fit(PartyPanelHeading(inDuty, snap.DutyName, rows > 0),
-                ImGui.GetContentRegionAvail().X - 12f));
-            ImGui.Unindent(10);
+
+            // NO LABEL INSIDE A DUTY. The panel used to head itself with the duty name - "In
+            // Euphrosyne with" - directly underneath the column heading, which inside a duty
+            // already reads "In Euphrosyne" (see LeftColumnTitle). Two lines, the same words, one
+            // above the other. The column heading is the one that survives: it is there in every
+            // state, and it is the line that names where you are.
+            //
+            // Outside a duty the two say different things - "Your recruitment" over "PARTY" - and
+            // the label earns its place by marking where the member list starts.
+            if (!inDuty)
+            {
+                ImGui.Indent(10);
+                DrawSectionLabel("PARTY");
+                ImGui.Unindent(10);
+            }
 
             // THE PANEL OWNS THE ACTION ROW INSIDE A DUTY, so the member list must not draw its
             // own copy of Update progress underneath. Same mechanism the recruitment card uses when

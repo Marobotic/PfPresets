@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.5.2.0
+
+### Updates
+
+Five Party Finder categories that could not be posted at all now can. Deep Dungeons, Treasure Hunt, FATEs, PvP and Duty Roulette each put a listing up with the wrong duty attached or with none, and three of them were offering names the game's own recruitment window has never had. Each was read back off the client, one duty at a time.
+
+Deep dungeon presets work. The category is back, and it lists the four dungeons the way the game does - the Palace of the Dead, Heaven-on-High, Eureka Orthos, Pilgrim's Traverse - instead of the fifty floor sets behind them, which is what the plugin had been offering and none of which the Party Finder has ever accepted. A preset for one of them now posts as that dungeon. Presets saved from the old list point at the dungeon they were always for.
+
+Treasure hunt presets work too, and the category lists maps. It had been offering the dungeons a map opens into - the Aquapolis, the Excitatron 6000 - which is not what the Party Finder asks for; it asks which map you are holding, from Leather up to Gargantuaskin. Treasure hunts are also now always limited to your own world, the way FATEs and hunt trains are, because the dig only happens on the world it was started on.
+
+FATE presets work, and they name the zone. The category has always listed every field zone in the game, but the listing went up without one - the plugin had no way to say which place it meant, so it said nothing. It does now, from Middle La Noscea through to Living Memory, and "All locations" still means anywhere.
+
+PvP presets work. Crystalline Conflict, Frontline and Rival Wings can all be posted now, and a Crystalline Conflict listing recruits the pair it is played as rather than a full party.
+
+Duty Roulette presets work. All ten roulettes can be listed, from Expert down to Daily Challenge: Frontline - the listing used to go up with no roulette attached at all.
+
+Party Finder can now show you what a locked duty actually is. Listings for content your character hasn't unlocked are labelled "Locked Duty" by the game instead of being named; turning on Settings -> Party Finder -> "Show names of locked duties in party finder" puts the fight's real name back, still marked "(Locked Duty)" so you can tell you can't join it.
+
+It is off by default and asks before it goes on, because the reason the game hides those names is spoilers. Nothing is fetched to do this - the duty is already in the listing your client received, which is how "Save as Preset" has always been able to name a locked listing.
+
+A prompt now holds the whole plugin, not just the window it opened from. Everything the plugin draws over the game - the button beside Recruit Members, "Save as Preset", the listing panel, the leader's score, the checklist, the welcome card and the rating prompt - dims and stops taking presses while a question is waiting. Answering the question gives them back.
+
+Confirmations read shorter and sit properly in their own box.
+
+The party list no longer says where you are twice. Inside a duty the heading above the column already names it, so the list underneath it dropped its own "In <duty> with" line. Outside a duty the two say different things and both stay.
+
+### Bugs Fixed
+
+Fixed the dimming behind a prompt never appearing. Every confirmation in the plugin was supposed to darken the window behind it and had been drawing that layer all along - it was being covered by the very window it was meant to dim, so it had never once been visible. Prompts now dim what is behind them, and clicks that miss the prompt no longer land on whatever is underneath.
+
 ## 3.5.1.1
 
 ### Updates

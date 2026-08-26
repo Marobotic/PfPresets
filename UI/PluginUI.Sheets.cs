@@ -151,10 +151,24 @@ namespace PfPresets
         /// something small in the middle of a dimmed screen is the strongest thing an interface can
         /// point at.
         /// </summary>
-        private const float AlertWidth = 280f;
+        /// <summary>
+        /// 320, not 280. An alert is centred text, and centred text in a narrow column breaks into
+        /// a lot of very short lines - the ragged both-edges shape that makes a short message look
+        /// like a wall of it. Forty more pixels is roughly two words more per line, which is the
+        /// difference between five lines and three.
+        /// </summary>
+        private const float AlertWidth = 320f;
 
         /// <summary>Padding down the sides of an alert, and above its title.</summary>
         private const float AlertPad = 18f;
+
+        /// <summary>Title to question. Enough that the heading reads as a heading rather than the
+        /// first line of the message.</summary>
+        private const float AlertTitleGap = 12f;
+
+        /// <summary>Question to detail. The question is the statement and the detail qualifies it;
+        /// at the old two pixels the pair ran together into one grey block.</summary>
+        private const float AlertDetailGap = 10f;
 
         private const float AlertButtonHeight = 40f;
         private const float AlertButtonGap = 8f;
@@ -260,8 +274,25 @@ namespace PfPresets
         {
             ImGui.SetNextWindowPos(screenPos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(screenSize, ImGuiCond.Always);
+
+            // THE FLAG GOES ON ONE FRAME LATE, AND THAT IS THE WHOLE REASON THE WASH NEVER
+            // APPEARED.
+            //
+            // NoBringToFrontOnFocus is what stops a click on the dimmed area raising the scrim over
+            // the prompt it is meant to sit behind. What it ALSO does is stop SetNextWindowFocus
+            // from raising it at all: ImGui's FocusWindow skips the display-order bring-to-front for
+            // any window carrying it. So with the flag set from the start the scrim took focus and
+            // stayed exactly where it already was in the z-order - underneath the main window,
+            // covered by it, dimming nothing. It drew every frame and was never once visible.
+            //
+            // Splitting it in two gets both halves: the opening frame raises the scrim above the
+            // window, the sheet is submitted immediately after and raises above the scrim, and from
+            // the next frame the flag pins that order against anything the player clicks.
+            ImGuiWindowFlags scrimFlags = SheetWindowFlags;
             if (sheetNeedsFocus)
                 ImGui.SetNextWindowFocus();
+            else
+                scrimFlags |= ImGuiWindowFlags.NoBringToFrontOnFocus;
 
             // Neutral, and heavy. A wash tinted towards the old warm ground does nothing over
             // #000000 - the only thing it can darken is the content sitting on top.
@@ -272,7 +303,7 @@ namespace PfPresets
             // separation - the layer behind stops being readable and stops competing - and depth
             // is the other way of buying it, so the wash goes to where the body underneath is
             // present but not worth looking at.
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0f, 0f, 0f, 0.78f));
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, ScrimWash);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, DeviceMetrics.ScreenRadius(config.Device));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
@@ -280,13 +311,7 @@ namespace PfPresets
             bool clicked = false;
             try
             {
-                // NoBringToFrontOnFocus, and it is load-bearing. The scrim is placed above the
-                // screen once, when the sheet opens; without this flag, clicking it would raise it
-                // again - this time above the sheet - and the sheet would vanish behind its own
-                // backdrop. Harmless for the sheets that a scrim click closes, fatal for the editor,
-                // which deliberately ignores one.
-                if (ImGui.Begin("##PfaScrim",
-                        SheetWindowFlags | ImGuiWindowFlags.NoBringToFrontOnFocus))
+                if (ImGui.Begin("##PfaScrim", scrimFlags))
                 {
                     ImGui.InvisibleButton("##scrimhit", screenSize);
                     clicked = ImGui.IsItemClicked();
@@ -300,6 +325,82 @@ namespace PfPresets
             }
 
             return clicked;
+        }
+
+        /// <summary>
+        /// The wash, shared by the scrim over the screen and the seal over every other surface.
+        ///
+        /// One constant because they are one layer conceptually - a prompt dims THE PLUGIN, not
+        /// just the window it happened to open from - and two numbers that drifted apart would make
+        /// the overlays look like a separate, lighter kind of unavailable.
+        /// </summary>
+        private static readonly Vector4 ScrimWash = new(0f, 0f, 0f, 0.78f);
+
+        // ══════════════════════════════════════════════════════════
+        //  BLOCKING THE REST OF THE PLUGIN
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// True while a prompt is up and nothing else this plugin draws may be touched.
+        ///
+        /// THE SCRIM WAS ONLY EVER HALF THE JOB. It covers the screen's rectangle, which makes the
+        /// main window properly modal - but the plugin also draws seven windows anchored to the
+        /// GAME rather than to the screen: the button beside Recruit Members, the Save as Preset
+        /// button under a listing, the listing panel, the leader's score, the checklist, the
+        /// welcome card and the rating prompt. All of those sit outside the scrim's rectangle, so a
+        /// question waiting for an answer could be walked away from by pressing one of them - and
+        /// several of them start work, which is exactly what a prompt is meant to hold back.
+        ///
+        /// Live-checked rather than just "a sheet is set". A sheet whose state has gone away closes
+        /// itself on the next draw (see <see cref="SheetIsLive"/>); blocking on the flag alone would
+        /// leave the whole plugin inert for a frame after the prompt was already over, and if
+        /// anything ever re-opened a dead sheet every frame it would leave it inert for good.
+        /// </summary>
+        private bool PromptBlocksInput =>
+            activeSheet != SheetKind.None && screenRectValid && SheetIsLive(activeSheet);
+
+        /// <summary>
+        /// What a game-anchored window adds to its flags while a prompt is up.
+        ///
+        /// NoInputs is the whole of it: it covers mouse, keyboard and nav in one, so the window
+        /// cannot be clicked, dragged or tabbed into. NoBringToFrontOnFocus rides along for the
+        /// same reason the main window takes it - a window that comes forward while a prompt is
+        /// open can end up drawn over the prompt it was supposed to be waiting for.
+        /// </summary>
+        private ImGuiWindowFlags PromptBlockFlags => PromptBlocksInput
+            ? ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBringToFrontOnFocus
+            : ImGuiWindowFlags.None;
+
+        /// <summary>
+        /// Washes out the window currently being drawn, so it reads as unavailable rather than
+        /// merely unresponsive.
+        ///
+        /// CALLED LAST, INSIDE THE WINDOW. It paints into that window's own draw list, which is
+        /// appended to - so calling it at the end of the content puts it over the content, and
+        /// keeps it correctly behind any window submitted later, including the prompt itself. A
+        /// foreground draw list would have been one line shorter and would have painted over the
+        /// prompt too.
+        ///
+        /// Style rounding rather than a constant: these windows round their corners by different
+        /// amounts, and a square wash over a rounded card leaves four lit corners.
+        /// </summary>
+        private void SealOverlayIfPrompted()
+        {
+            if (!PromptBlocksInput)
+                return;
+
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 pos = ImGui.GetWindowPos();
+            Vector2 size = ImGui.GetWindowSize();
+
+            // WIDEN THE CLIP FIRST. While content is being submitted the draw list is clipped to
+            // the window's inner region, so a wash drawn straight into it stops at the padding and
+            // leaves a lit frame all the way round - which reads as a card that is still live.
+            // Pushed and popped around the one rectangle so nothing else sees the wider clip.
+            dl.PushClipRect(pos, pos + size, false);
+            dl.AddRectFilled(pos, pos + size,
+                ImGui.ColorConvertFloat4ToU32(ScrimWash), ImGui.GetStyle().WindowRounding);
+            dl.PopClipRect();
         }
 
         private const ImGuiWindowFlags SheetWindowFlags =

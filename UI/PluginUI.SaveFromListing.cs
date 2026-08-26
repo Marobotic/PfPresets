@@ -69,7 +69,7 @@ namespace PfPresets
 
             try
             {
-                if (ImGui.Begin("##PfPresetsSaveListing", flags))
+                if (ImGui.Begin("##PfPresetsSaveListing", flags | PromptBlockFlags))
                 {
                     Vector2 btnPos = ImGui.GetCursorScreenPos();
 
@@ -97,6 +97,8 @@ namespace PfPresets
                         if (ImGui.IsItemHovered())
                             PaddedTooltip("Create a preset from the listing you're viewing.");
                     }
+
+                    SealOverlayIfPrompted();
                 }
             }
             finally

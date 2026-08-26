@@ -165,11 +165,12 @@ namespace PfPresets
 
             try
             {
-                if (ImGui.Begin("##PfPresetsRatingPrompt", flags))
+                if (ImGui.Begin("##PfPresetsRatingPrompt", flags | PromptBlockFlags))
                 {
                     try
                     {
                         DrawPromptBody(encounter, visibleRows);
+                        SealOverlayIfPrompted();
                     }
                     finally
                     {

@@ -145,6 +145,9 @@ namespace PfPresets
         /// <summary>Serialises session creation so eight concurrent lookups can't each mint a token.</summary>
         private readonly SemaphoreSlim sessionLock = new(1, 1);
 
+        /// <summary>Set before teardown so calls parked on the wire don't touch disposed state.</summary>
+        private volatile bool disposed;
+
         private string? sessionToken;
         private DateTime sessionExpiresUtc = DateTime.MinValue;
 
@@ -735,7 +738,16 @@ namespace PfPresets
             if (IsSessionUsable(identity))
                 return sessionToken;
 
-            await sessionLock.WaitAsync(cancel.Token).ConfigureAwait(false);
+            try
+            {
+                await sessionLock.WaitAsync(cancel.Token).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Cancelled or torn down while queueing: there's no session to hand back.
+                return null;
+            }
+
             try
             {
                 // Another caller may have refreshed it while we waited.
@@ -784,7 +796,19 @@ namespace PfPresets
             }
             finally
             {
-                sessionLock.Release();
+                // Dispose() can land while this call is parked on the HTTP round-trip. Releasing a
+                // disposed semaphore throws on a thread pool thread with nothing to catch it, which
+                // takes the whole game down rather than just this request.
+                if (!disposed)
+                {
+                    try
+                    {
+                        sessionLock.Release();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                }
             }
         }
 
@@ -864,11 +888,14 @@ namespace PfPresets
 
         public void Dispose()
         {
+            disposed = true;
             try
             {
                 cancel.Cancel();
                 cancel.Dispose();
-                sessionLock.Dispose();
+                // sessionLock is deliberately left undisposed: callers still unwind their finally
+                // block after unload, and SemaphoreSlim only needs disposal once its
+                // AvailableWaitHandle has been allocated, which this class never does.
                 http.Dispose();
             }
             catch (Exception)

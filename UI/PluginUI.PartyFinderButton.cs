@@ -139,7 +139,7 @@ namespace PfPresets
 
             try
             {
-                if (ImGui.Begin("##PfPresetsOpenFromPf", flags))
+                if (ImGui.Begin("##PfPresetsOpenFromPf", flags | PromptBlockFlags))
                 {
                     Vector2 btnPos = ImGui.GetCursorScreenPos();
 
@@ -154,6 +154,8 @@ namespace PfPresets
                         // The label names the plugin now, so the tooltip is where the job goes -
                         // otherwise the two say the same thing twice.
                         PaddedTooltip("Post a saved recruitment preset, and see who joins you.");
+
+                    SealOverlayIfPrompted();
                 }
             }
             finally

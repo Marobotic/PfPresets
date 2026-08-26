@@ -34,6 +34,17 @@ namespace PfPresets
         /// <summary>"All locations" and the field zones, for the FATEs category.</summary>
         private List<DutyEntry>? cachedFateZones;
 
+        /// <summary>The four deep dungeons, as the game offers them - one entry each, not one per
+        /// floor set. See <see cref="LoadDeepDungeons"/>.</summary>
+        private List<DutyEntry>? cachedDeepDungeons;
+
+        /// <summary>"All Levels", then the treasure maps. See <see cref="LoadTreasureMaps"/>.</summary>
+        private List<DutyEntry>? cachedTreasureMaps;
+
+        /// <summary>The Gold Saucer's fifteen, from three different places. See
+        /// <see cref="LoadGoldSaucer"/>.</summary>
+        private List<DutyEntry>? cachedGoldSaucer;
+
         /// <summary>
         /// Row ids at or above this are synthetic: entries we add for high-end duties missing from
         /// the ContentFinderCondition sheet. They are assigned in list order, so they can shift
@@ -63,48 +74,112 @@ namespace PfPresets
         /// </summary>
         public const uint FateZoneRowIdStart = 600000;
 
+        /// <summary>
+        /// The deep dungeons, in their own space for the same reason as the two above: these are
+        /// DeepDungeon rows, numbered from 1, and 1 to 4 are real dungeons in
+        /// ContentFinderCondition.
+        /// </summary>
+        public const uint DeepDungeonRowIdStart = 700000;
+
+        /// <summary>
+        /// The treasure maps, in their own space again. These are TreasureHuntRank rows, numbered
+        /// from 1, and 1 to 30 are real dungeons in ContentFinderCondition.
+        /// </summary>
+        public const uint TreasureMapRowIdStart = 800000;
+
+        /// <summary>
+        /// The Gold Saucer's entries, in their own space. They come from three sheets and one of
+        /// them is not a sheet at all, so there is no single row space they could share.
+        /// </summary>
+        public const uint GoldSaucerRowIdStart = 900000;
+
         /// <summary>True for a roulette, per <see cref="RouletteRowIdStart"/>.</summary>
         public static bool IsRouletteRowId(uint rowId) =>
             rowId >= RouletteRowIdStart && rowId < FateZoneRowIdStart;
 
         /// <summary>True for a FATE location, per <see cref="FateZoneRowIdStart"/>.</summary>
         public static bool IsFateZoneRowId(uint rowId) =>
-            rowId >= FateZoneRowIdStart && rowId < SyntheticRowIdStart;
+            rowId >= FateZoneRowIdStart && rowId < DeepDungeonRowIdStart;
+
+        /// <summary>True for a deep dungeon, per <see cref="DeepDungeonRowIdStart"/>.</summary>
+        public static bool IsDeepDungeonRowId(uint rowId) =>
+            rowId >= DeepDungeonRowIdStart && rowId < TreasureMapRowIdStart;
+
+        /// <summary>True for a treasure map, per <see cref="TreasureMapRowIdStart"/>.</summary>
+        public static bool IsTreasureMapRowId(uint rowId) =>
+            rowId >= TreasureMapRowIdStart && rowId < GoldSaucerRowIdStart;
+
+        /// <summary>True for a Gold Saucer entry, per <see cref="GoldSaucerRowIdStart"/>.</summary>
+        public static bool IsGoldSaucerRowId(uint rowId) =>
+            rowId >= GoldSaucerRowIdStart && rowId < SyntheticRowIdStart;
 
         /// <summary>
         /// The number the game wants in its SelectedDutyId field for this entry, or 0 for "any duty
         /// in the category".
         ///
-        /// One field, three id spaces, and which one applies is decided by the category the listing
-        /// is posted under - so this is the single place the plugin's offsets come back off. Zero
-        /// for the synthetic high-end entries, whose ids are ours alone and mean nothing to the
-        /// game, and zero for "All locations", which is what that option is.
+        /// One field, four id spaces, and which one applies is said by the byte beside it rather
+        /// than by the category - see <see cref="SpecificDutyFlag"/>. This is the single place the
+        /// plugin's own offsets come back off.
+        ///
+        /// ALWAYS A NUMBER NOW. It used to be able to answer "I cannot encode this - leave whatever
+        /// the client has", which sounded careful and was not: the client's field is not updated by
+        /// the selection this plugin makes, so what it holds is the duty the LAST listing used. Two
+        /// categories shipped that way and both silently posted the previous listing's duty. Zero -
+        /// the whole category - is the honest version of not knowing, and every id space is now
+        /// known anyway.
         /// </summary>
-        public static ushort? GameDutyId(DutyEntry duty)
+        public static ushort GameDutyId(DutyEntry duty)
         {
             if (IsSyntheticRowId(duty.RowId))
                 return 0;
 
-            // A FATE LOCATION HAS NO ID THE LISTING CAN CARRY, so it sends none.
+            // A FATE LOCATION SENDS ITS TERRITORY, which is the one thing nobody tried.
             //
-            // These entries are TerritoryType rows, and a TerritoryType id written into the duty
-            // field is read as a ContentFinderCondition id - a number that means a zone becomes a
-            // number that means some dungeon. The client then takes the category from the duty it
-            // was handed, so a FATE listing came out filed under whatever that dungeon was. Zero
-            // is "anywhere in this category", which is what the category's own default says
-            // anyway, and it keeps the category right.
+            // This used to send nothing, on the reasoning that a TerritoryType id in the duty field
+            // would be read as a ContentFinderCondition id and file the listing under some dungeon.
+            // The client says otherwise: set a zone by hand and the field holds the TerritoryType
+            // row itself - 134 for Middle La Noscea, 1192 for Living Memory, the first and last of
+            // the forty-eight. Like the deep dungeons and the treasure maps, this category numbers
+            // its own content, and the byte beside it stays 0 to say so.
+            //
+            // "All locations" carries the base of the band, so this arithmetic gives it 0 without
+            // needing a case of its own - and 0 is what the client puts there for it.
             if (IsFateZoneRowId(duty.RowId))
-                return null;
+            {
+                uint territory = duty.RowId - FateZoneRowIdStart;
+                return territory <= ushort.MaxValue ? (ushort)territory : (ushort)0;
+            }
 
-            // A roulette id is only a roulette id under Duty Roulette. Crystalline Conflict is a
-            // ContentRoulette row like the duty roulettes are, but it is posted under PvP - and 40
-            // read against PvP is ContentFinderCondition 40, an unrelated duty, which took the
-            // category with it exactly as above. Only content type 1 may send its roulette number;
-            // the rest keep whatever the dropdown selection put there.
+            // A DEEP DUNGEON HAS AN ID OF ITS OWN, AND IT IS NOT IN ANY SHEET. See
+            // DeepDungeonDutyId - the number is read off the running client, one dungeon at a time,
+            // and the ones nobody has read yet fall back to leaving the client's own selection
+            // alone rather than sending something invented.
+            if (IsDeepDungeonRowId(duty.RowId))
+                return DeepDungeonDutyId(duty.RowId - DeepDungeonRowIdStart);
+
+            // A TREASURE MAP IS NUMBERED BY WHERE IT SITS IN THE LIST, which is why it carries the
+            // number rather than having one worked out from its row - see DutyEntry.ListingDutyId
+            // and LoadTreasureMaps.
+            if (IsTreasureMapRowId(duty.RowId))
+                return duty.ListingDutyId;
+
+            // THE GOLD SAUCER COUNTS FROM 12, for no reason anybody can see - GATEs is 12 and the
+            // last Mahjong table is 26, fifteen entries apart in both. Carried on the entry for the
+            // same reason as a treasure map's: it is a property of the list, not of the row.
+            if (IsGoldSaucerRowId(duty.RowId))
+                return duty.ListingDutyId;
+
+            // A ROULETTE SENDS ITS ROULETTE ROW, UNDER EITHER CATEGORY. This used to send it only
+            // under Duty Roulette, because 40 read against PvP is ContentFinderCondition 40 - an
+            // unrelated duty, which took the category with it - and Crystalline Conflict is a
+            // ContentRoulette row posted under PvP.
+            //
+            // Which sheet the number is read against is not decided by the category at all. It is
+            // the byte beside it, and Crystalline Conflict set by hand is SelectedDutyId 40 with
+            // that byte at 1 - see SpecificDutyFlag. There was never a conflict to resolve, only a
+            // second number that had not been noticed.
             if (IsRouletteRowId(duty.RowId))
-                return duty.ContentTypeId == 1
-                    ? (ushort)(duty.RowId - RouletteRowIdStart)
-                    : null;
+                return (ushort)(duty.RowId - RouletteRowIdStart);
 
             return duty.RowId <= ushort.MaxValue ? (ushort)duty.RowId : (ushort)0;
         }
@@ -191,6 +266,9 @@ namespace PfPresets
                         UiCategoryId = row.ContentUICategory.RowId,
                         ContentLinkType = row.ContentLinkType,
                         ContentRowId = row.Content.RowId,
+                        QueueMaxPlayers = row.QueueMaxPlayers,
+                        ContentMemberType = row.ContentMemberType.RowId,
+                        SortKey = row.SortKey,
 
                         // UnlockType names which sheet UnlockCriteria points into, and 1 is Quest.
                         // The other values (2, 3, 4 - one row each) point somewhere this plugin
@@ -233,6 +311,9 @@ namespace PfPresets
 
                 LoadRoulettes();
                 LoadFateZones();
+                LoadDeepDungeons();
+                LoadTreasureMaps();
+                LoadGoldSaucer();
 
                 // Sort alphabetically within each content type (excluding our ordered High-end Duty type which is handled in GetDutiesByType)
                 cachedDuties = cachedDuties
@@ -300,6 +381,9 @@ namespace PfPresets
                     if (RouletteKindOf(row.RowId) == RouletteKind.Mentor)
                         continue;
 
+                    if (IsSoloQueue(row.QueueMaxPlayers))
+                        continue;
+
                     string name = row.Name.ToString();
                     if (string.IsNullOrWhiteSpace(name))
                         continue;
@@ -364,6 +448,8 @@ namespace PfPresets
                 },
             };
 
+            RegisterCategoryWideEntry(cachedFateZones[0]);
+
             try
             {
                 var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();
@@ -395,6 +481,14 @@ namespace PfPresets
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var row in sheet)
                 {
+                    // Row 0 is skipped for the reason the treasure maps skip theirs: this band's
+                    // base id belongs to "All locations", and a sheet row numbered 0 would land on
+                    // it and quietly replace it. Nothing in TerritoryType row 0 is a field zone, so
+                    // this changes no answer - it just makes the collision impossible rather than
+                    // improbable.
+                    if (row.RowId == 0)
+                        continue;
+
                     // 1 is the open world. Everything else is a city, an instance, a housing ward
                     // or an inn room, and none of those has a FATE in it.
                     if (row.TerritoryIntendedUse.RowId != 1)
@@ -418,7 +512,7 @@ namespace PfPresets
 
                     cachedFateZones.Add(entry);
                     cachedDuties!.Add(entry);
-                    dutyById![entry.RowId] = entry;
+                    RegisterById(entry);
                 }
 
                 pluginLog.Information($"Loaded {cachedFateZones.Count - 1} FATE location(s) from Lumina data.");
@@ -427,6 +521,543 @@ namespace PfPresets
             {
                 pluginLog.Error(ex, "Failed to load FATE locations from Lumina.");
             }
+        }
+
+        /// <summary>
+        /// Builds the Deep Dungeons list: one entry per dungeon, which is what the game asks for.
+        ///
+        /// THE SHEET IS SPLIT BY FLOOR AND THE PARTY FINDER IS NOT. ContentFinderCondition carries
+        /// a row per floor set - "the Palace of the Dead (Floors 51-60)", forty-odd of them across
+        /// the four dungeons - because that is what the Duty Finder queues you for. The recruitment
+        /// window offers four choices: Pilgrim's Traverse, Eureka Orthos, Heaven-on-High, the Palace
+        /// of the Dead. The editor was listing the sheet, so every name it offered was a name the
+        /// game's own dropdown does not have, the by-name selection found nothing, and the id left
+        /// behind meant some unrelated dungeon.
+        ///
+        /// The four names come from the DeepDungeon sheet, which is the game's own naming of
+        /// exactly these four things and is localised with the client. Newest first, which is the
+        /// order the recruitment window lists them in and the reverse of the sheet's.
+        ///
+        /// EVERY NAME IS CHECKED AGAINST THE SHEET IT HAS TO MATCH. A dungeon is only offered once
+        /// its floor rows have been found by it - ContentFinderCondition names them "&lt;dungeon&gt;
+        /// &lt;floors&gt;" in every language, so the dungeon's own name is their prefix. That join is
+        /// what the unlock check needs anyway, and it doubles as proof that the name is the one the
+        /// game uses: a name that matches no floor is a name the dropdown will not have either, and
+        /// it is dropped rather than offered.
+        /// </summary>
+        private void LoadDeepDungeons()
+        {
+            cachedDeepDungeons = new List<DutyEntry>();
+
+            try
+            {
+                var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.DeepDungeon>();
+                if (sheet == null)
+                {
+                    pluginLog.Warning("DeepDungeon sheet not found.");
+                    return;
+                }
+
+                // The floor rows, as they already stand in the duty list. Read once: this runs
+                // inside GetAllDuties, where cachedDuties is built but not yet sorted.
+                var floors = cachedDuties!
+                    .Where(d => string.Equals(d.ContentTypeName, DeepDungeonContentType, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                foreach (var row in sheet.OrderByDescending(r => r.RowId))
+                {
+                    string name = row.Name.ToString();
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    var mine = floors
+                        .Where(f => f.Name.StartsWith(name, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (mine.Count == 0)
+                    {
+                        pluginLog.Warning($"Deep dungeon '{name}' matches no floor in ContentFinderCondition; not offering it.");
+                        continue;
+                    }
+
+                    var entry = new DutyEntry
+                    {
+                        RowId = DeepDungeonRowIdStart + row.RowId,
+                        Name = name,
+                        ContentTypeId = mine[0].ContentTypeId,
+                        ContentTypeName = DeepDungeonContentType,
+                        ExVersionId = mine[0].ExVersionId,
+                        ClassJobLevelRequired = mine[0].ClassJobLevelRequired,
+                        IsInDutyFinder = true,
+                        FloorRowIds = mine.Select(f => f.RowId).ToArray(),
+                    };
+
+                    cachedDeepDungeons.Add(entry);
+                    cachedDuties!.Add(entry);
+                    dutyById![entry.RowId] = entry;
+                }
+
+                pluginLog.Information($"Loaded {cachedDeepDungeons.Count} deep dungeon(s) from Lumina data.");
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Error(ex, "Failed to load deep dungeons from Lumina.");
+            }
+        }
+
+        /// <summary>The ContentType name the deep dungeon floors are filed under, which is also the
+        /// Party Finder category's name.</summary>
+        private const string DeepDungeonContentType = "Deep Dungeons";
+
+        /// <summary>The Party Finder category name for treasure hunts.</summary>
+        private const string TreasureHuntContentType = "Treasure Hunt";
+
+        /// <summary>The Party Finder category name for the Gold Saucer.</summary>
+        private const string GoldSaucerContentType = "Gold Saucer";
+
+        /// <summary>The Addon row holding the "GATEs" label, localised with the client.</summary>
+        private const uint GatesAddonRowId = 2308;
+
+        /// <summary>ContentMemberType for the Lord of Verminion battles.</summary>
+        private const uint VerminionMemberType = 10;
+
+        /// <summary>What the client's first Gold Saucer entry is numbered. GATEs is 12 and the last
+        /// Mahjong table is 26, which is fifteen entries later in a list of fifteen.</summary>
+        private const ushort GoldSaucerDutyIdBase = 12;
+
+        /// <summary>Sub-band for the chocobo races, which are ContentRoulette rows.</summary>
+        private const uint GoldSaucerRaceOffset = 1000;
+
+        /// <summary>Sub-band for the Gold Saucer's ContentFinderCondition rows.</summary>
+        private const uint GoldSaucerDutyOffset = 2000;
+
+        /// <summary>
+        /// Builds the Gold Saucer list: GATEs, the chocobo races, then the tables.
+        ///
+        /// THREE SOURCES, AND ONE OF THEM IS NOT A DUTY SHEET. This is the only category whose list
+        /// cannot be read out of one place:
+        ///
+        ///   GATEs         - not in ContentFinderCondition at all. The whole sheet has nothing by
+        ///                   that name; the label is a UI string, Addon row 2308, which is at least
+        ///                   localised with the client the way every other name here is.
+        ///   Chocobo races - ContentRoulette rows flagged IsGoldSaucer, the same rows LoadRoulettes
+        ///                   deliberately skips. Eight of them: four courses, each with a no-rewards
+        ///                   twin.
+        ///   The tables    - ContentFinderCondition rows, the Triple Triad pair and the four
+        ///                   Four-player Mahjong tables.
+        ///
+        /// THE ORDER IS LOAD-BEARING HERE IN A WAY IT IS NOWHERE ELSE. The duty field carries the
+        /// entry's position in this list, not any row id - so an entry too many, one missing, or two
+        /// in the wrong order does not misname one duty, it shifts every duty after it and posts
+        /// listings for the wrong game entirely. Both the sources and the sort are chosen to
+        /// reproduce the window exactly: GATEs first, then the races by their roulette SortKey, then
+        /// the tables by theirs.
+        ///
+        /// WHAT IS LEFT OUT, and why the count comes to fifteen. Every Verminion battle: five are
+        /// solo queues that IsSoloQueue already drops, and the sixth - Player Battle (Non-RP) -
+        /// carries no limit but is the same one-on-one content, so the group goes by its member
+        /// type. The ranked Mahjong tables go as solo queues. The training races and the Verminion
+        /// stages are not in the duty finder at all.
+        /// </summary>
+        private void LoadGoldSaucer()
+        {
+            cachedGoldSaucer = new List<DutyEntry>();
+
+            try
+            {
+                string gates = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Addon>()
+                    ?.GetRowOrDefault(GatesAddonRowId)?.Text.ToString() ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(gates))
+                {
+                    AddGoldSaucerEntry(new DutyEntry
+                    {
+                        RowId = GoldSaucerRowIdStart,
+                        Name = gates,
+                        ContentTypeName = GoldSaucerContentType,
+                        IsInDutyFinder = true,
+                    });
+                }
+                else
+                {
+                    pluginLog.Warning("The GATEs label is missing; every Gold Saucer entry after it would be numbered one short, so the category is left empty.");
+                    return;
+                }
+
+                var races = new List<(byte Sort, DutyEntry Entry)>();
+                var roulettes = dataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentRoulette>();
+                if (roulettes != null)
+                {
+                    var seenRace = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var row in roulettes)
+                    {
+                        if (!row.IsInDutyFinder || !row.IsGoldSaucer || IsSoloQueue(row.QueueMaxPlayers))
+                            continue;
+
+                        string name = row.Name.ToString();
+                        if (string.IsNullOrWhiteSpace(name) || !seenRace.Add(name))
+                            continue;
+
+                        races.Add((row.SortKey, new DutyEntry
+                        {
+                            RowId = GoldSaucerRowIdStart + GoldSaucerRaceOffset + row.RowId,
+                            Name = name,
+                            ContentTypeName = GoldSaucerContentType,
+                            IsInDutyFinder = true,
+                        }));
+                    }
+                }
+
+                foreach (var race in races.OrderBy(r => r.Sort))
+                    AddGoldSaucerEntry(race.Entry);
+
+                var tables = new List<DutyEntry>();
+                foreach (var duty in cachedDuties!)
+                {
+                    if (!string.Equals(duty.ContentTypeName, GoldSaucerContentType, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!duty.IsInDutyFinder || IsSoloQueue(duty.QueueMaxPlayers))
+                        continue;
+                    if (duty.ContentMemberType == VerminionMemberType)
+                        continue;
+
+                    tables.Add(duty);
+                }
+
+                foreach (var table in tables.OrderBy(d => d.SortKey).ThenBy(d => d.RowId))
+                {
+                    AddGoldSaucerEntry(new DutyEntry
+                    {
+                        RowId = GoldSaucerRowIdStart + GoldSaucerDutyOffset + table.RowId,
+                        Name = table.Name,
+                        ContentTypeName = GoldSaucerContentType,
+                        IsInDutyFinder = true,
+                    });
+                }
+
+                pluginLog.Information($"Loaded {cachedGoldSaucer.Count} Gold Saucer entries (ids {GoldSaucerDutyIdBase} to {GoldSaucerDutyIdBase + cachedGoldSaucer.Count - 1}).");
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Error(ex, "Failed to load Gold Saucer entries from Lumina.");
+            }
+        }
+
+        /// <summary>Appends an entry and stamps it with the number its position earns it.</summary>
+        private void AddGoldSaucerEntry(DutyEntry entry)
+        {
+            entry.ListingDutyId = (ushort)(GoldSaucerDutyIdBase + cachedGoldSaucer!.Count);
+            cachedGoldSaucer.Add(entry);
+            cachedDuties!.Add(entry);
+            RegisterById(entry);
+        }
+
+        /// <summary>
+        /// Puts a band's "the whole category" entry into the same two lookups every other entry
+        /// goes into.
+        ///
+        /// IT WAS IN NEITHER. "All Levels" and "All locations" are built in a list initialiser and
+        /// the registrations all sit inside the loops that follow, so these two alone were absent
+        /// from dutyById - which meant every preset that named one failed its id lookup and fell
+        /// through to matching by name. That path works right up until it does not: its last resort
+        /// is a substring match in either direction, so a name that has moved or been translated
+        /// resolves to whichever entry happens to contain it rather than to nothing.
+        ///
+        /// The id is the thing that is meant to be authoritative here. It could not be, for the two
+        /// entries whose whole job is to be the safe answer.
+        /// </summary>
+        private void RegisterCategoryWideEntry(DutyEntry entry)
+        {
+            cachedDuties!.Add(entry);
+            RegisterById(entry);
+        }
+
+        /// <summary>
+        /// Puts an entry in the by-id lookup, and says so when it displaces a different one.
+        /// 
+        /// SILENCE HERE COST A CRASH. Two entries landed on the same id - a sheet row numbered from
+        /// 0 inside a band whose base is already spoken for - and the second simply replaced the
+        /// first. Everything downstream then worked perfectly on the wrong duty: the preset resolved,
+        /// the name looked plausible, the number was real, and the only visible symptom was the
+        /// wrong map being posted. Nothing in the lookup is supposed to be ambiguous, so a
+        /// replacement is a bug every time and now leaves a line saying which two.
+        /// </summary>
+        private void RegisterById(DutyEntry entry)
+        {
+            if (dutyById!.TryGetValue(entry.RowId, out var existing) && existing.Name != entry.Name)
+                pluginLog.Warning($"Duty row id {entry.RowId} is claimed twice: '{existing.Name}' replaced by '{entry.Name}'.");
+
+            dutyById[entry.RowId] = entry;
+        }
+
+        /// <summary>
+        /// Whether this entry is a band's "the whole category" option - "All Levels", "All
+        /// locations" - rather than one of the things in it.
+        ///
+        /// Each band puts that option on its base row, so a zero duty id from one of these is the
+        /// answer and not a gap. Without this the log warns about an unmeasured number every time
+        /// somebody deliberately asks for all of them.
+        /// </summary>
+        public static bool IsCategoryWideEntry(uint rowId) =>
+            rowId == TreasureMapRowIdStart || rowId == FateZoneRowIdStart;
+
+        /// <summary>
+        /// Builds the Treasure Hunt list: "All Levels", then the maps.
+        ///
+        /// THE MAP, NOT THE DUNGEON IT OPENS. The editor was listing ContentFinderCondition again -
+        /// the Aquapolis, the Excitatron 6000, the Shifting Oubliettes of Lyhe Ghiah - which are the
+        /// instances a map can lead into. The recruitment window asks which map you are holding:
+        /// Leather, Goatskin, Gargantuaskin, the special ones. Not one name overlapped, so nothing
+        /// the editor offered could be found in the game's own dropdown.
+        ///
+        /// The names come from TreasureHuntRank, through KeyItemName into EventItem - the deciphered
+        /// map, the key item, which is the wording the window uses. The Item link on the same row is
+        /// the undeciphered map and is named differently ("Timeworn Leather Map"), so it is the
+        /// wrong one of the two to follow.
+        ///
+        /// TWO ROWS ARE LEFT OUT, and the sheet says which: TreasureHuntTexture is 0 for an ordinary
+        /// map and the Alexandrite Map and the Thorne Dynasty Map are 1 and 2. Those two are quest
+        /// maps rather than treasure hunt content and the game does not offer them. Texture 4 - the
+        /// Fabled Thief's Map - IS offered, so this excludes the two rather than keeping only the
+        /// zero. Observed against the game's own list, which the remaining rows then match in order,
+        /// name for name.
+        ///
+        /// "All Levels" comes first and is 0 - the game's own way of saying "any of them", and the
+        /// wording the window uses for it.
+        ///
+        /// THE NUMBER IS THE POSITION, not the row. The client sends 1 for the first map, 2 for the
+        /// second, and 24 for Gargantuaskin, which is the twenty-fourth and last - not 30, which is
+        /// its TreasureHuntRank row. Read off the client at both ends of the list.
+        ///
+        /// That is also what proves the two exclusions above are the right two. The count has to
+        /// come out exactly: leave the Alexandrite and Thorne Dynasty maps in and the last map is
+        /// the twenty-sixth, drop the Fabled Thief's Map as well and it is the twenty-third. Only
+        /// this list puts it on 24, so the filter is checked by the same measurement that gives the
+        /// numbering rather than resting on the screenshot it came from.
+        /// </summary>
+        private void LoadTreasureMaps()
+        {
+            cachedTreasureMaps = new List<DutyEntry>
+            {
+                new DutyEntry
+                {
+                    RowId = TreasureMapRowIdStart,
+                    Name = "All Levels",
+                    ContentTypeId = 0,
+                    ContentTypeName = TreasureHuntContentType,
+                },
+            };
+
+            RegisterCategoryWideEntry(cachedTreasureMaps[0]);
+
+            try
+            {
+                var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.TreasureHuntRank>();
+                if (sheet == null)
+                {
+                    pluginLog.Warning("TreasureHuntRank sheet not found.");
+                    return;
+                }
+
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var row in sheet)
+                {
+                    // ROW 0 IS A DUPLICATE OF ROW 1, and it is the one that must go. Both hold the
+                    // Leather Treasure Map's key item, so the dedupe below drops one of them either
+                    // way - but it drops whichever it meets first, and meeting row 0 first put
+                    // Leather on TreasureMapRowIdStart + 0, which is the id "All Levels" occupies.
+                    // Leather then replaced it in the lookup, and every All Levels preset resolved
+                    // to Leather and posted as Leather.
+                    if (row.RowId == 0)
+                        continue;
+
+                    if (row.TreasureHuntTexture is QuestMapTexture or DynastyMapTexture)
+                        continue;
+
+                    string name = row.KeyItemName.ValueNullable?.Name.ToString() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(name) || !seen.Add(name))
+                        continue;
+
+                    var entry = new DutyEntry
+                    {
+                        RowId = TreasureMapRowIdStart + row.RowId,
+                        Name = name,
+                        ContentTypeId = 0,
+                        ContentTypeName = TreasureHuntContentType,
+                        IsInDutyFinder = true,
+
+                        // Its place in this list IS the number the client wants - and "All Levels"
+                        // already occupies index 0, which is the number that means all of them, so
+                        // the count so far is the answer at the moment of adding.
+                        ListingDutyId = (ushort)cachedTreasureMaps.Count,
+                    };
+
+                    cachedTreasureMaps.Add(entry);
+                    cachedDuties!.Add(entry);
+                    RegisterById(entry);
+                }
+
+                pluginLog.Information($"Loaded {cachedTreasureMaps.Count - 1} treasure map(s) from Lumina data.");
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Error(ex, "Failed to load treasure maps from Lumina.");
+            }
+        }
+
+        /// <summary>TreasureHuntRank.TreasureHuntTexture for the Alexandrite Map, a relic quest map
+        /// the Party Finder does not offer.</summary>
+        private const byte QuestMapTexture = 1;
+
+        /// <summary>TreasureHuntRank.TreasureHuntTexture for the Thorne Dynasty Map, the other one
+        /// the Party Finder does not offer.</summary>
+        private const byte DynastyMapTexture = 2;
+
+        /// <summary>
+        /// What the client puts in SelectedDutyId for a deep dungeon, keyed by its DeepDungeon row.
+        ///
+        /// MEASURED, NOT DERIVED, because there is nothing to derive it from. Deep Dungeons is a
+        /// fourth id space in that one field: there is no ContentFinderCondition row for a deep
+        /// dungeon at all - the sheet has only its fifty floor sets - and the numbers are not the
+        /// DeepDungeon rows, nor ContentUICategory, which is 0 for every floor. 29 read against any
+        /// other category is Amdapor Keep (Hard).
+        ///
+        /// Read with "/pfpdebug criteria snap", picking the dungeon from the game's own dropdown,
+        /// then "/pfpdebug criteria diff". The byte that moves is +0x10, which is SelectedDutyId.
+        ///
+        /// THE NUMBERS RUN 29 TO 32 IN SHEET ORDER, AND ARE STILL WRITTEN OUT ONE BY ONE. They
+        /// are the DeepDungeon row plus 28, and 28 is a number with no known meaning - it is
+        /// wherever this category's block happens to start, not a rule anybody has seen stated.
+        /// Deriving from it would quietly answer for a fifth deep dungeon that does not exist yet,
+        /// and the sheet is not reliably arithmetic about these things: the same four rows carry
+        /// 9, 10, 11 and then 22 in the column beside their names.
+        ///
+        /// A DUNGEON THAT IS NOT LISTED HERE SENDS 0, not null, and the difference matters. Null
+        /// means "leave whatever the client has", which is what the unmeasured three returned first
+        /// and it was worse than a wrong number being obvious. The client's field is not updated by
+        /// the selection this plugin makes - that turns out to be cosmetic - so what it holds is the
+        /// number the LAST apply put there. All three posted as the Palace of the Dead, silently,
+        /// because 29 was still sitting in the field from the one dungeon that had a number.
+        ///
+        /// Zero is "any duty in this category": visibly not what the preset asked for, and the one
+        /// wrong answer that cannot be mistaken for a right one. A fifth deep dungeon gets that,
+        /// plus a log line naming the command that would fix it.
+        /// </summary>
+        private static ushort DeepDungeonDutyId(uint deepDungeonRowId) => deepDungeonRowId switch
+        {
+            1 => (ushort)29,   // the Palace of the Dead
+            2 => (ushort)30,   // Heaven-on-High
+            3 => (ushort)31,   // Eureka Orthos
+            4 => (ushort)32,   // Pilgrim's Traverse
+            _ => (ushort)0,    // measured 2026-08-25; anything newer has not been read back yet
+        };
+
+        /// <summary>
+        /// What belongs in the specific-duty byte for this entry - see PfAutomation's
+        /// OffsetSpecificDutyFlag.
+        ///
+        /// NOT A BOOLEAN. It was read as one for a long time, because for every category the plugin
+        /// could post it behaves like one: 2 whenever a duty is picked, 0 for "the whole category".
+        /// A deep dungeon says otherwise. The client's own state for the Palace of the Dead is
+        /// SelectedDutyId 29 with this byte at 0 - a specific duty, and a zero - and writing the 2
+        /// that every other category wants blanked the duty on the listing.
+        ///
+        /// It says which sheet the number beside it is a row of. Three values, all read off the
+        /// client:
+        ///
+        ///   0 - the category's own numbering. The deep dungeons (29 to 32), the treasure maps (1 to
+        ///       24, by position), a FATE's TerritoryType row.
+        ///   1 - a ContentRoulette row. Crystalline Conflict set by hand is 40 with a 1.
+        ///   2 - a ContentFinderCondition row. Every dungeon, raid, trial and high-end duty, and the
+        ///       Frontline and Rival Wings maps, which really are ordinary duty rows.
+        ///
+        /// 29 with a 2 beside it is Amdapor Keep (Hard), which is not in that category, and the game
+        /// shows nothing at all. That is the whole failure this byte causes when it is wrong: the
+        /// number is read out of the wrong sheet and names something that cannot be there.
+        ///
+        /// A ZERO ID ALWAYS TAKES A ZERO BYTE, and this one crashed the game to establish it. 2
+        /// tells the client the number beside it is a ContentFinderCondition row; there is no row 0,
+        /// and "All Levels" briefly sent 2 on the theory that it needed marking as deliberate. The
+        /// window looked right and the client took the listing, then faulted the moment it tried to
+        /// populate that listing's detail - inside the game's own code, reached through this
+        /// plugin's ListingXray hook. A number the field cannot resolve is not a display problem.
+        ///
+        /// The theory was wrong anyway: what actually ailed "All Levels" was a row id collision, not
+        /// this byte. See LoadTreasureMaps.
+        ///
+        /// <paramref name="dutyId"/> rather than reading it back off the entry, because the caller
+        /// has already resolved it and the two must not disagree - an entry whose number could not
+        /// be worked out sends 0 and must not be marked as carrying one.
+        /// </summary>
+        public static byte SpecificDutyFlag(DutyEntry duty, ushort dutyId)
+        {
+            if (dutyId == 0)
+                return 0;
+
+            if (IsRouletteRowId(duty.RowId))
+                return 1;
+
+            return IsDeepDungeonRowId(duty.RowId) || IsTreasureMapRowId(duty.RowId)
+                    || IsFateZoneRowId(duty.RowId) || IsGoldSaucerRowId(duty.RowId)
+                ? (byte)0
+                : (byte)2;
+        }
+
+        /// <summary>
+        /// "All Levels", for a preset still pointing at one of the treasure DUNGEONS, or null when
+        /// the entry is not one.
+        ///
+        /// THE SAME PROBLEM AS THE DEEP DUNGEON FLOOR SETS, without the same answer available. The
+        /// editor used to offer the Aquapolis, the Excitatron 6000 and the rest - the instances a
+        /// map opens into - and a preset saved then stores one of their ContentFinderCondition rows,
+        /// somewhere between 179 and 1060. Written into the duty field under this category that is
+        /// not a map at all, and not a number the field has any meaning for.
+        ///
+        /// A floor set can be traced back to its dungeon; a treasure instance cannot be traced back
+        /// to a map, because several maps open into the same one and which of them the preset meant
+        /// was never recorded. So it falls to "All Levels", which is a listing that works and says
+        /// what it is, and the preset can be pointed at a specific map by hand.
+        /// </summary>
+        private DutyEntry? TreasureMapFallback(DutyEntry entry)
+        {
+            if (cachedTreasureMaps == null || cachedTreasureMaps.Count == 0 || IsTreasureMapRowId(entry.RowId))
+                return null;
+
+            if (!string.Equals(entry.ContentTypeName, TreasureHuntContentType, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            return cachedTreasureMaps[0];
+        }
+
+        /// <summary>
+        /// The dungeon a floor set belongs to, or null when the entry is not one.
+        ///
+        /// FOR THE PRESETS THAT WERE SAVED BEFORE THE LIST WAS RIGHT. The editor used to offer the
+        /// floor sets themselves, so a preset from then stores "the Palace of the Dead (Floors
+        /// 1-10)" and its row id - a name the recruitment window has never had, and a number that
+        /// means an unrelated dungeon when it is read against this category. Those presets resolve
+        /// to the dungeon now, which is the thing they were always for; nothing is rewritten on
+        /// disk, so one that predates this still opens in the editor on the entry it now means.
+        ///
+        /// The floor rows stay in the lookup and are deliberately not removed: they are how the
+        /// plugin names the duty someone else's listing is for, and how it works out which floor
+        /// the player is currently standing on.
+        /// </summary>
+        private DutyEntry? DeepDungeonOf(DutyEntry entry)
+        {
+            if (cachedDeepDungeons == null || IsDeepDungeonRowId(entry.RowId))
+                return null;
+
+            if (!string.Equals(entry.ContentTypeName, DeepDungeonContentType, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            foreach (var dungeon in cachedDeepDungeons)
+            {
+                if (Array.IndexOf(dungeon.FloorRowIds, entry.RowId) >= 0)
+                    return dungeon;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -457,6 +1088,21 @@ namespace PfPresets
             if (IsFateZoneRowId(duty.RowId))
                 return IsFateZoneReachable(duty);
 
+            if (IsDeepDungeonRowId(duty.RowId))
+                return IsDeepDungeonUnlocked(duty);
+
+            // A TREASURE MAP HAS NO UNLOCK TO READ. What gates one is having the map in your bags,
+            // which is a thing you hold rather than a thing you have done, and it changes hourly.
+            // The category's own system gate - the treasure hunt quest - is checked separately by
+            // IsCategoryUnlocked and is the real answer to "can this character do this at all".
+            if (IsTreasureMapRowId(duty.RowId))
+                return true;
+
+            // Nor does a Gold Saucer entry. Getting into the Gold Saucer at all is the only gate,
+            // and IsCategoryUnlocked asks that separately.
+            if (IsGoldSaucerRowId(duty.RowId))
+                return true;
+
             return DutyUnlocks.IsUnlocked(duty);
         }
 
@@ -474,6 +1120,27 @@ namespace PfPresets
                 return true;
 
             return DutyUnlocks.AnyAetheryteAttuned(zone.AetheryteIds);
+        }
+
+        /// <summary>
+        /// Whether a deep dungeon is open, which is whether any of its floors is.
+        ///
+        /// The dungeon itself has no unlock record - it is not a ContentFinderCondition row at all,
+        /// see <see cref="LoadDeepDungeons"/> - but its floors each have one, and the first of them
+        /// is the quest that opens the place. The later ones are gated behind clearing the earlier
+        /// ones, so "any" and "the first" are the same answer; any is the one that survives a floor
+        /// set being added or renumbered.
+        /// </summary>
+        private bool IsDeepDungeonUnlocked(DutyEntry dungeon)
+        {
+            foreach (uint rowId in dungeon.FloorRowIds)
+            {
+                var floor = GetDutyEntry(rowId);
+                if (floor != null && DutyUnlocks.IsUnlocked(floor))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -547,7 +1214,7 @@ namespace PfPresets
         {
             // Checked before anything about the character. /pfp apply names a preset directly and
             // does not go through the list, so hiding the card is not on its own enough.
-            if (!DutyComposition.IsSupported(preset.DutyCategoryId))
+            if (!DutyComposition.IsOffered(preset.DutyCategoryId))
             {
                 string category = preset.DutyCategoryId > 0 && preset.DutyCategoryId < DutyCategories.Names.Length
                     ? DutyCategories.Names[preset.DutyCategoryId]
@@ -605,6 +1272,21 @@ namespace PfPresets
 
             return false;
         }
+
+        /// <summary>
+        /// Whether a queue takes exactly one player, and so cannot be recruited for.
+        ///
+        /// ONE, NOT "FEWER THAN TWO". Zero is the common case and means no limit at all - every duty
+        /// roulette carries it, and reading zero as "too small" dropped all ten of them at once. The
+        /// column is only filled in where the queue itself refuses a party.
+        ///
+        /// Where it is filled in, it is decisive and it is the same answer in both sheets that have
+        /// the column. Crystalline Conflict Ranked is 1 and Casual is 2, because ranked sorts by
+        /// tier and will not take a premade. Every Lord of Verminion battle and every ranked Mahjong
+        /// table is 1, and the recruitment window offers none of them. A Party Finder listing is a
+        /// party by definition, so a queue with one seat has nothing to list.
+        /// </summary>
+        private static bool IsSoloQueue(int queueMaxPlayers) => queueMaxPlayers == 1;
 
         /// <summary>The ContentRoulette row id of the mentor roulette.</summary>
         private const uint MentorRouletteRowId = 9;
@@ -935,6 +1617,20 @@ namespace PfPresets
             if (string.Equals(contentTypeName, "Duty Roulette", StringComparison.OrdinalIgnoreCase))
                 return cachedRoulettes != null ? new List<DutyEntry>(cachedRoulettes) : new List<DutyEntry>();
 
+            // Fifteen entries out of three sheets - see LoadGoldSaucer.
+            if (string.Equals(contentTypeName, GoldSaucerContentType, StringComparison.OrdinalIgnoreCase))
+                return cachedGoldSaucer != null ? new List<DutyEntry>(cachedGoldSaucer) : new List<DutyEntry>();
+
+            // Maps, not the dungeons the maps lead to - see LoadTreasureMaps.
+            if (string.Equals(contentTypeName, TreasureHuntContentType, StringComparison.OrdinalIgnoreCase))
+                return cachedTreasureMaps != null ? new List<DutyEntry>(cachedTreasureMaps) : new List<DutyEntry>();
+
+            // One entry per dungeon rather than the sheet's row per floor set - see
+            // LoadDeepDungeons. Without this the generic path below returns all forty of them,
+            // because each floor set is a name of its own and the dedupe has nothing to collapse.
+            if (string.Equals(contentTypeName, DeepDungeonContentType, StringComparison.OrdinalIgnoreCase))
+                return cachedDeepDungeons != null ? new List<DutyEntry>(cachedDeepDungeons) : new List<DutyEntry>();
+
             // Places, not duties.
             if (string.Equals(contentTypeName, "FATEs", StringComparison.OrdinalIgnoreCase))
                 return cachedFateZones != null ? new List<DutyEntry>(cachedFateZones) : new List<DutyEntry>();
@@ -955,6 +1651,13 @@ namespace PfPresets
             foreach (var duty in cachedDuties)
             {
                 if (!types.Any(t => string.Equals(duty.ContentTypeName, t, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                // A queue that takes one player is not something a party can be recruited for, and
+                // the window does not offer it. Confined in practice to the Gold Saucer's solo
+                // content - the Verminion battles and the ranked Mahjong tables - which is the only
+                // content in the game with the column filled in at all.
+                if (IsSoloQueue(duty.QueueMaxPlayers))
                     continue;
 
                 // One name, one entry. The sheet carries a row per instance rather than per duty -
@@ -985,29 +1688,59 @@ namespace PfPresets
         ///
         /// What survives is Frontline and Rival Wings, which really are picked map by map.
         /// </summary>
+        /// <summary>
+        /// Astragalos, the Rival Wings map that was retired and left in the sheet.
+        ///
+        /// NAMED BY ROW BECAUSE THE SHEET WILL NOT SAY. Every column that could separate it from
+        /// Hidden Gorge, the map that replaced it, holds the same value: the same content member
+        /// type, the same link type, the same level, no unlock on either, and IsInDutyFinder true on
+        /// both. The recruitment window offers Hidden Gorge and not this, and nothing in the data
+        /// accounts for the difference - so this is the one exclusion here that is observed rather
+        /// than derived, and it is written as a single row id so that is obvious.
+        /// </summary>
+        private const uint RetiredRivalWingsMap = 277;
+
         private List<DutyEntry> BuildPvpList()
         {
             var result = new List<DutyEntry>();
 
+            // THE DEDUPE HAS TO COVER THE QUEUES TOO. It used to start empty at the loop below, so
+            // the queue entries added just above were invisible to it - and the queues are in
+            // cachedDuties as well, being duties like any other. Crystalline Conflict came out
+            // twice, once from each pass, which is exactly what the dedupe was there to stop.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             if (cachedPvpQueues != null)
-                result.AddRange(cachedPvpQueues);
+            {
+                foreach (var queue in cachedPvpQueues)
+                {
+                    if (seen.Add(queue.Name))
+                        result.Add(queue);
+                }
+            }
 
             if (cachedDuties == null)
                 return result;
 
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // The maps, in the window's own order: Frontline before Rival Wings, and each by its
+            // row. Sorted rather than taken as they come, because cachedDuties is alphabetical by
+            // then and the window is not.
+            var maps = new List<DutyEntry>();
             foreach (var duty in cachedDuties)
             {
                 if (!string.Equals(duty.ContentTypeName, "PvP", StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (!duty.IsInDutyFinder || duty.UiCategoryId == CrystallineConflictCustomMatchUiCategory)
                     continue;
+                if (duty.RowId == RetiredRivalWingsMap)
+                    continue;
                 if (!seen.Add(duty.Name))
                     continue;
 
-                result.Add(duty);
+                maps.Add(duty);
             }
 
+            result.AddRange(maps.OrderBy(d => d.UiCategoryId).ThenBy(d => d.RowId));
             return result;
         }
 
@@ -1039,7 +1772,7 @@ namespace PfPresets
             {
                 var byId = GetDutyEntry(preset.DutyRowId);
                 if (byId != null)
-                    return byId;
+                    return DeepDungeonOf(byId) ?? TreasureMapFallback(byId) ?? byId;
             }
 
             return FindDutyByName(preset.DutyCategoryName, preset.DutyName);
@@ -1163,6 +1896,41 @@ namespace PfPresets
         /// and a zone with none of its aetherytes attuned is one this character has not reached.
         /// </summary>
         public uint[] AetheryteIds { get; set; } = Array.Empty<uint>();
+
+        /// <summary>
+        /// The number the client puts in SelectedDutyId for this entry, when that number is the
+        /// entry's place in a list rather than anything about its row. Zero for everything else,
+        /// which is also the right answer for the "all of them" entry that leads such a list.
+        ///
+        /// Carried on the entry because it cannot be recovered from <see cref="RowId"/>: the row id
+        /// is the sheet row, deliberately, so a preset stays pointed at the same map when the sheet
+        /// grows. The position is a property of the list this entry was built into. See
+        /// <see cref="DutyDataHelper.LoadTreasureMaps"/>.
+        /// </summary>
+        public ushort ListingDutyId { get; set; }
+
+        /// <summary>
+        /// For a deep dungeon: the ContentFinderCondition rows of its floor sets. Empty for
+        /// everything else.
+        ///
+        /// The dungeon is offered as one entry and has no row of its own, so this is where its
+        /// unlock is read from - see <see cref="DutyDataHelper.IsDutyUnlocked"/>.
+        /// </summary>
+        public uint[] FloorRowIds { get; set; } = Array.Empty<uint>();
+
+        /// <summary>How many players the queue itself accepts, where the sheet says. Zero means no
+        /// limit, which is the common case; one means a solo queue that cannot be recruited for -
+        /// see <see cref="DutyDataHelper.IsSoloQueue"/>.</summary>
+        public int QueueMaxPlayers { get; set; }
+
+        /// <summary>What shape of party the content takes, from ContentFinderCondition. Only read
+        /// to tell the Lord of Verminion battles apart from the rest of the Gold Saucer.</summary>
+        public uint ContentMemberType { get; set; }
+
+        /// <summary>The sheet's own display order within a content type. The Gold Saucer needs it
+        /// because its list has to reproduce the window's order exactly - see
+        /// <see cref="DutyDataHelper.LoadGoldSaucer"/>.</summary>
+        public ushort SortKey { get; set; }
 
         /// <summary>For a duty: every roulette it can be rolled by. For a roulette: the single
         /// roulette it is. This is what lets a roulette be told locked or open - see

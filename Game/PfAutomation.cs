@@ -63,9 +63,19 @@ namespace PfPresets
         // owning struct's start. Verified by diffing recruitment memory before/after
         // manual interactions; a game patch can move these.
 
-        /// <summary>StoredRecruitmentInfo: the game sets this byte to 2 when a *specific* duty is
-        /// picked through the dropdown, and leaves it 0 for "any duty in the category". Without it
-        /// the listing falls back to "All" even though SelectedDutyId is set.</summary>
+        /// <summary>
+        /// StoredRecruitmentInfo: which numbering SelectedDutyId is in. 2 for a
+        /// ContentFinderCondition row - dungeons, raids, trials, the high-end duties - and 0 both
+        /// for "any duty in the category" and for a category that numbers its own content, which so
+        /// far means the deep dungeons. Without the 2 a CFC row falls back to "All" even though
+        /// SelectedDutyId is set; with it, a number that is not a CFC row names nothing and the
+        /// listing shows no duty at all.
+        ///
+        /// A ZERO ID MUST TAKE A ZERO BYTE. There is no ContentFinderCondition row 0, so a 2 beside
+        /// a zero points the client at nothing and it faults populating the listing's detail. See
+        /// DutyDataHelper.SpecificDutyFlag, which is the single place that decides this and carries
+        /// the measurements.
+        /// </summary>
         private const int OffsetSpecificDutyFlag = 0x12;
 
         /// <summary>StoredRecruitmentInfo: ulong[8], one accepted-job game mask per party slot.</summary>
@@ -765,6 +775,8 @@ namespace PfPresets
                     {
                         if (!AtkHelpers.TrySelectDropDownItem(dropdown, index))
                             pluginLog.Warning($"Could not select duty dropdown index {index}.");
+                        else
+                            pluginLog.Information($"Selected duty dropdown index {index} for '{ActivePreset!.DutyName}'.");
                     }
                     catch (Exception ex)
                     {
@@ -773,7 +785,11 @@ namespace PfPresets
                 }
                 else
                 {
-                    pluginLog.Warning($"Duty '{ActivePreset!.DutyName}' not found in dropdown list.");
+                    // WHAT WAS IN THE LIST, not just what was missing from it. A name that does not
+                    // match is either our name being wrong or the list belonging to another
+                    // category, and those two want opposite fixes - the warning on its own could not
+                    // tell them apart, so it sent everybody looking at the wrong half.
+                    pluginLog.Warning($"Duty '{ActivePreset!.DutyName}' not found in dropdown list. It holds: {DescribeDropDown(dropdown)}");
                 }
             }
 
@@ -1058,33 +1074,32 @@ namespace PfPresets
             var recruitment = &agent->StoredRecruitmentInfo;
 
             ushort dutyId = 0;
+            byte specificFlag = 0;
             if (preset.DutyCategoryId > 0)
             {
                 var duty = ResolveDuty(preset);
                 if (duty != null)
                 {
-                    // THREE ANSWERS, NOT TWO. A number means "send this"; zero means "no duty, the
-                    // whole category"; and null means "this plugin cannot encode it - leave what is
-                    // already there".
-                    //
-                    // That last one matters because the step before this one already picked the
-                    // duty out of the game's own dropdown by name, and the client filled the field
-                    // in itself while doing so. Writing a zero over that was throwing away a
-                    // correct answer the client had just given us: Crystalline Conflict and a FATE
-                    // location were being selected properly and then cleared a moment later, which
-                    // is exactly what it looked like on screen.
-                    ushort? send = DutyDataHelper.GameDutyId(duty);
-
-                    if (send == null)
-                    {
-                        pluginLog.Information($"'{duty.Name}' has no id this plugin can write; keeping the client's own selection.");
-                        return;
-                    }
-
-                    dutyId = send.Value;
+                    // The number the field wants, and the byte that says which sheet it is a row
+                    // of. Both come from the same place so they cannot disagree.
+                    dutyId = DutyDataHelper.GameDutyId(duty);
+                    specificFlag = DutyDataHelper.SpecificDutyFlag(duty, dutyId);
+                    // The entry's own row id is in here because the name alone cannot say which
+                    // entry answered. "All Levels" and a map that resolved to the wrong thing print
+                    // the same duty id - zero - and only the row says whether the resolve or the
+                    // number is at fault.
                     pluginLog.Information(dutyId != 0
-                        ? $"Setting duty ID {dutyId} for '{duty.Name}'"
-                        : $"'{duty.Name}' resolves to no duty; SelectedDutyId stays 0 (all duties in the category).");
+                        ? $"Setting duty ID {dutyId} for '{duty.Name}' (row {duty.RowId}, specific-duty byte {specificFlag})"
+                        : $"'{duty.Name}' (row {duty.RowId}) resolves to duty id 0 - the whole category.");
+
+                    // NAME THE ONE THING THAT WOULD FIX IT. A deep dungeon reaching zero is not the
+                    // ordinary "this preset asks for the whole category" - it is a number nobody has
+                    // read off the client yet, and the log line above reads identically in both
+                    // cases. See DutyDataHelper.DeepDungeonDutyId.
+                    if (dutyId == 0
+                        && (DutyDataHelper.IsDeepDungeonRowId(duty.RowId) || DutyDataHelper.IsTreasureMapRowId(duty.RowId))
+                        && !DutyDataHelper.IsCategoryWideEntry(duty.RowId))
+                        pluginLog.Warning($"No measured duty id for '{duty.Name}'. Select it in the game's own Recruitment Criteria window and run \"/pfpdebug criteria\" to read it back.");
                 }
                 else
                 {
@@ -1093,8 +1108,10 @@ namespace PfPresets
             }
             recruitment->SelectedDutyId = dutyId;
 
-            // Mark whether a specific duty (vs "any duty in the category") is selected.
-            *((byte*)recruitment + OffsetSpecificDutyFlag) = (byte)(dutyId != 0 ? 2 : 0);
+            // Which numbering the id above is in - see DutyDataHelper.SpecificDutyFlag. Zero when
+            // there is no duty at all, which is the same thing the game writes for "the whole
+            // category".
+            *((byte*)recruitment + OffsetSpecificDutyFlag) = specificFlag;
         }
 
         /// <summary>
@@ -1185,7 +1202,7 @@ namespace PfPresets
             recruitment->LanguageFlags = lang;
 
             // Party settings (Normal group type is 1 group of 8)
-            // Forced for the two categories that cannot cross a world - see
+            // Forced for the categories that cannot cross a world - see
             // DutyComposition.RequiresHomeWorld. Applied here as well as in the editor so a preset
             // saved before the rule existed still posts correctly. The byte is inverted: 0 means
             // limited.
@@ -1512,6 +1529,27 @@ namespace PfPresets
 
         /// <summary>Normalizes duty names so the plugin's cached names match the dropdown's
         /// labels regardless of spacing around the difficulty suffix.</summary>
+        /// <summary>
+        /// Every label in a dropdown, quoted, for a log line. Empty labels are kept and shown as
+        /// such: a list of the right length full of blanks is a populated list that has not been
+        /// filled in yet, and that reads very differently from a list of the wrong things.
+        /// </summary>
+        private static unsafe string DescribeDropDown(AtkComponentDropDownList* dropdown)
+        {
+            if (dropdown == null || dropdown->List == null)
+                return "(no list)";
+
+            int count = dropdown->List->GetItemCount();
+            if (count == 0)
+                return "(empty)";
+
+            var parts = new List<string>(count);
+            for (int i = 0; i < count; i++)
+                parts.Add($"[{i}] '{AtkHelpers.GetDropDownItemLabel(dropdown->List, i)}'");
+
+            return string.Join(", ", parts);
+        }
+
         private static string NormalizeDutyName(string name)
         {
             if (string.IsNullOrEmpty(name))

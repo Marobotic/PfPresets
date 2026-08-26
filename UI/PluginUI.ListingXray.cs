@@ -59,7 +59,7 @@ namespace PfPresets
                 | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoFocusOnAppearing;
 
-            if (ImGui.Begin("##PfpListingPanel", flags))
+            if (ImGui.Begin("##PfpListingPanel", flags | PromptBlockFlags))
             {
                 try
                 {
@@ -67,6 +67,8 @@ namespace PfPresets
                         DrawListingSuppressed();
                     else
                         DrawListingRoster(snapshot!);
+
+                    SealOverlayIfPrompted();
                 }
                 finally
                 {

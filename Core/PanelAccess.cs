@@ -95,6 +95,17 @@ namespace PfPresets
 
         public bool Enabled { get; private set; } = true;
 
+        /// <summary>
+        /// Whether this machine is showing presets for the categories the plugin cannot post yet.
+        ///
+        /// Stored here rather than in Configuration because it belongs to the machine that holds a
+        /// key, not to the player: the state file it lives in sits beside the key itself and means
+        /// nothing without one. Applying it is not this class's job either - see
+        /// DutyComposition.OfferUnsupported for why the only code that reads this across is in the
+        /// moderator files.
+        /// </summary>
+        public bool DevPresets { get; private set; }
+
         private string KeyPath => Path.Combine(pluginInterface.ConfigDirectory.FullName, "pfa.dat");
 
         private string StatePath => Path.Combine(pluginInterface.ConfigDirectory.FullName, "pfa.ui");
@@ -116,11 +127,30 @@ namespace PfPresets
         public void SetEnabled(bool on)
         {
             Enabled = on;
+            SaveState();
+        }
+
+        public void SetDevPresets(bool on)
+        {
+            DevPresets = on;
+            SaveState();
+        }
+
+        /// <summary>
+        /// Writes the whole state file, every time.
+        ///
+        /// Every flag, not just the one that changed: this file is read back as a flat map and
+        /// written by serialising an object literal, so a setter that names only its own field
+        /// silently drops the others. It went in as one flag and did not stay that way.
+        /// </summary>
+        private void SaveState()
+        {
             try
             {
                 File.WriteAllText(StatePath, JsonConvert.SerializeObject(new
                 {
-                    enabled = on
+                    enabled = Enabled,
+                    devPresets = DevPresets
                 }));
             }
             catch (Exception ex)
@@ -139,6 +169,10 @@ namespace PfPresets
                     if (st != null && st.TryGetValue("enabled", out var on))
                     {
                         Enabled = on;
+                    }
+                    if (st != null && st.TryGetValue("devPresets", out var dev))
+                    {
+                        DevPresets = dev;
                     }
                 }
                 if (File.Exists(KeyPath))

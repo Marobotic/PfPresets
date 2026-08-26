@@ -92,6 +92,24 @@ namespace PfPresets
         public bool HideLockedDuties { get; set; } = false;
 
         /// <summary>
+        /// Whether the Party Finder shows the real name of a duty this character has not unlocked,
+        /// in place of the game's "Locked Duty".
+        ///
+        /// OFF BY DEFAULT, AND IT ASKS BEFORE IT GOES ON. This is the one setting in the plugin
+        /// whose whole effect is to show somebody something the game decided not to show them, and
+        /// the reason the game withholds it is spoilers - a raid tier's fight names give away that
+        /// the tier exists, what is in it, and occasionally who is in it. Defaulting this on would
+        /// spoil people who never asked, so it defaults off and the toggle puts the warning in
+        /// front of the person turning it on rather than in a tooltip they can skip.
+        ///
+        /// It reveals nothing the client was not already holding. The listing packet carries the
+        /// ContentFinderCondition row id whatever the character has unlocked, which is exactly how
+        /// "Save as Preset" has always been able to name a locked listing - see
+        /// PfAutomation.SaveFromListing. This setting only stops the window from hiding it.
+        /// </summary>
+        public bool ShowLockedDutyNames { get; set; } = false;
+
+        /// <summary>
         /// Whether a listing you are viewing shows its leader's community score beside their name.
         ///
         /// Its own setting rather than part of the party scores, because it is the one score shown

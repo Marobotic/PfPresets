@@ -127,11 +127,13 @@ namespace PfPresets
             // bottom edge of a window sized for one fewer.
             float lineH = ImGui.GetTextLineHeightWithSpacing();
             float questionH = WrapToWidth(request.Question, textW).Count * lineH;
-            float detailH = string.IsNullOrEmpty(request.Detail)
-                ? 0f
-                : 8f + WrapToWidth(request.Detail!, textW).Count * lineH;
+            bool hasDetail = !string.IsNullOrEmpty(request.Detail);
+            float detailH = hasDetail
+                ? AlertDetailGap + WrapToWidth(request.Detail!, textW).Count * lineH
+                : 0f;
 
-            float want = AlertPad + titleH + 10f + questionH + detailH + 18f + AlertFooterHeight;
+            float want = AlertPad + titleH + AlertTitleGap + questionH + detailH
+                + AlertPad + AlertFooterHeight;
 
             if (!BeginAlert("Confirm", want))
                 return;
@@ -156,13 +158,22 @@ namespace PfPresets
                 // is drawn from its own centred x. ImGui's wrap point is measured from the window,
                 // not from the cursor, so a centred line starting further right would be wrapped a
                 // second time against a limit it was never sized for.
-                ImGui.SetCursorPos(new Vector2(AlertPad, AlertPad + titleH + 10f));
+                // EVERY BLOCK PLACED ABSOLUTELY, AT THE OFFSET IT WAS MEASURED AT.
+                //
+                // The detail used to be flowed - a Dummy, then whatever ItemSpacing the cursor had
+                // collected on the way - while the height above was measured as if it sat at a
+                // fixed gap. The two disagreed by a few pixels per block, always downwards, so the
+                // text drifted toward a footer that had been positioned from the bottom edge and
+                // the whole alert read as slightly off its own box. Measuring one layout and
+                // drawing another is the bug; there is only one layout now.
+                float questionTop = AlertPad + titleH + AlertTitleGap;
+                ImGui.SetCursorPos(new Vector2(AlertPad, questionTop));
                 DrawCentredWrapped(request.Question, textW, TextPrimary);
 
-                if (!string.IsNullOrEmpty(request.Detail))
+                if (hasDetail)
                 {
-                    ImGui.Dummy(new Vector2(0, 2));
-                    ImGui.SetCursorPosX(AlertPad);
+                    ImGui.SetCursorPos(new Vector2(AlertPad,
+                        questionTop + questionH + AlertDetailGap));
                     DrawCentredWrapped(request.Detail!, textW, TextMuted);
                 }
 
@@ -270,7 +281,7 @@ namespace PfPresets
         ///
         /// Always pair with <see cref="EndDialog"/>, including when this returns false.
         /// </summary>
-        private static bool BeginDialog(string title, string id, float width, ref bool open)
+        private bool BeginDialog(string title, string id, float width, ref bool open)
         {
             var vp = ImGui.GetMainViewport();
             ImGui.SetNextWindowPos(
@@ -284,9 +295,14 @@ namespace PfPresets
             ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, Radius.Sheet);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16, 14));
 
+            // Blocked like every other free-standing surface while a prompt is up - see
+            // PromptBlockFlags. This one is the reason the rule cannot just be "the scrim covers
+            // it": the nudge is deliberately drawn when the main window is CLOSED, so there is no
+            // screen rectangle for a scrim to cover it with.
             return ImGui.Begin($"{title}##{id}", ref open,
                 ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize
-                | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.AlwaysAutoResize);
+                | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.AlwaysAutoResize
+                | PromptBlockFlags);
         }
 
         /// <summary>Closes a dialog opened by <see cref="BeginDialog"/> and unwinds its styles.</summary>

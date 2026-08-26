@@ -245,6 +245,15 @@ namespace PfPresets
                 + "everything and marks the locked ones. Either way a locked preset can't be "
                 + "applied - the game won't take the listing.");
 
+            // Its setter goes through the confirmation rather than straight at the config - see
+            // AskThenSetShowLockedDutyNames. The toggle still reads the config, so declining the
+            // warning leaves the switch where it was without any undo step.
+            DrawSetting("Show names of locked duties in party finder", () => config.ShowLockedDutyNames,
+                AskThenSetShowLockedDutyNames,
+                "Party Finder listings for content you haven't unlocked say \"Locked Duty\" instead "
+                + "of naming the fight. On replaces that with the duty's real name, still marked "
+                + "\"(Locked Duty)\". SPOILERS - the game hides these names on purpose.");
+
             DrawSetting("Leader's score on a listing", () => config.ShowListingLeaderRating,
                 v => config.ShowListingLeaderRating = v,
                 "Shows the listing leader's community score beside their name while you're "
@@ -636,6 +645,48 @@ namespace PfPresets
                 () => SetBroadcast(false),
                 detail: "Posts already on the feed come down too. Nothing is deleted - turning this "
                     + "back on puts them where they were.");
+        }
+
+        /// <summary>
+        /// Confirms before locked duty names appear, and does not confirm when they stop.
+        ///
+        /// ASYMMETRIC ON PURPOSE, and it is the one setting in here where that is the whole point.
+        /// The warning exists because turning this on cannot be undone in the head of whoever read
+        /// the spoiler - so the question is asked while there is still something to protect, and
+        /// asked in front of the answer rather than in a tooltip beside it. Turning it back off
+        /// takes something away that the player asked for and does not need guarding.
+        ///
+        /// No OnCancel, because nothing has moved yet: DrawSetting reads the config back every
+        /// frame, so a switch whose setter declined to write simply stays where it was.
+        /// </summary>
+        private void AskThenSetShowLockedDutyNames(bool enabled)
+        {
+            if (IsConfirming)
+                return;
+
+            if (!enabled)
+            {
+                config.ShowLockedDutyNames = false;
+                config.Save();
+                return;
+            }
+
+            // SHORT ON PURPOSE. The first draft explained the mechanism, the marking, the way
+            // back and the reason to decline - five sentences, which in a centred alert is a wall
+            // nobody reads before pressing something. What a warning has to land is the risk and
+            // the fact that it does not come back; the detail belongs on the setting's own help
+            // mark, where somebody deciding at leisure will find it.
+            AskConfirm(
+                "Spoilers",
+                "Party Finder will name duties you haven't unlocked.",
+                "Show names",
+                () =>
+                {
+                    config.ShowLockedDutyNames = true;
+                    config.Save();
+                },
+                detail: "You can turn this back off, but you can't unread a name.",
+                danger: true);
         }
 
         private void SetBroadcast(bool enabled)

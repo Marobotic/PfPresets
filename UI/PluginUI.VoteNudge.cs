@@ -135,6 +135,7 @@ namespace PfPresets
                 using (UiHelpFont.Push())
                     ImGui.TextColored(Faint, "Closing this also stops it for now.");
 
+                SealOverlayIfPrompted();
                 EndDialog();
             }
 

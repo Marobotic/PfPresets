@@ -334,7 +334,7 @@ namespace PfPresets
 
             // Search Area
             DrawSectionLabel("SEARCH AREA");
-            // FATEs and the hunt are on your own world or they are nowhere - see
+            // FATEs, treasure hunts and the hunt are on your own world or they are nowhere - see
             // DutyComposition.RequiresHomeWorld. The box is ticked and held rather than left to be
             // unticked into a listing that cannot work.
             //
@@ -585,9 +585,9 @@ namespace PfPresets
                     // category a saved preset points at would leave the dropdown reading as
                     // something the preset is not.
                     // Not offered at all while the plugin cannot post them correctly - see
-                    // DutyComposition.IsSupported. The one you are already on stays, so opening an
+                    // DutyComposition.IsOffered. The one you are already on stays, so opening an
                     // old preset does not silently repoint it at something else.
-                    if (!DutyComposition.IsSupported(i) && i != catId)
+                    if (!DutyComposition.IsOffered(i) && i != catId)
                         continue;
 
                     bool catLocked = IsCategoryLocked(i);
