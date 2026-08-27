@@ -574,6 +574,14 @@ namespace PfPresets
             dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(CardBorder),
                 Radius.Card, ImDrawFlags.None, 1f);
 
+            // The card an announcement was pressed about, for a few seconds after arriving here.
+            // A feed is a column of identically shaped rows, and "it is at the top" stops being
+            // true the moment anybody else clears - so the thing that was clicked says which one it
+            // was rather than leaving the reader to work it out from the timestamps.
+            if (IsAnnouncedCard(post))
+                dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(Accent),
+                    Radius.Card, ImDrawFlags.None, 2f);
+
             DrawCardBody(post, min, width, bodyHeight);
 
             float actionsY = min.Y + bodyHeight;

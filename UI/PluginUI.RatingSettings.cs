@@ -55,6 +55,14 @@ namespace PfPresets
             new("Ratings & privacy", FontAwesomeIcon.Shield, () =>
             {
                 DrawRatingsSettings();
+
+                // Under the section that ends on "broadcast my clears", because this is the other
+                // half of that question: one decides whether the feed hears about you, the other
+                // whether you hear about the feed. Somebody deciding one is usually deciding both,
+                // and putting the display half on the Appearance page would have split a single
+                // question across two screens.
+                DrawClearAnnounceSettings();
+
                 DrawDataSettings();
             }),
 
@@ -349,7 +357,14 @@ namespace PfPresets
                 ImGui.Dummy(new Vector2(0, 8));
                 DrawRuleHair(padAbove: 0f, padBelow: 10f);
                 DrawBroadcastSetting();
-                    return;
+
+                // EVERY EXIT FROM THIS SECTION CLOSES IT. These three early returns did not, and
+                // the section is not a heading - it is a card built by splitting the window's draw
+                // list in two and merging it back in EndSettingsSection. Returning past that leaves
+                // the list split: no card is painted behind the rows, the indent it applied is
+                // never taken off, and the next section to open would split an already-split list.
+                EndSettingsSection();
+                return;
             }
 
             // LOCKED OFF BELOW FULL, and said out loud rather than left as a switch that springs
@@ -369,7 +384,8 @@ namespace PfPresets
                 DrawRuleHair(padBelow: 8f);
                 DrawBroadcastSetting();
 
-                    return;
+                EndSettingsSection();
+                return;
             }
 
             DrawSetting("Enable ratings system", () => config.RatingsEnabled,
@@ -395,7 +411,8 @@ namespace PfPresets
                 DrawRuleHair(padAbove: 10f, padBelow: 10f);
                 DrawBroadcastSetting();
 
-                    return;
+                EndSettingsSection();
+                return;
             }
 
             DrawSetting("Ask after a duty", () => config.PostDutyPromptEnabled,

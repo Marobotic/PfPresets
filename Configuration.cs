@@ -380,6 +380,80 @@ namespace PfPresets
         /// </summary>
         public long AchievementsSeenMark { get; set; }
 
+        // ── The clear announcement ────────────────────────────────
+        //
+        // A line across the middle of the screen when somebody clears, the way an MMO announces a
+        // world first. Everything about it is a local display preference: nothing here changes what
+        // is sent, stored or shown to anybody else, and the whole feature is a second reading of the
+        // feed this client is already entitled to. See PluginUI.ClearAnnounce.cs.
+
+        /// <summary>
+        /// Whether a clear on the feed is announced across the screen.
+        ///
+        /// ON BY DEFAULT, and that is the one thing here worth arguing about. The case for it is the
+        /// case for the feed itself - a clear is something people announce in shout the second it
+        /// happens, and a feed nobody has the tab open for is a party nobody was invited to. The
+        /// case against is that it draws on top of somebody's game without being asked.
+        ///
+        /// It is on because the restraints below make it cheap to ignore and impossible to miss the
+        /// off switch: one line, a few seconds, one at a time, never your own clears, and never a
+        /// backlog. Somebody who does not want it turns it off once and it is gone.
+        /// </summary>
+        public bool ClearAnnouncementsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Where the announcement sits, as a nudge in pixels from where it would otherwise be.
+        ///
+        /// The resting place is horizontally centred and a little above the middle - see
+        /// ClearAnnounceTopFraction. These move it from there rather than positioning it outright,
+        /// so the default stays right on a screen of any size and an offset stays meaningful when
+        /// the resolution changes underneath it.
+        /// </summary>
+        public int ClearAnnouncementOffsetX { get; set; }
+        public int ClearAnnouncementOffsetY { get; set; }
+
+        /// <summary>How long it stays up, in seconds, before it fades. The hover pause is on top of
+        /// this - a countdown that runs out while somebody is reaching for the thing is a countdown
+        /// that makes the click impossible.</summary>
+        public int ClearAnnouncementSeconds { get; set; } = 4;
+
+        /// <summary>
+        /// Whether the banner ignores the mouse entirely and lets clicks reach the game behind it.
+        ///
+        /// OFF BY DEFAULT, because the interactive version is the better feature: the point of
+        /// being told about a clear is being able to react to it, and reacting means a heart, which
+        /// means a target. On costs all of that at once - no heart, no close, no hover pause, and
+        /// nothing to press - and buys back a rectangle of screen that can never eat a click meant
+        /// for the game. That is a real thing to want in a fight, and it is a choice rather than a
+        /// default because most people are not in one.
+        /// </summary>
+        public bool ClearAnnouncementClickThrough { get; set; }
+
+        /// <summary>
+        /// Which face it is set in: 0 the plugin's own, 1 the game's Axis, 2 the game's Jupiter.
+        ///
+        /// JUPITER BY DEFAULT, which is the one setting here chosen for how it feels rather than for
+        /// how safe it is. Jupiter is the face the game sets its own full-screen announcements in,
+        /// and an announcement in it reads as something the game said - which is the whole idea
+        /// being borrowed. It is a display face and carries Latin only, so a name it cannot draw is
+        /// set in the plugin's own face for that run rather than coming out as boxes; see
+        /// AnnounceFontFor. That fallback is what makes this default defensible.
+        ///
+        /// An int rather than an enum because this file is deserialised from disk by Newtonsoft and
+        /// a value it has never heard of has to survive round-tripping; the reader clamps.
+        /// </summary>
+        public int ClearAnnouncementFont { get; set; } = 2;
+
+        /// <summary>
+        /// The newest clear that has already been announced, as the SERVER's clock (unix ms).
+        ///
+        /// On disk so that closing the game and coming back five minutes later does not replay the
+        /// last twenty minutes of clears at somebody. Zero means this install has never announced
+        /// one, which is a state in its own right: the first read seeds this and announces nothing,
+        /// because a backlog dumped across the screen at login is the opposite of news.
+        /// </summary>
+        public long ClearAnnouncementMark { get; set; }
+
         /// <summary>
         /// The poll whose Vote tab has actually been opened, by slug. Empty until one has been.
         ///

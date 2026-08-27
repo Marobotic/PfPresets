@@ -454,6 +454,13 @@ namespace PfPresets
                     var posts = result.Value.Posts;
                     int pages = Math.Max(1, result.Value.Pages);
 
+                    // BEFORE THE MERGE BELOW, on the posts as they arrived. The announcer wants to
+                    // know what the server just said, which is not the same as what survives being
+                    // reconciled with whatever is on screen: a read that gets parked behind the pill
+                    // has still found the clear, and a client with no window open has no screen for
+                    // it to be reconciled against. See RatingService.Announce.cs.
+                    ObserveForAnnounce(posts);
+
                     // The mark this read is entitled to claim - IF its posts end up in front of
                     // somebody. Whether they do is decided below, and the two cases are not the
                     // same: a read that is held behind the pill has shown nobody anything.

@@ -553,6 +553,12 @@ namespace PfPresets
             // Drains at most one filed duty per frame, and only out of combat. Returns on a count
             // check the rest of the time.
             this.ratingService.TickPendingDuties();
+
+            // Framework rather than draw, for the reason the two above are: an announcement that
+            // only arrives while our own window happens to be open is an announcement for the two
+            // people who leave it open. Returns on a timestamp comparison on every frame but one
+            // in seven thousand, and does nothing at all with the setting off or nobody logged in.
+            this.ratingService.TickAnnouncePoll();
 #endif
         }
 

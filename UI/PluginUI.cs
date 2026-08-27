@@ -106,6 +106,7 @@ namespace PfPresets
             DisposeSiteIcons();
 #if PFP_RATINGS
             DisposeProfileFonts();
+            DisposeAnnounceFonts();
 #endif
         }
 
@@ -152,6 +153,11 @@ namespace PfPresets
                 DrawRatingPrompt();
                 DrawListingLeaderRatingOverlay();
                 DrawVoteNudge();
+
+                // AFTER the main window, because the settings section inside it is what arms the
+                // placement preview - drawn before it, the sample would always be one frame stale
+                // and would flicker as the section scrolled in and out of view.
+                DrawClearAnnouncement();
 #endif
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
                 DrawPanelOverlay();
