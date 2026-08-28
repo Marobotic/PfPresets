@@ -908,8 +908,8 @@ namespace PfPresets
             //
             // Outside a duty and outside the queue, a duty name here can only have come from a
             // recruitment this party still stands for - RecruitedDutyStillApplies has already
-            // decided that, and it only says yes while the party is full and holding together.
-            // So this is a group that just filled for a fight and is about to go and do it.
+            // decided that, and it says yes for as long as the party has not broken up. So this is
+            // a group that recruited for a fight and has not yet gone and done it.
             //
             // "Ready to recruit" was actively wrong in that state: an 8/8 party cannot recruit,
             // and the line underneath was already saying so. The header announced an option that

@@ -28,6 +28,7 @@ namespace PfPresets
         private string editorDutyName = "None";
         private string editorDutyCategoryName = "None";
         private int editorObjectiveId = 0;
+        private bool editorBeginnersWelcome = false;
         private List<RoleSlot> editorSlots = new();
         private bool editorOnePlayerPerJob = false;
         private bool editorRemoveRoleRestrictions = false;
@@ -69,6 +70,7 @@ namespace PfPresets
             editorDutyName = preset.DutyName;
             editorDutyCategoryName = preset.DutyCategoryName;
             editorObjectiveId = preset.ObjectiveId;
+            editorBeginnersWelcome = preset.BeginnersWelcome;
             editorSlots = preset.Slots.Select(CloneSlot).ToList();
             editorOnePlayerPerJob = preset.OnePlayerPerJob;
             editorRemoveRoleRestrictions = preset.RemoveRoleRestrictions;
@@ -139,6 +141,7 @@ namespace PfPresets
             editingPreset.DutyName = editorDutyName;
             editingPreset.DutyCategoryName = editorDutyCategoryName;
             editingPreset.ObjectiveId = editorObjectiveId;
+            editingPreset.BeginnersWelcome = editorBeginnersWelcome;
             editingPreset.Slots = editorSlots.Select(CloneSlot).ToList();
             editingPreset.OnePlayerPerJob = editorOnePlayerPerJob;
             editingPreset.RemoveRoleRestrictions = editorRemoveRoleRestrictions;
@@ -288,6 +291,12 @@ namespace PfPresets
             ImGui.SetNextItemWidth(-1);
             ImGui.Combo("##Objective", ref editorObjectiveId, objectives, objectives.Length);
             PopFramedInput();
+
+            // Under the objective rather than off in the conditions, because that is where the
+            // game draws it - the sprout sits on the Objective row, not in the right-hand column.
+            // Worded as the game words its own tooltip, so somebody comparing the two windows is
+            // reading the same sentence twice rather than guessing they mean the same thing.
+            DrawStyledCheckbox("Beginners/first-timers welcome", ref editorBeginnersWelcome);
             ImGui.Dummy(new Vector2(0, 6));
 
             // Comment (2 lines that wrap)

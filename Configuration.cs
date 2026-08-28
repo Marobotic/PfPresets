@@ -415,7 +415,7 @@ namespace PfPresets
         /// <summary>How long it stays up, in seconds, before it fades. The hover pause is on top of
         /// this - a countdown that runs out while somebody is reaching for the thing is a countdown
         /// that makes the click impossible.</summary>
-        public int ClearAnnouncementSeconds { get; set; } = 4;
+        public int ClearAnnouncementSeconds { get; set; } = 6;
 
         /// <summary>
         /// Whether the banner ignores the mouse entirely and lets clicks reach the game behind it.

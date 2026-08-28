@@ -864,7 +864,7 @@ namespace PfPresets
             SetChecked(addon->LimitToWorldServerCheckbox,
                 preset.LimitRecruitingToWorld || DutyComposition.RequiresHomeWorld(preset.DutyCategoryId));
             SetChecked(addon->OnePlayerPerJobCheckbox, preset.OnePlayerPerJob);
-            SetChecked(addon->BeginnersWelcomeCheckBox, false);
+            SetChecked(addon->BeginnersWelcomeCheckBox, preset.BeginnersWelcome);
             SetChecked(addon->CompletionStatusCheckBox, preset.CompletionStatusEnabled);
 
             // Force Duty Finder settings to be unchecked if category is None (0) to prevent
@@ -1211,6 +1211,12 @@ namespace PfPresets
 
             recruitment->LimitRecruitingToWorld = (byte)(homeWorldOnly ? 0 : 1);
             recruitment->OnePlayerPerJob = (byte)(preset.OnePlayerPerJob ? 1 : 0);
+
+            // The game's field is BeginnerFriendly; the window calls it "Beginners/first-timers
+            // welcome" and draws it as the sprout. Written here as well as ticked on the addon,
+            // like every other flag: the checkbox is what the player sees and this is what the
+            // Recruit button actually reads.
+            recruitment->BeginnerFriendly = (byte)(preset.BeginnersWelcome ? 1 : 0);
             // As many seats as the preset recruits for. A dungeon preset carries four and a raid
             // preset eight; writing a flat 8 advertised four phantom openings on every light-party
             // listing, which is the same bug as padding the slot list with Omit.

@@ -40,6 +40,19 @@ namespace PfPresets
         /// <summary>0=None, 1=Duty Completion, 2=Practice, 3=Loot</summary>
         public int ObjectiveId { get; set; } = 0;
 
+        /// <summary>
+        /// The sprout beside the objective: "Beginners/first-timers welcome".
+        ///
+        /// Lives next to ObjectiveId because that is where the game puts it - a small round toggle
+        /// on the Objective row rather than anything in the Conditions column - and a preset that
+        /// mirrors the game's own window is easier to check against it.
+        ///
+        /// It was not merely missing before: the apply path wrote a hard-coded false into the
+        /// checkbox on every application, so a listing posted through a preset had the sprout
+        /// stripped off it even when the player had ticked it in the game's window first.
+        /// </summary>
+        public bool BeginnersWelcome { get; set; } = false;
+
         // ── Comment ───────────────────────────────────────────────
         /// <summary>
         /// The comment as text. Auto-translate phrases appear here expanded, wrapped in the game's

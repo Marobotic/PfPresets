@@ -5,6 +5,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.GameFonts;
 using Dalamud.Interface.ManagedFontAtlas;
+using Dalamud.Interface.Textures.TextureWraps;
 
 namespace PfPresets
 {
@@ -62,12 +63,23 @@ namespace PfPresets
         /// at and never scaled at draw time, so a size slider meant discarding and rebuilding font
         /// handles on the end of a drag. One size that is right needs no slider and no rebuild.
         /// </summary>
-        private const float AnnounceTextPx = 18f;
+        private const float AnnounceTextPx = 20f;
 
         /// <summary>Enough air that the text is not touching the edge, and no more. The panel is a
         /// ground for a sentence, not a card.</summary>
         private const float AnnouncePadX = 15f;
         private const float AnnouncePadY = 9f;
+
+        /// <summary>
+        /// Air between the fight's art and the fight's name.
+        ///
+        /// The art is not sized here: it is squared off against the line height in
+        /// MeasureAnnouncement, so it grows with the text instead of needing a second number kept in
+        /// step with AnnounceTextPx by hand. This is the only gap that needs a value, and it is the
+        /// tighter of the two spacings in the sentence - the art belongs TO the name that follows
+        /// it, and reads as attached to it rather than as a third thing in a list.
+        /// </summary>
+        private const float AnnounceFightIconGap = 7f;
 
         // â”€â”€ The motion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         //
@@ -356,12 +368,18 @@ namespace PfPresets
             // before the first clear rather than during it. See the note above WarmAnnounceFonts.
             bool fontsReady = WarmAnnounceFonts();
 
+            // ALSO EVERY FRAME, and deliberately not folded into the condition below. It keeps a
+            // timer, and a timer only asked about on the frames where the screen happens to be free
+            // is a timer that restarts after every banner - which would have quietly put a gap
+            // between two clears that arrived together.
+            bool held = UpdateAnnouncementHold();
+
             // A real clear takes the slot the moment one is free, and not before the face it will be
             // set in is built. The sample holds the slot too, and does not get shoved aside by a
             // clear landing mid-preview - it is a few seconds, and interrupting the thing somebody
             // pressed to watch would make the button a liar. The clear waits on the queue, which is
             // what the queue is for.
-            if (announcePost == null && ratings != null && fontsReady)
+            if (announcePost == null && ratings != null && fontsReady && !held)
             {
                 var next = ratings.TakeAnnouncement();
                 if (next != null)
@@ -382,6 +400,56 @@ namespace PfPresets
             }
 
             DrawAnnouncementBanner(post, motion, announceIsSample);
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  WHEN NOT TO
+        // ══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// How long combat and the duty have to have been over before one is allowed through.
+        ///
+        /// COMBAT IS NOT A STEADY SIGNAL. It drops between trash packs, between FATE mobs, between
+        /// pulls - gaps of a few seconds that are not "back to normal" by any reading a player
+        /// would recognise. Without a settle the notice would slip into one of them and be gone
+        /// before the next pull started, which is the same as never having shown it.
+        ///
+        /// It also covers the other end of a duty: BoundByDuty clears while the screen is still
+        /// black, and a banner that spends its whole life behind a loading screen was delivered to
+        /// nobody. A second and a half is long enough to be out and looking at the world again, and
+        /// short enough that it still reads as "the moment you finished".
+        /// </summary>
+        private const long AnnounceSettleMs = 1500;
+
+        /// <summary>When combat and the duty last both stopped being true, or 0 while either is.</summary>
+        private long announceQuietSinceTick;
+
+        /// <summary>
+        /// Whether now is the wrong moment to put a clear on screen.
+        ///
+        /// HELD, NOT DROPPED. The queue is what holds them - see TakeAnnouncement - so nothing is
+        /// lost by refusing here, and the clears that landed while somebody was inside a fight are
+        /// still waiting when they come out. That is the whole feature: an announcement is worth
+        /// reading, and a fight is precisely when it will not be read and precisely when a rectangle
+        /// appearing over the arena is most unwelcome. The cap on the queue is what keeps a long
+        /// duty from turning into a stack of them afterwards.
+        ///
+        /// The Preview button does not come through here on purpose. It calls StartAnnouncement
+        /// directly, because somebody who pressed a button to see the thing should see the thing,
+        /// and a settings page that silently did nothing in a duty would read as broken.
+        /// </summary>
+        private bool UpdateAnnouncementHold()
+        {
+            if (pfAutomation.IsInCombat() || pfAutomation.IsInDuty())
+            {
+                announceQuietSinceTick = 0;
+                return true;
+            }
+
+            if (announceQuietSinceTick == 0)
+                announceQuietSinceTick = Environment.TickCount64;
+
+            return Environment.TickCount64 - announceQuietSinceTick < AnnounceSettleMs;
         }
 
         /// <summary>Puts one on screen from the top of its entrance. The single place the timer is
@@ -478,6 +546,7 @@ namespace PfPresets
             string Who, string Verb, string Fight,
             IFontHandle WhoFont, IFontHandle VerbFont, IFontHandle FightFont,
             float WhoW, float VerbW, float WhoH, float FightH, float LineH,
+            IDalamudTextureWrap? FightArt, float IconSize, float IconAdvance,
             Vector2 Size);
 
         // ── The two things on the right ───────────────────────────
@@ -711,12 +780,27 @@ namespace PfPresets
             float lineH = MathF.Max(whoH, fightH);
             float bodyH = MathF.Max(lineH, AnnounceActionSize);
 
+            // ── The fight's art ──
+            //
+            // The same picture the feed puts on a clear, at the size of the line rather than the
+            // size of a card - see FightArt. Squared off the line height so it stays in step with
+            // the text on its own; a second constant here would be one more thing to remember to
+            // move whenever AnnounceTextPx moves.
+            //
+            // ITS SPACE IS RESERVED WHETHER OR NOT THERE IS A PICTURE, because there is always
+            // something to draw: a fight with no art of its own falls back to the same crown or
+            // book the feed's cards fall back to. A sentence that shifted sideways depending on
+            // whether the server happened to know a slug would be worse than either.
+            var art = FightArt(post.FightSlug, post.FightLabel);
+            float iconSize = lineH;
+            float iconAdvance = iconSize + AnnounceFightIconGap;
+
             var size = new Vector2(
-                whoW + verbW + fightW + AnnounceActionsWidth + AnnouncePadX * 2f,
+                whoW + verbW + iconAdvance + fightW + AnnounceActionsWidth + AnnouncePadX * 2f,
                 bodyH + AnnouncePadY * 2f);
 
             return new AnnounceLayout(who, verb, fight, whoFont, verbFont, fightFont,
-                whoW, verbW, whoH, fightH, lineH, size);
+                whoW, verbW, whoH, fightH, lineH, art, iconSize, iconAdvance, size);
         }
 
         /// <summary>Where the two buttons sit inside the panel. One place, so the hit test and the
@@ -752,12 +836,18 @@ namespace PfPresets
             // ── The ground ──
             //
             // NOT BLACK. The palette's Ground is true black and it read as a hole cut in the game -
-            // a solid slab with a sentence on it. This is a soft dark grey at just over half, so the
-            // scene behind still comes through it and the panel reads as something laid over the
-            // game rather than punched into it. Hovering deepens it, which is the whole of the hover
-            // state on the panel itself: no border, no glow, no movement.
+            // a solid slab with a sentence on it. This is a soft dark grey instead, so the panel
+            // reads as something laid over the game rather than punched into it.
+            //
+            // NEARLY OPAQUE, though, and that is the correction to how this first shipped. It sat at
+            // just over half, which looked handsome over a quiet scene and became unreadable over a
+            // bright one - and the scenes this appears over are boss fights, which is to say the
+            // brightest and busiest the game ever gets. A notice that cannot be read in the one
+            // situation it exists for is not a transparency, it is a bug. Legibility wins; the grey
+            // is what keeps it from reading as a hole. Hovering closes the last of the gap, which is
+            // the whole of the hover state on the panel itself: no border, no glow, no movement.
             var ground = new Vector4(0.10f, 0.10f, 0.12f, 1f);
-            float bgAlpha = (hot ? 0.82f : 0.55f) * alpha;
+            float bgAlpha = (hot ? 0.97f : 0.88f) * alpha;
 
             dl.AddRectFilled(min, min + l.Size,
                 ImGui.ColorConvertFloat4ToU32(ground with { W = bgAlpha }), Radius.Control);
@@ -780,6 +870,37 @@ namespace PfPresets
                     ImGui.ColorConvertFloat4ToU32(Dim with { W = alpha }), l.Verb);
                 x += l.VerbW;
             }
+
+            // ── The fight's art, immediately before its name ──
+            //
+            // Tinted with the announcement's own alpha rather than drawn flat. Everything else here
+            // fades in and out together, and a picture that stayed solid while the sentence around
+            // it faded would be the one thing on screen still arriving after the rest had gone.
+            var iconMin = new Vector2(x, centreY - l.IconSize * 0.5f);
+            var iconMax = iconMin + new Vector2(l.IconSize, l.IconSize);
+
+            if (l.FightArt != null)
+            {
+                dl.AddImage(l.FightArt.Handle, iconMin, iconMax, Vector2.Zero, Vector2.One,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, alpha)));
+            }
+            else
+            {
+                // The feed's fallback, for the same reason it has one: the server names a fight long
+                // before anybody draws it a picture.
+                using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                {
+                    string glyph = (post.Kind == "savage_tier"
+                        ? FontAwesomeIcon.Book
+                        : FontAwesomeIcon.Crown).ToIconString();
+
+                    Vector2 gs = ImGui.CalcTextSize(glyph);
+                    dl.AddText(iconMin + (new Vector2(l.IconSize, l.IconSize) - gs) * 0.5f,
+                        ImGui.ColorConvertFloat4ToU32(Dim with { W = alpha }), glyph);
+                }
+            }
+
+            x += l.IconAdvance;
 
             using (l.FightFont.Push())
                 dl.AddText(new Vector2(x, centreY - l.FightH * 0.5f),

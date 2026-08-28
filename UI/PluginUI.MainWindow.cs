@@ -1207,13 +1207,15 @@ namespace PfPresets
         /// </summary>
         private List<(string Text, Vector4 Colour)> PresetChips(PfPresetData preset)
         {
-            var chips = new List<(string, Vector4)>(3);
+            var chips = new List<(string, Vector4)>(4);
             Vector4 colour = ObjectiveColour(preset.ObjectiveId);
 
             if (preset.ObjectiveId != 0)
                 chips.Add((DisplayNames.GetObjectiveName(preset.ObjectiveId), colour));
             if (preset.CompletionStatusEnabled)
                 chips.Add((DisplayNames.GetCompletionStatusName(preset.CompletionStatusType), colour));
+            if (preset.BeginnersWelcome)
+                chips.Add(("Beginners welcome", colour));
             if (preset.OnePlayerPerJob)
                 chips.Add(("One per job", colour));
 

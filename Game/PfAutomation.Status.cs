@@ -171,11 +171,11 @@ namespace PfPresets
         /// Always a real game duty id (never a synthetic one), so <see cref="DutyHasProgress"/>
         /// downstream can reason about it.
         ///
-        /// <c>Slots</c> is the listing's seat count, carried because "the party filled it" is the
-        /// only thing that keeps this alive once recruitment stops - see
-        /// <see cref="RecruitedDutyStillApplies"/> - and eight is not the answer for every listing.
+        /// The listing's seat count used to be carried here too, back when "the party filled it"
+        /// was what kept this alive once recruitment stopped. Being in a party at all is the test
+        /// now - see <see cref="RecruitedDutyStillApplies"/> - so nothing read it any more.
         /// </summary>
-        private (uint RowId, string Name, int Slots)? lastRecruitedDuty;
+        private (uint RowId, string Name)? lastRecruitedDuty;
 
         private RecruitmentSnapshot? snapshotThisFrame;
         private int snapshotFrame = -1;
@@ -284,7 +284,7 @@ namespace PfPresets
                     total = 8;
 
                 string ownDutyName = ResolveListedDutyName(info->SelectedDutyId);
-                RememberRecruitedDuty(info->SelectedDutyId, ownDutyName, total);
+                RememberRecruitedDuty(info->SelectedDutyId, ownDutyName);
 
                 return new RecruitmentSnapshot
                 {
@@ -321,6 +321,18 @@ namespace PfPresets
 
             if (!CapturedListingIsUsable(partyLeaderId))
             {
+                // THE FIGHT OUTLIVES THE LISTING HERE TOO, and this is the other half of the 8/8
+                // bug. The capture stops being usable the moment the game tears the listing down,
+                // which is the moment the last seat fills - but the leader can still read as
+                // recruiting for a tick or two after that, so this branch runs while the party is
+                // complete and about to go in. Returning an empty name here blanked the readout at
+                // exactly the point the party had succeeded, and a member (unlike the leader, who
+                // has always had this) had no other source for what they had just filled for.
+                //
+                // Only what was remembered, never a guess: if nothing was ever captured for this
+                // party there is genuinely nothing to say, and the empty name still stands.
+                var (rememberedName, rememberedRow) = ResolveIdleContextDuty();
+
                 return new RecruitmentSnapshot
                 {
                     Activity = common.Activity,
@@ -332,7 +344,8 @@ namespace PfPresets
                     LeaderName = havePartyLeader ? partyLeaderName : string.Empty,
                     LeaderWorldId = havePartyLeader ? partyLeaderWorldId : 0,
 
-                    DutyName = string.Empty,
+                    DutyName = rememberedName,
+                    DutyRowId = rememberedRow,
                     Filled = filled,
                     SlotsTotal = filled.Count,
                     BlockedReason = common.Blocked,
@@ -346,7 +359,7 @@ namespace PfPresets
                 viewedMasks[i] = viewed.SlotFlags[i];
 
             string viewedDutyName = ResolveListedDutyName(viewed.DutyId);
-            RememberRecruitedDuty(viewed.DutyId, viewedDutyName, viewedTotal);
+            RememberRecruitedDuty(viewed.DutyId, viewedDutyName);
 
             var capturedLeft = CapturedListingTimeLeft();
 
@@ -632,12 +645,12 @@ namespace PfPresets
         /// inside it - and that is a question about the party rather than about one frame's read
         /// of an agent that is mid-teardown.
         /// </summary>
-        private void RememberRecruitedDuty(ushort dutyId, string name, int slots)
+        private void RememberRecruitedDuty(ushort dutyId, string name)
         {
             if (dutyId == 0)
                 return;
 
-            lastRecruitedDuty = (dutyId, name, slots);
+            lastRecruitedDuty = (dutyId, name);
         }
 
         /// <summary>How many people are in the party, counting yourself, or 0 when solo. Duty
@@ -663,13 +676,22 @@ namespace PfPresets
         /// stood in a city, two people, nothing queued. The readout was true and completely beside
         /// the point, and there was no way to make it go away short of disbanding.
         ///
-        /// So it now survives in exactly the three situations where the fight is still ahead of the
-        /// party or under their feet: they filled the listing and are holding together, they are in
-        /// the queue for it, or they are inside it. Anything else - and losing a member outside the
-        /// duty is the ordinary case - drops it.
+        /// So it survives while the fight is still ahead of the party or under their feet: they
+        /// are inside it, they are queued for it, or they are still the party that recruited for
+        /// it. Going solo is what ends it.
         ///
-        /// Seat count comes from the listing rather than a fixed eight, because a light party
-        /// listing is full at four and would otherwise never qualify.
+        /// IT USED TO REQUIRE A FULL PARTY, and that was wrong in the one case it most needed to be
+        /// right. The game takes a listing down the instant the last seat fills, so at 8/8 there is
+        /// no listing left to read and this memory is the only thing that still knows what the
+        /// party is for - and if a single person then dropped to 7/8, or the count was read on a
+        /// tick mid-teardown, the fight went with them. A group that spent an hour filling for an
+        /// Ultimate would be told "In a party" the moment it succeeded.
+        ///
+        /// The cost of holding it longer is the case the full-party rule was built for: a pair
+        /// still standing in a city an hour later, nominally a party, still pointed at the fight
+        /// they recruited for in the evening. That readout is stale but it is not wrong about what
+        /// the party was formed to do, and it clears the moment either of them goes solo. Losing
+        /// the fight at the exact moment the party is finally ready to run it is the worse trade.
         /// </summary>
         private bool RecruitedDutyStillApplies(int partySize)
         {
@@ -688,12 +710,9 @@ namespace PfPresets
             if (IsInDutyQueue())
                 return ResolveQueueContext().RowId == rowId;
 
-            // Neither: only a party that actually filled the listing still stands for it.
-            int seats = lastRecruitedDuty.Value.Slots;
-            if (seats <= 0 || seats > 8)
-                seats = 8;
-
-            return partySize >= seats;
+            // Neither: it stands for as long as the party does. Solo is the end of it, and the
+            // only thing here that is genuinely no longer a party that recruited for anything.
+            return partySize > 0;
         }
 
         /// <summary>

@@ -98,6 +98,7 @@ namespace PfPresets
             p.CompletionStatusEnabled ? p.CompletionStatusType : -1,
             p.AvgItemLvEnabled ? p.AvgItemLv : -1,
             p.LootRules,
+            p.BeginnersWelcome,
             p.UnrestrictedParty, p.MinimumIL, p.SilenceEcho,
             p.LangJapanese, p.LangEnglish, p.LangGerman, p.LangFrench,
             p.AutoAdjustRoles,
@@ -200,6 +201,8 @@ namespace PfPresets
                 AvgItemLv = listing.AvgItemLv > 0 ? Math.Clamp((int)listing.AvgItemLv, 1, 9999) : 1,
 
                 LootRules = Math.Clamp((int)listing.LootRule, 0, 2),
+
+                BeginnersWelcome = listing.BeginnerFriendly != 0,
 
                 UnrestrictedParty = listing.DutyFinderSettingFlags.HasFlag(AgentLookingForGroup.DutyFinderSetting.UnrestrictedParty),
                 MinimumIL = listing.DutyFinderSettingFlags.HasFlag(AgentLookingForGroup.DutyFinderSetting.MinimumIL),

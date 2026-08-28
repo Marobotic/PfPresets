@@ -201,11 +201,25 @@ namespace PfPresets
 
             var state = ReadLeaderRecruitState(leader);
 
+            // READ BEFORE THE BRANCH BELOW, because whether the party is full is what tells the
+            // difference between a listing that ended and a listing that succeeded.
+            int size = CountOtherPartyMembers();
+
             if (state == LeaderRecruitState.NotRecruiting)
             {
                 // The leader is standing right there without the recruiting status: there is no
                 // listing, and anything we captured earlier describes one that has ended.
-                ForgetCapturedListing();
+                //
+                // UNLESS THE PARTY IS FULL, in which case the listing is not missing - it is
+                // finished. The game takes it down on the last join, so "no listing" and "eight
+                // people" together mean the recruitment worked, and the capture taken while it was
+                // filling is the last true word on what this party is for. Forgetting it here is
+                // what blanked the card at 8/8; the early return further down already said this
+                // capture should stand, and this branch was quietly throwing it away first.
+                if (!PartyLooksFull(size))
+                    ForgetCapturedListing();
+
+                partySizeSeen = size;
                 lastLeaderState = state;
                 return;
             }
@@ -213,7 +227,6 @@ namespace PfPresets
             // Somebody joining is the one free proof that a listing is up: nobody joins a party
             // that isn't advertising. It costs a party read a second and catches the case where
             // the leader posts long after the party formed.
-            int size = CountOtherPartyMembers();
             bool someoneJoined = partySizeSeen >= 0 && size > partySizeSeen;
             partySizeSeen = size;
 

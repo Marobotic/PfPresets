@@ -20,10 +20,14 @@ namespace PfPresets
     ///                       and dropped. Coming back from a two-hour break should not replay it.
     ///   never your own      You were there. The feed already refuses you a heart on your own post
     ///                       for the same reason.
-    ///   never a flood       At most <see cref="AnnounceQueueCap"/> waiting at once, oldest first.
-    ///                       A busy evening on a full server can post six clears inside one poll,
-    ///                       and six in a row at six seconds each is most of a minute of somebody
-    ///                       else's screen.
+    ///   never a flood       At most <see cref="AnnounceQueueCap"/> waiting at once, oldest first,
+    ///                       and once it is full the newest clear pushes the oldest out. A busy
+    ///                       evening on a full server can post six clears inside one poll, and six
+    ///                       in a row at six seconds each is most of a minute of somebody else's
+    ///                       screen.
+    ///   never lost to a     Combat and duties hold the queue rather than skipping it, so the
+    ///   fight               clears that land while somebody is inside a fight are still waiting
+    ///                       when they come out. See UpdateAnnouncementHold.
     ///
     /// WHERE THE POSTS COME FROM. Nothing here opens a connection of its own. The feed's existing
     /// top-of-feed read is the only request involved: <see cref="ObserveForAnnounce"/> is called
@@ -57,10 +61,24 @@ namespace PfPresets
         /// </summary>
         private static readonly TimeSpan AnnounceFreshWindow = TimeSpan.FromMinutes(20);
 
-        /// <summary>The most that can be waiting to be shown. Anything past it is marked seen and
-        /// dropped - it will be on the feed, which is where a clear that missed its moment
-        /// belongs.</summary>
-        private const int AnnounceQueueCap = 3;
+        /// <summary>
+        /// The most that can be waiting to be shown.
+        ///
+        /// THREE WAS SIZED FOR A QUEUE THAT DRAINED CONTINUOUSLY. Back then nothing waited longer
+        /// than the banner in front of it, so three was only ever "how many landed in one poll".
+        /// Holding announcements through combat and duties changed what this number means: the
+        /// queue now has to cover a whole fight, which is ten to twenty polls rather than one, and
+        /// at three the fourth clear of a raid night was marked seen and thrown away.
+        ///
+        /// Eight is about a minute of banners in the worst case, which is a real cost but a bounded
+        /// one, and it is paid at the moment somebody walks out of a duty rather than in the middle
+        /// of anything. The cap still exists because it has to - a queue with no ceiling is the
+        /// wall of other people's evenings the header promises never to build.
+        ///
+        /// Anything past it is still marked seen and dropped; it will be on the feed, which is
+        /// where a clear that missed its moment belongs.
+        /// </summary>
+        private const int AnnounceQueueCap = 8;
 
         private readonly Queue<AchievementPost> announceQueue = new();
         private readonly object announceLock = new();
@@ -280,8 +298,13 @@ namespace PfPresets
             {
                 foreach (var post in worth)
                 {
+                    // THE NEWEST WINS THE LAST SEAT. Overflow used to refuse the arriving clear and
+                    // keep whatever had been waiting longest, which is the wrong way round: coming
+                    // out of a duty to be told about the three oldest things that happened while
+                    // you were in it, and never the ones that just landed, is the least useful
+                    // possible eight. Dropping from the front keeps the survivors in order.
                     if (announceQueue.Count >= AnnounceQueueCap)
-                        break;
+                        announceQueue.Dequeue();
 
                     announceQueue.Enqueue(post);
                 }
