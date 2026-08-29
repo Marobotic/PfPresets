@@ -141,12 +141,17 @@ namespace PfPresets
         public int AutoRefresherMaxHours { get; set; } = 0;
 
         /// <summary>
-        /// The highest welcome revision this install has been shown, or 0 for a fresh one.
+        /// The highest onboarding revision this install has finished, or 0 for one that never has.
         ///
-        /// A number rather than a bool so a future release with something genuinely new to say can
+        /// A NEW KEY, not the old WelcomeSeenVersion. The card run it replaces is gone, and this is
+        /// a different piece of software in the same slot - it asks questions and writes settings
+        /// rather than turning pages. Reusing the old key would have hidden it from every existing
+        /// install, which is exactly the set of people who have never been asked any of it.
+        ///
+        /// A number rather than a bool so a later release with something genuinely new to say can
         /// show it once to existing users too, without showing it twice to anyone.
         /// </summary>
-        public int WelcomeSeenVersion { get; set; } = 0;
+        public int OnboardingSeenVersion { get; set; } = 0;
 
         // ── Anonymous usage stats ─────────────────────────────────
 

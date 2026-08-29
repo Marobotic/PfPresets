@@ -188,5 +188,71 @@ namespace PfPresets
                 tk.OnPreBuild(pre => pre.AddFontAwesomeIconFont(new SafeFontConfig { SizePx = px })));
             return slot;
         }
+
+        /// <summary>
+        /// Asks for every face the plugin owns, once, before anything is drawn in one.
+        ///
+        /// THE FLASH THIS FIXES. Every handle above is built on first use, and a handle that has
+        /// not finished building does not draw at the size asked for - Push() on it silently falls
+        /// back to Dalamud's own default, around 12px. Built lazily, that meant the FIRST FRAME of
+        /// anything was set in the wrong face at the wrong size and corrected itself a moment
+        /// later: opening the window, switching to a tab whose faces nothing had touched yet,
+        /// scrolling a profile card into view, opening the announcement preview. Every one of those
+        /// showed a frame or two of Dalamud's default first.
+        ///
+        /// Touching each property here builds them all in one atlas pass, at load, while there is
+        /// nothing on screen to flicker. It costs one build of about twenty faces instead of twenty
+        /// builds spread across the session - which is also cheaper overall, because each separate
+        /// NewDelegateFontHandle forces its own atlas rebuild.
+        ///
+        /// SAFE TO CALL EARLY AND SAFE TO CALL TWICE. Every accessor is `??=` on its own slot, so a
+        /// second call is a no-op, and none of them touch ImGui state - they only register a build
+        /// callback with the atlas, which Dalamud runs when it is ready.
+        ///
+        /// A face added anywhere in the plugin belongs on this list. One that is left off still
+        /// works; it just brings its flash back with it.
+        /// </summary>
+        internal void PreloadFonts()
+        {
+            try
+            {
+                // The system scale, used by every window.
+                _ = UiPersonFont; _ = UiCaptionFont; _ = UiTitleFont; _ = UiHeadingFont;
+                _ = UiNameFont; _ = UiRowNameFont; _ = UiPillFont; _ = UiSegmentFont;
+                _ = UiBodyFont; _ = UiLabelFont; _ = UiHelpFont;
+                _ = UiIconSmall; _ = UiIconRow;
+
+                // The onboarding's own faces. It is the first thing a new install sees, and the
+                // one surface with nothing before it to have warmed the atlas.
+                _ = OnbDisplay; _ = OnbTitle; _ = OnbLead; _ = OnbCard;
+                _ = OnbBody; _ = OnbBodyBold; _ = OnbSmall; _ = OnbSmallBold;
+                _ = OnbTiny; _ = OnbScore; _ = OnbFeedName;
+                _ = OnbIconMid; _ = OnbIconLarge;
+
+#if PFP_RATINGS
+                _ = ScoreFont; _ = LabelFont;
+
+                // The announcement, and the preview of it in the onboarding. Both game faces are
+                // asked for up front rather than when the typeface is switched, so switching is
+                // instant instead of showing the old face for a frame - see OnbPreviewFaces.
+                _ = AnnPluginFont; _ = AnnIconFont;
+
+                // EnsureAnnounceFonts first, because AnnTextFont reads annBuiltFace to decide which
+                // family to ask the game for - touched before it, the announcement would build the
+                // wrong face now and the right one on the first clear of the session, which is the
+                // worst possible moment to be rebuilding an atlas.
+                EnsureAnnounceFonts();
+                _ = AnnTextFont;
+
+                _ = OnbPreviewPluginFace;
+                PreloadOnboardingGameFaces();
+#endif
+            }
+            catch (Exception)
+            {
+                // A face that cannot be built here will be asked for again at its call site and
+                // fall back the way it always did. Nothing about this is worth failing a load over.
+            }
+        }
     }
 }

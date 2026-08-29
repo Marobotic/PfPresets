@@ -988,8 +988,12 @@ namespace PfPresets
                 isChangelogVisible = true;
 
             ImGui.Dummy(new Vector2(0, 8));
-            if (DrawNeutralButton("Show welcome again##OpenWelcome", new Vector2(180, ButtonHeight)))
-                ShowWelcomeAgain();
+
+            // The whole run again, from the fork. It is where the window shape, the accent and the
+            // announcements were first asked about, so it is a reasonable second route to all three
+            // as well as a way to re-read the tour.
+            if (DrawNeutralButton("Replay onboarding##ReplayOnboarding", new Vector2(180, ButtonHeight)))
+                ReplayOnboarding();
 
             // Trailing room so the last control clears the bottom of the scroll region. Without it
             // the tab scrolls to exactly the end of the button and stops, leaving it sitting half in
@@ -1401,75 +1405,9 @@ namespace PfPresets
 
         // ── Appearance ────────────────────────────────────────────
 
-        /// <summary>
-        /// The seven accents as round swatches, the chosen one ringed in Ink.
-        ///
-        /// A ring rather than a tick: the swatch is the colour, and a mark drawn in the colour's own
-        /// contrast is the one thing guaranteed to be legible on all seven.
-        ///
-        /// A ROUNDED SQUARE, not a circle and not a square. It is the shape the system this
-        /// follows gives anything that is purely its own colour, and the mockup sets it at 28px
-        /// with an 8px corner - which is the app-icon proportion, about two-sevenths of the side.
-        /// </summary>
-        private const float AccentSwatchRadius = 8f;
-
-        private void DrawAccentSwatches()
-        {
-            // 28px, 8px corner, 10px apart - the mockup's numbers.
-            const float swatch = 28f;
-            const float gap = 10f;
-
-            var dl = ImGui.GetWindowDrawList();
-            string current = string.IsNullOrWhiteSpace(config.AccentColorHex)
-                ? DefaultAccentHex
-                : config.AccentColorHex.Trim();
-
-            for (int i = 0; i < AccentChoices.Length; i++)
-            {
-                var (hex, name) = AccentChoices[i];
-                if (i > 0)
-                    ImGui.SameLine(0, gap);
-
-                Vector2 p = ImGui.GetCursorScreenPos();
-                ImGui.InvisibleButton($"##accent{hex}", new Vector2(swatch, swatch));
-
-                bool chosen = string.Equals(hex, current, StringComparison.OrdinalIgnoreCase);
-                bool hot = ImGui.IsItemHovered();
-
-                if (ImGui.IsItemClicked())
-                {
-                    config.AccentColorHex = hex;
-                    config.Save();
-                }
-
-                var max = new Vector2(p.X + swatch, p.Y + swatch);
-                dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex(hex)),
-                    AccentSwatchRadius);
-
-                // TWO RINGS, WITH THE GROUND BETWEEN THEM. The mockup selects a chip with a 2px
-                // halo in the background colour and a 2px ring in the ink outside that, so the mark
-                // never touches the colour it is marking - which matters most on the pale ones,
-                // where a ring drawn against the fill is the one thing you cannot see.
-                if (chosen)
-                {
-                    dl.AddRect(new Vector2(p.X - 2f, p.Y - 2f), new Vector2(max.X + 2f, max.Y + 2f),
-                        ImGui.ColorConvertFloat4ToU32(Field), AccentSwatchRadius + 2f,
-                        ImDrawFlags.None, 2f);
-                    dl.AddRect(new Vector2(p.X - 4f, p.Y - 4f), new Vector2(max.X + 4f, max.Y + 4f),
-                        ImGui.ColorConvertFloat4ToU32(Ink), AccentSwatchRadius + 4f,
-                        ImDrawFlags.None, 2f);
-                }
-                else if (hot)
-                {
-                    dl.AddRect(new Vector2(p.X - 3f, p.Y - 3f), new Vector2(max.X + 3f, max.Y + 3f),
-                        ImGui.ColorConvertFloat4ToU32(BorderControl), AccentSwatchRadius + 3f,
-                        ImDrawFlags.None, 1f);
-                }
-
-                if (hot)
-                    PaddedTooltip(name);
-            }
-        }
+        // DrawAccentSwatches used to live here. It is in PluginUI.Theme.cs now: the accent is a
+        // theme setting, not a rating one, and the onboarding - which is compiled into every build
+        // - needs the same control. See the note on it there.
 
         // The "Clear local data" button used to live here, and it was the worst hole in the
         // whole rating system.

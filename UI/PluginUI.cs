@@ -101,7 +101,7 @@ namespace PfPresets
 
         public void Dispose()
         {
-            DisposeWelcomeFonts();
+            DisposeOnboardingFonts();
             DisposeScaleFonts();
             DisposeSiteIcons();
 #if PFP_RATINGS
@@ -132,6 +132,23 @@ namespace PfPresets
             var theme = PushPluginTheme();
             try
             {
+                // THE FIRST RUN OWNS THE SCREEN, and nothing else is submitted while it does.
+                //
+                // Checked here rather than inside the main window, which is where the card run this
+                // replaced was checked: that one could only appear once somebody had already found
+                // and opened the plugin, which is the wrong half of the audience. This one has to be
+                // able to introduce a window nobody has opened yet, so it is the first thing the
+                // frame considers and the only thing it draws. See PluginUI.Onboarding.cs.
+                MaybeStartOnboarding();
+
+                if (onboardingActive)
+                {
+                    // The screen did not draw, so nothing may pin itself inside it this frame.
+                    screenRectValid = false;
+                    DrawOnboarding();
+                    return;
+                }
+
                 // The screen first, then everything that is anchored to the game rather than to it,
                 // and the sheet layer LAST.
                 //
@@ -148,7 +165,6 @@ namespace PfPresets
                 DrawListingPanel();
                 DrawPartyFinderOpenButton();
                 ReportOverlayDiagnostic();
-                DrawWelcomeWindow();
 #if PFP_RATINGS
                 DrawRatingPrompt();
                 DrawListingLeaderRatingOverlay();

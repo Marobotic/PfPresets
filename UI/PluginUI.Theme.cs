@@ -261,6 +261,87 @@ namespace PfPresets
         private static Vector4 BorderActiveAccent => AccentAlpha(0.33f);
 
         /// <summary>
+        /// The seven accents as round swatches, the chosen one ringed in Ink.
+        ///
+        /// THE ONLY ACCENT PICKER IN THE PLUGIN, and it lives here rather than in the settings file
+        /// so that every build has it. The onboarding asks the same question on its third step, and
+        /// the first version of that step drew its own copy of this - which drifted immediately: it
+        /// put a one-pixel outline around every unselected swatch, a stroke centred on the fill's
+        /// own rounded edge with half of it inside the colour and half outside on black. Following
+        /// a rounded corner that reads as a chewed edge, and it was the one control in the run
+        /// people said looked pixelated while this one, four steps away, did not.
+        ///
+        /// Two implementations of one control is how that happens. There is one now, and both
+        /// surfaces call it.
+        ///
+        /// A ring rather than a tick: the swatch is the colour, and a mark drawn in the colour's own
+        /// contrast is the one thing guaranteed to be legible on all seven.
+        ///
+        /// A ROUNDED SQUARE, not a circle and not a square. It is the shape the system this
+        /// follows gives anything that is purely its own colour, and the mockup sets it at 28px
+        /// with an 8px corner - which is the app-icon proportion, about two-sevenths of the side.
+        /// </summary>
+        private const float AccentSwatchRadius = 8f;
+
+        private void DrawAccentSwatches()
+        {
+            // 28px, 8px corner, 10px apart - the mockup's numbers.
+            const float swatch = 28f;
+            const float gap = 10f;
+
+            var dl = ImGui.GetWindowDrawList();
+            string current = string.IsNullOrWhiteSpace(config.AccentColorHex)
+                ? DefaultAccentHex
+                : config.AccentColorHex.Trim();
+
+            for (int i = 0; i < AccentChoices.Length; i++)
+            {
+                var (hex, name) = AccentChoices[i];
+                if (i > 0)
+                    ImGui.SameLine(0, gap);
+
+                Vector2 p = ImGui.GetCursorScreenPos();
+                ImGui.InvisibleButton($"##accent{hex}", new Vector2(swatch, swatch));
+
+                bool chosen = string.Equals(hex, current, StringComparison.OrdinalIgnoreCase);
+                bool hot = ImGui.IsItemHovered();
+
+                if (ImGui.IsItemClicked())
+                {
+                    config.AccentColorHex = hex;
+                    config.Save();
+                }
+
+                var max = new Vector2(p.X + swatch, p.Y + swatch);
+                dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex(hex)),
+                    AccentSwatchRadius);
+
+                // TWO RINGS, WITH THE GROUND BETWEEN THEM. The mockup selects a chip with a 2px
+                // halo in the background colour and a 2px ring in the ink outside that, so the mark
+                // never touches the colour it is marking - which matters most on the pale ones,
+                // where a ring drawn against the fill is the one thing you cannot see.
+                if (chosen)
+                {
+                    dl.AddRect(new Vector2(p.X - 2f, p.Y - 2f), new Vector2(max.X + 2f, max.Y + 2f),
+                        ImGui.ColorConvertFloat4ToU32(Field), AccentSwatchRadius + 2f,
+                        ImDrawFlags.None, 2f);
+                    dl.AddRect(new Vector2(p.X - 4f, p.Y - 4f), new Vector2(max.X + 4f, max.Y + 4f),
+                        ImGui.ColorConvertFloat4ToU32(Ink), AccentSwatchRadius + 4f,
+                        ImDrawFlags.None, 2f);
+                }
+                else if (hot)
+                {
+                    dl.AddRect(new Vector2(p.X - 3f, p.Y - 3f), new Vector2(max.X + 3f, max.Y + 3f),
+                        ImGui.ColorConvertFloat4ToU32(BorderControl), AccentSwatchRadius + 3f,
+                        ImDrawFlags.None, 1f);
+                }
+
+                if (hot)
+                    PaddedTooltip(name);
+            }
+        }
+
+        /// <summary>
         /// Re-reads the accent from the config, if it has changed since the last frame.
         ///
         /// Guarded on the string rather than recomputed every frame: the derived hover and pressed

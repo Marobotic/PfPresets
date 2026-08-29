@@ -171,6 +171,18 @@ namespace PfPresets
             // Initialize UI
             this.ui = new PluginUI(this.pluginInterface, this.config, this.dutyDataHelper, this.pfAutomation, textureProvider);
 
+            // EVERY FACE THE PLUGIN OWNS, ASKED FOR NOW, AT LOAD.
+            //
+            // Font handles are built asynchronously and one that is not ready yet does not draw at
+            // the size asked for - it falls back to Dalamud's default. Built on first use, that put
+            // a frame or two of the wrong face at the wrong size in front of anything the session
+            // had not drawn before: the window opening, a tab being switched to, a profile card
+            // scrolling in, the announcement preview changing typeface. Asking for all of them here
+            // builds them in one atlas pass while there is nothing on screen to flicker.
+            //
+            // Load time, not first draw: the atlas has the whole of the login screen to work in.
+            this.ui.PreloadFonts();
+
             // AFTER the UI exists, not beside where the service is built. Assigning this next to the
             // constructor above read better and dereferenced a field that is not set until here.
             this.ui.Listings = this.listingXray;

@@ -100,10 +100,6 @@ namespace PfPresets
                         // second window floating beside it. See PluginUI.Sheets.cs.
                         RecordScreenRect();
 
-                        // Checked here rather than at construction: on a first run the plugin is
-                        // built before there is any UI to put a window on.
-                        MaybeShowWelcome();
-
                         if (config.Device == DeviceLayout.Landscape)
                             DrawLandscapeShell();
                         else
