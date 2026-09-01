@@ -24,8 +24,11 @@ namespace PfPresets
     /// WHAT STILL BOUNDS IT: only a listed party is ever sent, never a private one. It goes up
     /// while the listing is up and comes down when it ends, and the server forgets a report within
     /// the hour regardless - this describes a party recruiting in public right now, not where
-    /// anybody has been. It is off for anybody running PFRadar, which does this already, and off
-    /// for anybody who turns it off.
+    /// anybody has been. It is off for anybody who turns it off.
+    ///
+    /// THE TWO HALVES ARE GATED SEPARATELY, and PFRadar only stops one of them. Publishing needs no
+    /// hook and carries on; reading back is what the panel does, and the panel stands down. See
+    /// <see cref="Reporting"/> and <see cref="Reading"/>.
     /// </summary>
     internal sealed class PfCrowdsource
     {
@@ -99,9 +102,34 @@ namespace PfPresets
             this.suppressed = suppressed;
         }
 
-        /// <summary>Whether this install is taking part at all.</summary>
-        public bool Enabled
-            => config.PfCrowdsourceEnabled && config.RatingsEnabled && !suppressed();
+        /// <summary>
+        /// Whether this install publishes its own party.
+        ///
+        /// PFRADAR IS NOT A REASON TO STOP. This used to be one property covering both halves, and
+        /// the conflict switched off both - so loading PFRadar took this character's row down and
+        /// left everybody else's panel unable to see a party that was sitting right there in the
+        /// listing. Withdrawing is a claim that the party has gone, and it had not.
+        ///
+        /// The conflict is about a hook, and this half does not use it: the party comes from
+        /// PfAutomation and the game's own party list, exactly as it does with PFRadar absent. What
+        /// cannot coexist is two plugins hooked to the listing-detail function, and that is the
+        /// reading half's problem - see <see cref="Reading"/>.
+        ///
+        /// Somebody who does not want to publish still turns it off, and that switch is untouched.
+        /// </summary>
+        public bool Reporting
+            => config.PfCrowdsourceEnabled && config.RatingsEnabled;
+
+        /// <summary>
+        /// Whether this install reads other people's parties back.
+        ///
+        /// This is the half the conflict really applies to. The only thing that asks for a roster is
+        /// the panel beside a listing, and that panel needs the listing hook to know which listing
+        /// is open - which stands down for PFRadar. With nothing to draw into there is nothing to
+        /// ask for, so the request is not made either.
+        /// </summary>
+        public bool Reading
+            => Reporting && !suppressed();
 
         // ── Reporting ─────────────────────────────────────────────
 
@@ -126,7 +154,7 @@ namespace PfPresets
 
             try
             {
-                if (!Enabled)
+                if (!Reporting)
                 {
                     Withdraw();
                     return;
@@ -392,7 +420,7 @@ namespace PfPresets
         /// </summary>
         public IReadOnlyList<PfMember>? RosterFor(string leaderName, string leaderWorld)
         {
-            if (!Enabled || string.IsNullOrWhiteSpace(leaderName) || string.IsNullOrWhiteSpace(leaderWorld))
+            if (!Reading || string.IsNullOrWhiteSpace(leaderName) || string.IsNullOrWhiteSpace(leaderWorld))
                 return null;
 
             string key = $"{leaderName}@{leaderWorld}".ToLowerInvariant();

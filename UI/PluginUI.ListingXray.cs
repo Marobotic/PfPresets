@@ -35,12 +35,22 @@ namespace PfPresets
             if (!pfAutomation.TryGetListingWindowRect(out var anchor, out var anchorSize))
                 return;
 
-            var snapshot = xray.Current;
-
-            if (!xray.Active && !xray.SuppressedByPfRadar)
+            // NOTHING AT ALL WHILE PFRADAR IS RUNNING.
+            //
+            // There was a panel here that explained itself instead - and it defeated its own point,
+            // because "staying out of the way" was written on a strip of screen sitting beside
+            // PFRadar's own, every time a listing was opened, for as long as both were installed.
+            // A notice with nothing to say and no way to dismiss it is worse than the empty space
+            // it took: standing down means not being there.
+            //
+            // The explanation is not lost. It is in the PF Radar section of Settings, which is
+            // where somebody goes when a feature they turned on is not showing - and being asked
+            // for is what makes it an explanation rather than an interruption.
+            if (xray.SuppressedByPfRadar || !xray.Active)
                 return;
 
-            if (xray.Active && snapshot == null)
+            var snapshot = xray.Current;
+            if (snapshot == null)
                 return;
 
             var pos = new Vector2(anchor.X + anchorSize.X + ListingPanelGap, anchor.Y);
@@ -63,11 +73,7 @@ namespace PfPresets
             {
                 try
                 {
-                    if (xray.SuppressedByPfRadar)
-                        DrawListingSuppressed();
-                    else
-                        DrawListingRoster(snapshot!);
-
+                    DrawListingRoster(snapshot);
                     SealOverlayIfPrompted();
                 }
                 finally
@@ -82,19 +88,6 @@ namespace PfPresets
 
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor(2);
-        }
-
-        private void DrawListingSuppressed()
-        {
-            ImGui.PushTextWrapPos(0);
-            using (UiHelpFont.Push())
-            {
-                ImGui.TextColored(Faint,
-                    "PFRadar is running, so this panel stays out of its way - both read the same "
-                    + "part of the game and only one of them should. Disable PFRadar to use this "
-                    + "instead.");
-            }
-            ImGui.PopTextWrapPos();
         }
 
         /// <summary>One person on the panel: who they are, and how far along, if we know.</summary>

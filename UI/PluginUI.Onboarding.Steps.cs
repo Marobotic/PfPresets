@@ -35,7 +35,20 @@ namespace PfPresets
         // here cannot go stale the way a name lookup could.
         private const uint OnbSampleJob = 37;        // Gunbreaker, the card's own character
         private const uint OnbSampleFeedJobOne = 25; // Black Mage
-        private const uint OnbSampleFeedJobTwo = 40; // Sage
+
+        // ── The figures' cast ─────────────────────────────────────
+        //
+        // INVENTED, and not casually. Every name here is drawn on a card that also carries a world,
+        // a job, a parse and a clear date, and a real player in that frame is somebody's record put
+        // on a page they were never asked about - the more so on the figures showing a middling
+        // parse or a tier half done. These three belong to nobody: they are built off the game's own
+        // naming conventions and are not anybody's character, ours included.
+        //
+        // If one of these ever has to change, change it here. They were literals at three draw
+        // sites, which is how the plugin's author ended up on his own onboarding.
+        private const string OnbNameProfile = "Tarien Solvaig";
+        private const string OnbNameFeed = "Nunulu Nanalu";
+        private const string OnbNameAnnounce = "Aldric Vaunt";
         private const uint OnbJobPld = 19;
         private const uint OnbJobWar = 21;
         private const uint OnbJobWhm = 24;
@@ -600,20 +613,22 @@ namespace PfPresets
         /// <summary>
         /// The face the preview line is set in, following the typeface control.
         ///
-        /// FIFTEEN PIXELS, NOT THE ANNOUNCEMENT'S TWENTY. The preview is a scaled-down picture of
-        /// a screen, and at 20 the sentence is half again wider than the panel it has to sit in.
-        /// Both game faces resolve to a cut LARGER than 15 and come down to it, which is a
+        /// FIFTEEN PIXELS, NOT THE ANNOUNCEMENT'S OWN SIZE. The preview is a scaled-down picture of
+        /// a screen, and at the real size the sentence is half again wider than the panel it has to
+        /// sit in. Both game faces resolve to a cut LARGER than 15 and come down to it, which is a
         /// reduction rather than an enlargement and stays sharp; Roboto is built at exactly the
         /// size asked for, as everything else in this run is.
         ///
         /// ALL THREE ARE HELD AT ONCE, and none is ever thrown away. The first version built one
-        /// and rebuilt it whenever the segments moved, mirroring EnsureAnnounceFonts - which is
-        /// right for the real announcement, where the face changes once in a session from a click
-        /// in Settings. Here the three segments sit beside the thing they change, and people press
-        /// all of them: every press disposed a handle and asked the atlas for another, and the
-        /// preview drew in the plugin's fallback face until it landed. The control looked like it
-        /// was lagging a step behind the click. Three handles is a few hundred kilobytes of atlas
-        /// and the switch is immediate.
+        /// and rebuilt it whenever the segments moved: every press disposed a handle and asked the
+        /// atlas for another, and the preview drew in the fallback face until it landed, so the
+        /// control looked like it was lagging a step behind the click. Three handles is a few
+        /// hundred kilobytes of atlas and the switch is immediate.
+        ///
+        /// The real announcement had the same fault for the same reason and now works the same way
+        /// - see the note on its handles in PluginUI.ClearAnnounce.cs. There is no version of this
+        /// where discarding a face somebody may switch back to in five seconds is worth the atlas
+        /// rebuild it costs.
         /// </summary>
         private IFontHandle OnbPreviewFace
         {
@@ -879,9 +894,9 @@ namespace PfPresets
             // It was set in the plugin's own face whatever the three segments said, which made the
             // one control on this step that has a visible consequence the one control with no
             // visible consequence. OnbPreviewFace builds the same family the real announcement
-            // would use - see the note on it for why the size is 16 rather than the announcement's
-            // own 20.
-            const string who = "Kaji Yumi";
+            // would use - see the note on it for why the size is 15 rather than the announcement's
+            // own 26.
+            const string who = OnbNameAnnounce;
             const string mid = " cleared ";
             const string fight = "Futures Rewritten";
 
@@ -1050,12 +1065,17 @@ namespace PfPresets
 
             // THE CARD IS AS TALL AS ITS CONTENT, not a constant that happened to fit once.
             //
-            // The clear pills are sized by the words in them, and four savage floors with parses on
-            // three of them do not fit one row of a 380px card - they wrap, and a card fixed at a
-            // height measured before they wrapped would have run the second row out through its
-            // own bottom edge. Both bands are measured here and the card is built around the total,
-            // which is the same measure-then-draw discipline the real pill rows use.
-            const float cardW = 380f;
+            // The clear pills are sized by the words in them, and a tier's worth of them with
+            // parses on most does not fit one row - they wrap, and a card fixed at a height
+            // measured before they wrapped would have run the second row out through its own bottom
+            // edge. Both bands are measured here and the card is built around the total, which is
+            // the same measure-then-draw discipline the real pill rows use.
+            //
+            // 430 RATHER THAN 380, because the savage pills now carry the bosses' own names. "Red
+            // Hot / Deep Blue" is four times the width of the "M2S" that used to stand in for it,
+            // and at 380 the band took a third row - which the card was measured for, honestly, and
+            // then hung out through the bottom of the panel it is centred in.
+            const float cardW = 430f;
 
             (string Name, string Slug, double Percentile)[] ultimates =
             {
@@ -1064,14 +1084,22 @@ namespace PfPresets
                 ("DSR", "dsr", 78d),
             };
 
-            // The last floor has no parse, which is a state the real card has and the figure needs:
-            // a clear nobody logged is the neutral pill, not a seventh colour.
+            // THE TIER BY ITS BOSSES, AND MID-PROG. These were M1S..M4S, which named the floor
+            // rather than what was killed and could only ever count to four - the last floor is two
+            // bosses, Lindwurm and then Lindwurm II, so the tier is five.
+            //
+            // Four of the five, deliberately. The real card draws a pill for a clear and nothing at
+            // all for a fight with no clear on record, so a party that has the door boss down and is
+            // progging the rest is what a card in the middle of a tier actually looks like - and
+            // the heading's "4 / 5" carries the shape of what is left without asserting anything
+            // about it. Lindwurm is the one with no parse, which is a state the real card has and
+            // the figure needs: a clear nobody logged is the neutral pill, not a seventh colour.
             (string Name, string Slug, double Percentile)[] savages =
             {
-                ("M1S", "m1s", 100d),
-                ("M2S", "m2s", 64d),
-                ("M3S", "m3s", 41d),
-                ("M4S", "m4s", double.NaN),
+                ("Vamp Fatale", "vamp-fatale", 100d),
+                ("Red Hot / Deep Blue", "red-hot-deep-blue", 64d),
+                ("The Tyrant", "the-tyrant", 41d),
+                ("Lindwurm", "lindwurm", double.NaN),
             };
 
             float bandOneH = OnbClearBandHeight("ultimate", ultimates, cardW);
@@ -1128,7 +1156,7 @@ namespace PfPresets
             OnbJobIcon(dl, OnbSampleJob, new Vector2(cardX + 14f, ny), 26f, RoleTank);
 
             using (UiPersonFont.Push())
-                OnbText(dl, new Vector2(cardX + 48f, ny), Ink, "Mayo Botic");
+                OnbText(dl, new Vector2(cardX + 48f, ny), Ink, OnbNameProfile);
 
             ny += 30f;
 
@@ -1174,7 +1202,7 @@ namespace PfPresets
 
             OnbClearBand(dl, cardX, cardW, ny, "ultimate", "ULTIMATE", "3 / 7", ultimates);
             OnbClearBand(dl, cardX, cardW, ny + bandOneH + 12f, "savage", "CURRENT SAVAGE TIER",
-                "4 / 4", savages);
+                "4 / 5", savages);
         }
 
         /// <summary>
@@ -1554,10 +1582,18 @@ namespace PfPresets
             // put its bottom edge exactly on the hairline dividing the body from the heart and the
             // share. At 106 the body is 72 and the art is centred in it, so the same 14px of air
             // sits above and below - which is the margin the real card has.
+            // ONE POST, AND IT IS AN ULTIMATE. There were two, the second a savage tier clear, and
+            // it was the weaker half of the figure in every way: the tier art is per-boss so a card
+            // for the tier as a whole has no picture to carry and fell back to a glyph in a box,
+            // and its caption had to name a tier, which is a thing that goes stale every patch. An
+            // Ultimate post has the fight's own art on it and says what a post is without either.
+            //
+            // The copy above still says both kinds go up on the feed. This is a figure, not an
+            // inventory - one post shows what a post looks like.
             const float switchW = 270f, switchH = 34f, postH = 106f;
             float feedX = MathF.Round(pMin.X + 24f);
             float postW = OnbPanelW - 48f;
-            const float total = switchH + 10f + postH + 10f + postH;
+            const float total = switchH + 10f + postH;
             float top = MathF.Round(pMin.Y + (OnbContentH - total) * 0.5f);
 
             // The two-up switch: it is how somebody finds their own clears, and it is the only
@@ -1581,14 +1617,8 @@ namespace PfPresets
             top += switchH + 10f;
 
             OnbClearPost(dl, new Vector2(feedX, top), postW, "ultimate", "fru",
-                OnbSampleFeedJobOne, "Rima Verdant", "Odin", "Futures Rewritten (Ultimate)",
+                OnbSampleFeedJobOne, OnbNameFeed, "Odin", "Futures Rewritten (Ultimate)",
                 "FIRST CLEAR", badgeFilled: true, "Today 23:41", "128", hearted: true);
-
-            top += postH + 10f;
-
-            OnbClearPost(dl, new Vector2(feedX, top), postW, "savage", "m4s",
-                OnbSampleFeedJobTwo, "Kaji Yumi", "Cerberus", "Cruiserweight tier - all four floors",
-                "SAVAGE TIER", badgeFilled: false, "Yesterday 21:07", "41", hearted: false);
         }
 
         /// <param name="sectionKey">"ultimate" or "savage": which glyph stands in when the fight has

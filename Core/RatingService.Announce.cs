@@ -13,11 +13,12 @@ namespace PfPresets
     /// one of them exists because breaking it produces the same failure - an announcement nobody
     /// asked for, which is how a feature like this gets turned off in the first ten minutes:
     ///
-    ///   never a backlog     The first read of an install seeds the mark and announces nothing. A
-    ///                       login that dumps the last four hours of clears down the middle of the
-    ///                       screen is not a notification, it is a wall.
-    ///   never stale         A clear older than <see cref="AnnounceFreshWindow"/> is marked as seen
-    ///                       and dropped. Coming back from a two-hour break should not replay it.
+    ///   never a backlog     The FIRST read of an install seeds the mark and announces nothing.
+    ///                       Somebody who has just installed this has no idea what these are, and a
+    ///                       wall of strangers' clears is a poor way to find out.
+    ///   never stale         Mid-session, a clear older than <see cref="AnnounceFreshWindow"/> is
+    ///                       marked as seen and dropped: a laptop lid, a long queue or an hour of
+    ///                       an unreachable server should be caught up on quietly, not replayed.
     ///   never your own      You were there. The feed already refuses you a heart on your own post
     ///                       for the same reason.
     ///   never a flood       At most <see cref="AnnounceQueueCap"/> waiting at once, oldest first,
@@ -28,6 +29,14 @@ namespace PfPresets
     ///   never lost to a     Combat and duties hold the queue rather than skipping it, so the
     ///   fight               clears that land while somebody is inside a fight are still waiting
     ///                       when they come out. See UpdateAnnouncementHold.
+    ///
+    /// AND ONE EXCEPTION, AT LOGIN. The freshness rule is about a client that has been asleep with
+    /// somebody sitting in front of it; logging in is the other thing entirely, and there the clears
+    /// that landed while they were away ARE the news - it is the first question anybody asks coming
+    /// back to a raiding server. So the first read after a login is a catch-up: the window comes
+    /// off, the mark decides what counts as missed, and the cap goes up to
+    /// <see cref="AnnounceCatchUpCap"/>. It is still a cap, and it is still not the very first read
+    /// of an install, which seeds and says nothing.
     ///
     /// WHERE THE POSTS COME FROM. Nothing here opens a connection of its own. The feed's existing
     /// top-of-feed read is the only request involved: <see cref="ObserveForAnnounce"/> is called
@@ -80,6 +89,22 @@ namespace PfPresets
         /// </summary>
         private const int AnnounceQueueCap = 8;
 
+        /// <summary>
+        /// The most a login catch-up will queue, which is a different number from the one above.
+        ///
+        /// Eight is "how many can land while you are in a fight". This is "how many happened while
+        /// you were logged out", and on a busy evening that is a bigger number - capping it at
+        /// eight would mean the catch-up quietly dropping the half of the news it was added to
+        /// deliver.
+        ///
+        /// Sixteen is the feed's own page, which is the real ceiling anyway: the announcer reads
+        /// one page and cannot see past it, so this is "everything the read can offer" rather than
+        /// a limit picked to sit under one. At the ten seconds a banner now runs for, a worst-case
+        /// catch-up is a bit under three minutes of them, drained one at a time and held through
+        /// anything the player is actually doing.
+        /// </summary>
+        private const int AnnounceCatchUpCap = 16;
+
         private readonly Queue<AchievementPost> announceQueue = new();
         private readonly object announceLock = new();
 
@@ -100,6 +125,20 @@ namespace PfPresets
 
         /// <summary>When the poll last asked for a feed read on the announcer's behalf.</summary>
         private DateTime announceCheckedAt = DateTime.MinValue;
+
+        /// <summary>
+        /// Whether somebody was logged in on the previous tick, so that logging in can be told from
+        /// being logged in. Frame thread only - the tick is the only thing that touches it.
+        /// </summary>
+        private bool announceWasLoggedIn;
+
+        /// <summary>
+        /// Set by the tick when a login is noticed, taken by the next read that observes a page.
+        ///
+        /// Volatile because the two ends are different threads: the tick raises it on the frame and
+        /// <see cref="ObserveForAnnounce"/> takes it on the worker that the feed read completes on.
+        /// </summary>
+        private volatile bool announceCatchUp;
 
         // ── The mark, and which thread is allowed to write it down ────
         //
@@ -174,15 +213,34 @@ namespace PfPresets
             // First, and before every guard below - see FlushAnnounceMark.
             FlushAnnounceMark();
 
+            // NOTICED BEFORE THE GUARDS, AND EXACTLY ONCE. Logging in is an edge rather than a
+            // state, and the only way to see it is to compare against the last tick. Tracked even
+            // while the announcer is switched off, because otherwise somebody sitting at the title
+            // screen who turns it on hours into a session would have that tick read as a login.
+            bool loggedIn = api.LocalIdentity is { IsValid: true };
+            bool justLoggedIn = loggedIn && !announceWasLoggedIn;
+            announceWasLoggedIn = loggedIn;
+
             if (!config.CommunityEnabled || !config.ClearAnnouncementsEnabled)
                 return;
 
             // Nobody logged in: no character to skip posts of, nothing on screen to draw over, and
             // no reason to be talking to the server from the title screen.
-            if (api.LocalIdentity is not { IsValid: true })
+            if (!loggedIn)
                 return;
 
             var now = DateTime.UtcNow;
+
+            if (justLoggedIn)
+            {
+                // What they missed, now rather than in two minutes' time. Both throttles are stood
+                // down for this one read: the announcer's own, and the one it shares with the feed
+                // tab - a client that was reading the feed on another character a moment ago would
+                // otherwise sit out the whole of its first two minutes back.
+                announceCatchUp = true;
+                announceCheckedAt = DateTime.MinValue;
+                feedReadAt = DateTime.MinValue;
+            }
 
             if (now - announceCheckedAt < AnnouncePollAfter)
                 return;
@@ -217,12 +275,24 @@ namespace PfPresets
             if (mark < 0)
                 mark = config.ClearAnnouncementMark;
 
-            // THE FIRST READ SEEDS AND SAYS NOTHING. See the header - this is the rule that keeps a
-            // login from being a wall of other people's evenings.
+            // THE FIRST READ OF AN INSTALL SEEDS AND SAYS NOTHING. See the header - this is the one
+            // backlog rule the catch-up below does not lift, because somebody who has just
+            // installed this does not yet know what a banner across their screen even is.
             bool seeding = mark <= 0;
 
+            // TAKEN, not read: a catch-up is spent by the first page that observes it, and every
+            // read after this one is an ordinary poll again.
+            bool catchUp = announceCatchUp;
+            announceCatchUp = false;
+
             string? mine = api.LocalIdentity is { IsValid: true } me ? me.Key : null;
-            var cutoff = DateTime.UtcNow - AnnounceFreshWindow;
+
+            // At login the freshness window is exactly the wrong rule. Mid-session it means "this
+            // client was asleep, do not replay history"; at login the history IS what is being
+            // asked for, and the mark already knows where it starts - it is the clear they were
+            // last told about, which is to say the moment they logged out.
+            var cutoff = catchUp ? DateTime.MinValue : DateTime.UtcNow - AnnounceFreshWindow;
+            int cap = catchUp ? AnnounceCatchUpCap : AnnounceQueueCap;
 
             long newest = mark;
             var worth = new List<AchievementPost>();
@@ -303,7 +373,7 @@ namespace PfPresets
                     // out of a duty to be told about the three oldest things that happened while
                     // you were in it, and never the ones that just landed, is the least useful
                     // possible eight. Dropping from the front keeps the survivors in order.
-                    if (announceQueue.Count >= AnnounceQueueCap)
+                    if (announceQueue.Count >= cap)
                         announceQueue.Dequeue();
 
                     announceQueue.Enqueue(post);

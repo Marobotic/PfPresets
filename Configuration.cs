@@ -16,7 +16,7 @@ namespace PfPresets
         /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.
         /// Deliberately the same number in the ratings and non-ratings builds: the v2 and v3 fields
         /// are inert data, so a config written by one build must load cleanly in the other.</summary>
-        public const int CurrentVersion = 7;
+        public const int CurrentVersion = 8;
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
@@ -417,10 +417,19 @@ namespace PfPresets
         public int ClearAnnouncementOffsetX { get; set; }
         public int ClearAnnouncementOffsetY { get; set; }
 
-        /// <summary>How long it stays up, in seconds, before it fades. The hover pause is on top of
-        /// this - a countdown that runs out while somebody is reaching for the thing is a countdown
-        /// that makes the click impossible.</summary>
-        public int ClearAnnouncementSeconds { get; set; } = 6;
+        /// <summary>
+        /// How long it stays up, in seconds, before it fades. The hover pause is on top of this - a
+        /// countdown that runs out while somebody is reaching for the thing is a countdown that
+        /// makes the click impossible.
+        ///
+        /// TEN RATHER THAN SIX. Six was sized against the reading: a name, a fight, and time to
+        /// take it in. What it was not sized against is the reaching - the banner carries a heart
+        /// and a close, and somebody in a duty who glances up, decides they want to heart it and
+        /// moves the mouse has spent most of six seconds before the cursor is anywhere near. Ten
+        /// leaves the pause on hover as the thing that saves an interrupted press rather than the
+        /// thing every press depends on.
+        /// </summary>
+        public int ClearAnnouncementSeconds { get; set; } = 10;
 
         /// <summary>
         /// Whether the banner ignores the mouse entirely and lets clicks reach the game behind it.
@@ -689,6 +698,32 @@ namespace PfPresets
                         + string.Join(", ", doomed.Select(p => $"\"{p.Name}\"")));
 
                 Version = 7;
+            }
+
+            // v7 -> v8: the announcement's default life went from six seconds to ten.
+            //
+            // A DEFAULT ONLY REACHES NEW INSTALLS, which would have left every existing one on a
+            // number nobody ever chose - six was never a preference, it was just what the field
+            // was initialised to, and it is the wrong number for a banner somebody is expected to
+            // be able to reach the heart on. So exactly six moves, and anything else does not:
+            // somebody who dragged that slider to five or to twenty picked that, and a migration
+            // that overwrote it would be this file deciding it knows better than the person.
+            //
+            // The one case it gets wrong is somebody who deliberately set six, and it costs them
+            // one drag of a slider they have already found once.
+            // The field only exists in the ratings build, so the step is guarded and the version
+            // bump is not - the two builds have to agree on the number or a config written by one
+            // stops loading cleanly in the other. Same shape as the v1 -> v2 step above.
+            if (Version < 8)
+            {
+#if PFP_RATINGS
+                if (ClearAnnouncementSeconds == 6)
+                {
+                    ClearAnnouncementSeconds = 10;
+                    log.Information("[Migration] v7 -> v8: clear announcement life 6s -> 10s.");
+                }
+#endif
+                Version = 8;
             }
 
             log.Information($"[Migration] Configuration upgraded from v{startVersion} to v{Version}.");

@@ -62,13 +62,21 @@ namespace PfPresets
         /// a thing to be read, and the cost was real - a font is rasterised at the size it is built
         /// at and never scaled at draw time, so a size slider meant discarding and rebuilding font
         /// handles on the end of a drag. One size that is right needs no slider and no rebuild.
+        ///
+        /// 26 RATHER THAN 20. It is competing with a game that sets its own full-screen
+        /// announcements at something like this, on a screen that may be 1440 or 4K, and at 20 it
+        /// read as a plugin's tooltip that had wandered into the middle of the display rather than
+        /// as the game saying something. Nothing else moves with it: the art squares itself off
+        /// against the line height and the panel is measured from the text, so this is the only
+        /// number, and the padding below is the only thing tuned to sit with it.
         /// </summary>
-        private const float AnnounceTextPx = 20f;
+        private const float AnnounceTextPx = 26f;
 
         /// <summary>Enough air that the text is not touching the edge, and no more. The panel is a
-        /// ground for a sentence, not a card.</summary>
-        private const float AnnouncePadX = 15f;
-        private const float AnnouncePadY = 9f;
+        /// ground for a sentence, not a card - so these grew with the text rather than in
+        /// proportion to it, which would have made a bar out of a line.</summary>
+        private const float AnnouncePadX = 19f;
+        private const float AnnouncePadY = 11f;
 
         /// <summary>
         /// Air between the fight's art and the fight's name.
@@ -180,8 +188,25 @@ namespace PfPresets
             "Game (Jupiter)",
         };
 
-        private IFontHandle? annTextPlugin, annTextGame, annIcon;
-        private int annBuiltFace = -1;
+        /// <summary>
+        /// One handle per face, and all of them kept for the life of the plugin.
+        ///
+        /// THIS WAS ONE SLOT THAT GOT THROWN AWAY AND REBUILT whenever the setting moved. Changing
+        /// the typeface is a click, and every click disposed the lot - including the two that have
+        /// nothing to do with which family is chosen: Roboto is the fallback whichever face wins,
+        /// and the heart and the close are icons.
+        ///
+        /// A disposed handle is not a handle that draws differently, it is a handle that does not
+        /// exist, and until the atlas has finished rebuilding it every Push falls through to
+        /// Dalamud's own default at about 12px. That is the twitch - the preview was not restyling,
+        /// it was collapsing to 12px and growing back a few frames later, three times over.
+        ///
+        /// Three text handles and an icon at one size is a few hundred kilobytes of atlas, paid
+        /// once at load. The onboarding's preview of this very control has always worked this way -
+        /// see OnbPreviewGameFace - and switching there has always been instant, which is what gave
+        /// the game away.
+        /// </summary>
+        private IFontHandle? annTextPlugin, annTextAxis, annTextJupiter, annIcon;
 
         /// <summary>The heart and the close, at a size that sits with 18px text rather than at
         /// whatever Dalamud's shared icon handle happens to be.</summary>
@@ -198,10 +223,13 @@ namespace PfPresets
         // changes typeface while you are reading it, which is about the most distracting thing a
         // one-line notice can do.
         //
-        // Two halves to the fix, and both are needed:
+        // Three parts to the fix, and all of them are needed:
         //
-        //   warm   The handles are asked for on every frame from the moment the plugin draws
+        //   warm   Every handle is asked for on every frame from the moment the plugin draws
         //          anything, so the build has long since finished by the time a clear lands.
+        //   all    ALL THREE FACES, not the one the setting names. Nothing is discarded when the
+        //          setting moves, so a switch is a different handle rather than a new build - see
+        //          the note on the handles themselves for what that cost before.
         //   wait   An announcement does not START until they are ready. Warming makes that wait
         //          nothing in practice; the check is what guarantees the swap can never be seen,
         //          including on the very first frames after a plugin reload.
@@ -213,23 +241,29 @@ namespace PfPresets
         private static readonly TimeSpan AnnounceFontGiveUp = TimeSpan.FromSeconds(6);
 
         /// <summary>
-        /// Asks for every face the banner might need, so they are building. Safe and nearly free on
-        /// every frame after the first - a null check and a flag read.
+        /// Asks for every face the banner might need, so they are all building. Safe and nearly free
+        /// on every frame after the first - a null check and a flag read.
+        ///
+        /// EVERY FACE, NOT THE ONE THE SETTING NAMES. The other two cost one build each, at load,
+        /// and are the whole reason changing the setting later costs nothing at all.
         /// </summary>
         private bool WarmAnnounceFonts()
         {
-            EnsureAnnounceFonts();
-
             // Touching the properties is what creates the handles.
             bool ready = AnnPluginFont.Available && AnnIconFont.Available;
 
-            // Asked through the raw slot rather than through AnnTextFont, which answers with the
-            // fallback when the game face is not up yet - and would therefore always say yes.
-            if (annBuiltFace != AnnounceFacePlugin)
+            var axis = AnnounceGameFace(AnnounceFaceAxis);
+            var jupiter = AnnounceGameFace(AnnounceFaceJupiter);
+
+            // Readiness is asked of the face that would actually draw, and through its own slot
+            // rather than through AnnTextFont - which answers with the fallback while the game face
+            // is still building, and would therefore always say yes.
+            ready &= AnnounceFace switch
             {
-                _ = AnnTextFont;
-                ready &= annTextGame?.Available ?? false;
-            }
+                AnnounceFaceAxis => axis?.Available ?? false,
+                AnnounceFaceJupiter => jupiter?.Available ?? false,
+                _ => true,
+            };
 
             if (ready)
                 return true;
@@ -243,34 +277,19 @@ namespace PfPresets
         private int AnnounceFace => Math.Clamp(config.ClearAnnouncementFont, 0, AnnounceFaceLabels.Length - 1);
 
         /// <summary>
-        /// Rebuilds the handles when the face changes, and never otherwise.
+        /// Teardown, and only teardown - the plugin is unloading.
         ///
-        /// There used to be a settling delay in here, because the size was on the end of a drag and
-        /// every step of that drag threw four font handles away and built four more - the atlas
-        /// being rebuilt faster than it could finish rebuilding. With the size gone the only thing
-        /// that can move is the face, and that is a click: it happens once, and rebuilding once is
-        /// exactly what should happen.
+        /// NOTHING DISPOSES THESE ON A SETTING CHANGE ANY MORE. That was the bug: see the note on
+        /// the handles. A face the player might switch back to in five seconds is not worth the
+        /// atlas rebuild it costs to throw away, and the rebuild was visible.
         /// </summary>
-        private void EnsureAnnounceFonts()
-        {
-            int face = AnnounceFace;
-            if (face == annBuiltFace)
-                return;
-
-            DisposeAnnounceFonts();
-            annBuiltFace = face;
-
-            // A new face is a new wait, and the give-up clock starts over with it.
-            annFontsAskedAt = DateTime.MinValue;
-        }
-
         private void DisposeAnnounceFonts()
         {
             annTextPlugin?.Dispose();
-            annTextGame?.Dispose();
+            annTextAxis?.Dispose();
+            annTextJupiter?.Dispose();
             annIcon?.Dispose();
-            annTextPlugin = annTextGame = annIcon = null;
-            annBuiltFace = -1;
+            annTextPlugin = annTextAxis = annTextJupiter = annIcon = null;
         }
 
         /// <summary>The plugin's own face at the announcement's size. Always available, and the
@@ -278,42 +297,68 @@ namespace PfPresets
         private IFontHandle AnnPluginFont
             => Font(ref annTextPlugin, AnnounceTextPx, FontWeight.SemiBold);
 
-        /// <summary>
-        /// One of the game's own faces, or the plugin's if the atlas will not give us one.
-        ///
-        /// Guarded rather than trusted. A game font handle that fails to build does not fall back to
-        /// the size that was asked for - it falls back to Dalamud's own default at about 12px, which
-        /// is how a 24px announcement comes out smaller than the words beside it. So the handle is
-        /// only used once it says it is ready, and the plugin's face draws in the meantime.
-        /// </summary>
-        private IFontHandle GameFace(ref IFontHandle? slot, float px, IFontHandle fallback)
+        /// <summary>One of the two game faces at the announcement's size, built on first ask and
+        /// kept for good. Null when the atlas will not give us one, which every caller reads as
+        /// "draw it in Roboto".</summary>
+        private IFontHandle? AnnounceGameFace(int face)
         {
-            if (slot == null)
-            {
-                try
-                {
-                    var family = annBuiltFace == AnnounceFaceJupiter
-                        ? GameFontFamily.Jupiter
-                        : GameFontFamily.Axis;
+            ref IFontHandle? slot = ref face == AnnounceFaceJupiter
+                ? ref annTextJupiter
+                : ref annTextAxis;
 
-                    slot = pluginInterface.UiBuilder.FontAtlas
-                        .NewGameFontHandle(new GameFontStyle(family, px));
-                }
-                catch (Exception)
-                {
-                    // Nothing to report and nothing to do about it: the plugin's own face draws
-                    // this frame and every frame after, at the right size.
-                    return fallback;
-                }
+            if (slot != null)
+                return slot;
+
+            try
+            {
+                var family = face == AnnounceFaceJupiter
+                    ? GameFontFamily.Jupiter
+                    : GameFontFamily.Axis;
+
+                slot = pluginInterface.UiBuilder.FontAtlas
+                    .NewGameFontHandle(new GameFontStyle(family, AnnounceTextPx));
+            }
+            catch (Exception)
+            {
+                // Nothing to report and nothing to do about it: the plugin's own face draws this
+                // frame and every frame after, at the right size.
+                return null;
             }
 
-            return slot.Available ? slot : fallback;
+            return slot;
         }
 
+        /// <summary>Asks for both game faces up front, so changing the typeface picks one that is
+        /// already built instead of starting a build. Called by PreloadFonts.</summary>
+        private void PreloadAnnounceGameFaces()
+        {
+            _ = AnnounceGameFace(AnnounceFaceAxis);
+            _ = AnnounceGameFace(AnnounceFaceJupiter);
+        }
+
+        /// <summary>
+        /// The face the setting names, or the plugin's if the atlas will not give us one.
+        ///
+        /// Guarded rather than trusted. A game font handle that is not ready does not draw at the
+        /// size that was asked for - it falls back to Dalamud's own default at about 12px, which is
+        /// how a 26px announcement comes out smaller than the words beside it. So a handle is only
+        /// used once it says it is ready, and Roboto draws in the meantime.
+        ///
+        /// Reads the SETTING, not a copy of it taken when something was last built. There is
+        /// nothing left to keep in step: all three handles exist from load, and this picks one.
+        /// </summary>
         private IFontHandle AnnTextFont
-            => annBuiltFace == AnnounceFacePlugin
-                ? AnnPluginFont
-                : GameFace(ref annTextGame, AnnounceTextPx, AnnPluginFont);
+        {
+            get
+            {
+                int face = AnnounceFace;
+                if (face == AnnounceFacePlugin)
+                    return AnnPluginFont;
+
+                var slot = AnnounceGameFace(face);
+                return slot != null && slot.Available ? slot : AnnPluginFont;
+            }
+        }
 
         /// <summary>
         /// The face to set one particular run in.
@@ -326,7 +371,7 @@ namespace PfPresets
         /// only. Axis is the game's UI face and covers everything, so it is never fallen back from.
         /// </summary>
         private IFontHandle AnnounceFontFor(string text)
-            => annBuiltFace == AnnounceFaceJupiter && NeedsFullCoverage(text)
+            => AnnounceFace == AnnounceFaceJupiter && NeedsFullCoverage(text)
                 ? AnnPluginFont
                 : AnnTextFont;
 

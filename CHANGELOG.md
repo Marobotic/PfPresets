@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.5.3.0
+
+### Updates
+
+Clears are announced on screen. When somebody clears an Ultimate or a savage fight, a banner appears saying who cleared what, and you can heart it from there without opening the plugin. It waits until you are out of a fight before it shows anything, never announces your own clears, and never opens with a backlog - a new install hears nothing until the next clear happens. Log in after being away and it catches you up on what you missed while you were gone, one at a time.
+
+It has its own section in Settings: turn it off, move it, change how long it stays up, choose its typeface, or let clicks pass straight through it to the game.
+
+A proper first run. Installing the plugin now opens a setup screen rather than pages of text. It asks three things - the shape of the window, its colour, and whether you want clears announced - and applies each answer as you give it, then shows you what the plugin does. If you would rather not answer anything, take the recommended settings and go straight to the tour.
+
+"Beginners welcome" is part of a preset now. The sprout on the game's recruitment window is saved with the rest of the preset, applied when you post it, and shows on the preset itself so you can see at a glance which of them have it.
+
+Savage clears are named after the boss rather than the floor. A clear that said "M1S" says who was killed. The floor is still there in the tooltip.
+
+Sharing who is in your listing now keeps working when PFRadar is installed. Only the panel that reads other people's listings has to stand down for it; publishing your own party does not, and switching it off told everybody else your party had gone when it had not. The switch for it is also no longer hidden when "Show listing details" is off, and the panel no longer takes up space beside a listing to explain that it is standing down - Settings says so instead, on the setting it applies to.
+
+### Bugs Fixed
+
+The party panel forgot which duty you were recruiting for the moment the last seat filled - which is the moment you most want to see it. An hour of filling for an Ultimate ended with the panel saying "In a party". It now keeps the fight until the party breaks up.
+
+Applying a preset cleared the "Beginners welcome" tick from your listing, even if you had set it yourself in the game's window first.
+
+The 99th and 100th percentile parses were hard to tell apart from the ones below them - pink was almost the same dark purple as the 75th, and gold came out brown. Both read properly now.
+
 ## 3.5.2.0
 
 ### Updates

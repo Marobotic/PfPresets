@@ -100,24 +100,18 @@ namespace PfPresets
         private int feedLastFrame = -2;
 
         /// <summary>
-        /// The fight's own art, by the roster's slug.
-        ///
-        /// A missing file falls back to the section glyph rather than to a gap, so a fight added
-        /// next patch draws a crown in a frame until an image is dropped in - which needs no code
-        /// change, only a file named after the slug.
-        /// </summary>
-
-        /// <summary>
         /// The fight's own art.
         ///
-        /// Tried by the roster's slug first and by the short label second, because the two only
-        /// agree for Ultimates. A savage fight's slug is whatever the catalogue calls the boss -
-        /// the current tier's last floor is `lindwurm-ii` - so keying on the slug alone left every
-        /// tier clear drawing the section's book glyph instead of its art.
+        /// Tried by the roster's slug first and by the short label second. The slug is the fight -
+        /// `lindwurm-ii`, `ucob` - and it is what the files are named after, so a fight added next
+        /// patch needs an image dropped in and nothing else. A missing file falls back to the
+        /// section glyph rather than to a gap.
         ///
-        /// Slug first so a file CAN be exact when it matters: next tier's last floor is still
-        /// labelled M4S but is a different boss, and dropping in a file named after its slug
-        /// overrides the label's generic one without touching any code.
+        /// The label is only a second chance at a file, and one that fewer and fewer fights can
+        /// take: a savage label is the boss's own name now, and "Lindwurm II" is not a resource
+        /// name - ArtNamed refuses anything with a space in it. That costs nothing. The slug has
+        /// been on every post the feed has ever carried, so there is no fight the label has to
+        /// answer for that the slug could not.
         /// </summary>
         private IDalamudTextureWrap? FightArt(string slug, string label)
             => ArtNamed(slug) ?? ArtNamed(label);

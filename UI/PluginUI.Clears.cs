@@ -142,11 +142,11 @@ namespace PfPresets
         /// <summary>
         /// The pills, wrapped by hand.
         ///
-        /// ImGui has no flow layout, and the widths here are not uniform - "M1S" and "Guardian
-        /// Arkveld" are the same kind of thing at three times the size - so each pill is measured
+        /// ImGui has no flow layout, and the widths here are not uniform - "UCOB" and "Red Hot /
+        /// Deep Blue" are the same kind of thing at four times the size - so each pill is measured
         /// before it is placed and the row is broken when the next one would overhang. Laying them
         /// out on a fixed grid instead would size every column to the widest label on the card,
-        /// which on a card containing "Guardian Arkveld" is most of the card.
+        /// which on a card containing "Red Hot / Deep Blue" is most of the card.
         /// </summary>
         private void DrawPillRow(ClearsSection section, float width)
         {

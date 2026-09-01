@@ -154,8 +154,10 @@ namespace PfPresets
                 partyFinderGui, gameGui, dataManager, pluginLog, this.dutyDataHelper,
                 () => this.config.ShowLockedDutyNames);
 #if PFP_RATINGS
-            // Suppressed by PFRadar for the same reason the panel is: it already does this, and two
-            // plugins publishing the same party is two rows saying the same thing.
+            // The PFRadar flag gates only the READING half - see PfCrowdsource.Reporting. This
+            // character keeps publishing its own party while its listing is up, because that costs
+            // no hook and because withdrawing tells everybody else the party has gone when it has
+            // not. What stands down is the panel, which cannot work without the listing hook.
             this.pfCrowdsource = new PfCrowdsource(
                 this.ratingApi, this.config, pluginLog, this.pfAutomation, this.worldHelper,
                 () => GetLocalIdentity(clientState, playerState),

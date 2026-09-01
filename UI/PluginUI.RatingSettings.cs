@@ -873,45 +873,54 @@ namespace PfPresets
         ///
         /// It reports the conflict rather than only obeying it. A toggle that is on while the
         /// feature visibly does nothing is a bug report waiting to happen, and "PFRadar is doing
-        /// this instead" is the entire explanation.
+        /// this instead" is the entire explanation - so it is said in four words on the row it
+        /// applies to, with the reasoning behind the row's own question mark for anybody who wants
+        /// it. It was a paragraph under the whole section, attached to the wrong setting.
         /// </summary>
         private void DrawPfRadarSettings()
         {
             BeginSettingsSection("PF Radar settings");
 
+            // THE SHARING SWITCH IS NOT NESTED UNDER THE PANEL ANY MORE. It used to be drawn only
+            // while "Show listing details" was on, which read sensibly enough when sharing existed
+            // to make that panel worth reading. It is a trap now that publishing runs on its own:
+            // turning the panel off would hide the switch while the party went on being published,
+            // and a setting somebody cannot see is one they cannot turn off either.
+#if PFP_RATINGS
+            const bool sharingRow = true;
+#else
+            const bool sharingRow = false;
+#endif
+
+            // THE CONFLICT IS A TAG ON THIS ROW, because this row is the only thing it affects.
+            // Only while the setting is on: with it off, "disabled" is what the switch already
+            // says, and naming PFRadar as the reason would be untrue.
+            bool takenOver = Listings?.SuppressedByPfRadar == true && config.ListingDetailsEnabled;
+
             DrawSetting("Show listing details", () => config.ListingDetailsEnabled,
                 v => config.ListingDetailsEnabled = v,
                 "Shows a panel beside a party finder listing with the jobs already in the party, "
                 + "the leader and the item level. All of it comes from what the game has already "
-                + "loaded to draw that window - nothing is fetched and nobody is asked.",
-                last: !config.ListingDetailsEnabled);
+                + "loaded to draw that window - nothing is fetched and nobody is asked."
+                + (takenOver
+                    ? "\n\nPFRadar is running and does the same job from the same part of the game, "
+                      + "so this stays out of its way. Sharing your own listing is unaffected."
+                    : string.Empty),
+                last: !sharingRow,
+                tag: takenOver ? "Disabled - PFRadar active" : string.Empty);
 
 #if PFP_RATINGS
-            if (config.ListingDetailsEnabled)
-            {
-                DrawSetting("Share who is in my party finder listing",
-                    () => config.PfCrowdsourceEnabled,
-                    AskThenSetCrowdsource,
-                    "While your party is listed, publishes the party - each member's name, world "
-                    + "and job - so other people running this plugin can see who is already in "
-                    + "that listing. One person sharing is enough to describe the whole party, "
-                    + "which is what makes the panel opposite worth reading. Only a listed party "
-                    + "is ever sent; it comes down when the listing ends, and the server forgets "
-                    + "it within the hour either way.",
-                    last: true);
-            }
+            DrawSetting("Share who is in my party finder listing",
+                () => config.PfCrowdsourceEnabled,
+                AskThenSetCrowdsource,
+                "While your party is listed, publishes the party - each member's name, world "
+                + "and job - so other people running this plugin can see who is already in "
+                + "that listing. One person sharing is enough to describe the whole party, "
+                + "which is what makes the panel above worth reading. Only a listed party "
+                + "is ever sent; it comes down when the listing ends, and the server forgets "
+                + "it within the hour either way.",
+                last: true);
 #endif
-
-            var xray = Listings;
-            if (xray?.SuppressedByPfRadar == true)
-            {
-                using (UiHelpFont.Push())
-                    ImGui.TextColored(AccentYellow,
-                        "PFRadar is running, so this is turned off. Both read the same part of the "
-                        + "game and only one of them should.");
-
-                ImGui.Dummy(new Vector2(0, 6));
-            }
 
             EndSettingsSection();
         }
@@ -1022,8 +1031,15 @@ namespace PfPresets
         /// <param name="joinNext">Suppresses the hairline under this row because what follows
         /// belongs to it. A switch and the numbers that qualify it are one setting written on two
         /// lines, and a line between them says they are two.</param>
+        /// <param name="tag">A short status word at the right end of the row, or empty for none.
+        ///
+        /// FOR "THIS IS ON BUT SOMETHING ELSE HAS TAKEN IT OVER", which a switch cannot say by
+        /// itself - it reads as on, and the feature does nothing. It goes ON the row it describes
+        /// and it is a few words, because the version of this that was a sentence under the whole
+        /// section sat beneath a different setting than the one it was about, ran off the side of
+        /// the page, and explained at paragraph length something the reader only needed named.</param>
         private void DrawSetting(string label, Func<bool> get, Action<bool> set, string explanation,
-            bool last = false, bool joinNext = false)
+            bool last = false, bool joinNext = false, string tag = "")
         {
             bool value = get();
             var dl = ImGui.GetWindowDrawList();
@@ -1032,6 +1048,15 @@ namespace PfPresets
             bool rowClicked = BeginListRow($"set{label}", width, out Vector2 min, SettingRowHeight);
             float centreY = min.Y + SettingRowHeight * 0.5f;
 
+            // Measured before the label is fitted, so the two can never overlap on a narrow page -
+            // the label gives up characters to the ellipsis rather than running under the tag.
+            float tagWidth = 0f;
+            if (tag.Length > 0)
+            {
+                using (UiHelpFont.Push())
+                    tagWidth = ImGui.CalcTextSize(tag).X + SettingRowGap;
+            }
+
             // Switch, gap, sentence, question mark - the mockup's row, in that order. The switch is
             // the state you scan the column for, so it leads and every one of them sits on one x.
             ImGui.SetCursorScreenPos(new Vector2(min.X,
@@ -1039,7 +1064,7 @@ namespace PfPresets
             bool changed = DrawSquareToggle($"set{label}", ref value);
 
             float textX = min.X + ToggleTrackWidth + SettingRowGap;
-            float textRoom = width - (textX - min.X) - HelpMarkColumn;
+            float textRoom = width - (textX - min.X) - HelpMarkColumn - tagWidth;
 
             float labelWidth;
             using (UiBodyFont.Push())
@@ -1056,6 +1081,20 @@ namespace PfPresets
             // of its own - which is what it looked like.
             DrawRowHelpMark($"set{label}", explanation,
                 new Vector2(textX + labelWidth + HelpMarkGap, centreY));
+
+            // Right-aligned to the row's own end, so a column of these lines up whatever the
+            // labels beside them are doing. Amber rather than the faint grey: the whole reason it
+            // is here is that the switch says on and the feature is not running, and a note about
+            // that which reads as quieter than the label is a note nobody sees.
+            if (tag.Length > 0)
+            {
+                using (UiHelpFont.Push())
+                {
+                    Vector2 ts = ImGui.CalcTextSize(tag);
+                    dl.AddText(new Vector2(min.X + width - ts.X, centreY - ts.Y * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(AccentYellow), tag);
+                }
+            }
 
             // The whole row is the target. The switch and the mark are submitted first and take the
             // clicks that land on them; everything between falls through to here.

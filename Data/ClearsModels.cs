@@ -128,10 +128,13 @@ namespace PfPresets
         /// <summary>Stable identifier for the fight, ours rather than either provider's.</summary>
         public string Slug { get; set; } = string.Empty;
 
-        /// <summary>What the pill says: "UCOB", "M4S", "Zoraal Ja".</summary>
+        /// <summary>What the pill says: "UCOB" for an Ultimate, and the boss's own name for
+        /// everything else - "Lindwurm II", "Red Hot / Deep Blue", "Zoraal Ja".</summary>
         public string Label { get; set; } = string.Empty;
 
-        /// <summary>The in-game duty name, for the tooltip - "AAC Heavyweight M4 (Savage)".</summary>
+        /// <summary>The in-game duty name, for the tooltip - "AAC Heavyweight M4 (Savage)". Two
+        /// fights can share one: a floor with a boss either side of a checkpoint is two pills and
+        /// one duty, and the tooltip is where the floor they belong to is said.</summary>
         public string Duty { get; set; } = string.Empty;
 
         public bool Cleared { get; set; }

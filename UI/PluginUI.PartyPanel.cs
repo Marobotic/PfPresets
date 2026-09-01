@@ -316,10 +316,15 @@ namespace PfPresets
         {
             bool can = pfAutomation.CanLeaveDuty();
 
+            // NO EndDisabled HERE. There was one, matching no BeginDisabled anywhere in this method
+            // or in anything that calls it, and ImGui asserted three times a frame over it: the pop
+            // itself (DisabledStackSize > 0, then an empty ImVector), and then the frame's own
+            // balance check, which surfaced two files away in DrawActiveTab and made this look like
+            // a tab bug. The disabling this button does need is inside DrawActionButton, which
+            // brackets its own `enabled` flag - see the bottom of PluginUI.Theme.cs.
+            //
             // Red: leaving a duty costs a penalty and can't be undone, which is the same weight as
             // every other destructive action here.
-            ImGui.EndDisabled();
-
             if (DrawActionButton(FontAwesomeIcon.SignOutAlt, "Leave duty", "LeaveDuty", size,
                     ActionStyle.Danger, can))
             {
@@ -760,10 +765,24 @@ namespace PfPresets
         /// raider reads "orange parse" as a fact about the number, and re-tinting it would make
         /// the same parse look like a different one.
         /// </summary>
+        /// <remarks>
+        /// THE TOP TWO CARRY THE MOST AND READ THE LEAST, which is why they have their own note.
+        ///
+        /// Toning the brackets down to surfaces took the chroma out of the two that need it most.
+        /// Pink was #52354b, a plum sitting a few points off the #412a6b directly below it - two
+        /// dark violets, and the difference between a 98 and a 99 is not a thing to make somebody
+        /// squint at. Gold was #6f5c33, which at pill size is brown.
+        ///
+        /// Both are now the same colours with the blue pulled out and the red brought up: pink is
+        /// red-dominant against purple's blue, and gold is yellow rather than olive. Luminance is
+        /// untouched to two decimal places - 0.06 and 0.11, contrasting 9.5:1 and 6.5:1 against
+        /// white - so the one light ink still reads on both, which is the constraint that made
+        /// them dull in the first place.
+        /// </remarks>
         private static Vector4 ParseColor(double percentile) => percentile switch
         {
-            >= 100 => ColorFromHex("#6f5c33"),  // gold
-            >= 99 => ColorFromHex("#52354b"),   // pink
+            >= 100 => ColorFromHex("#6f5c0f"),  // gold
+            >= 99 => ColorFromHex("#6b3350"),   // pink
             >= 95 => ColorFromHex("#6e4a30"),   // orange
             >= 75 => ColorFromHex("#412a6b"),   // purple
             >= 50 => ColorFromHex("#244085"),   // blue

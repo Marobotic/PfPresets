@@ -211,6 +211,11 @@ namespace PfPresets
         ///
         /// A face added anywhere in the plugin belongs on this list. One that is left off still
         /// works; it just brings its flash back with it.
+        ///
+        /// THE LIST IS EVERY HANDLE THIS PLUGIN OWNS. CommentFont is the one accessor deliberately
+        /// absent, and it is not an omission: it is Dalamud's own DefaultFontHandle, which we
+        /// borrow rather than build, so there is nothing here to warm. Anything else that turns up
+        /// missing from this list is a bug.
         /// </summary>
         internal void PreloadFonts()
         {
@@ -232,17 +237,14 @@ namespace PfPresets
 #if PFP_RATINGS
                 _ = ScoreFont; _ = LabelFont;
 
-                // The announcement, and the preview of it in the onboarding. Both game faces are
-                // asked for up front rather than when the typeface is switched, so switching is
-                // instant instead of showing the old face for a frame - see OnbPreviewFaces.
+                // The announcement, and the preview of it in the onboarding.
+                //
+                // BOTH GAME FACES FOR EACH, not whichever one the setting happens to name today.
+                // The typeface control is a click, and a click should land on a face that is
+                // already in the atlas - building one on the press is exactly the stall this whole
+                // file exists to avoid, and it used to throw the other handles away to do it.
                 _ = AnnPluginFont; _ = AnnIconFont;
-
-                // EnsureAnnounceFonts first, because AnnTextFont reads annBuiltFace to decide which
-                // family to ask the game for - touched before it, the announcement would build the
-                // wrong face now and the right one on the first clear of the session, which is the
-                // worst possible moment to be rebuilding an atlas.
-                EnsureAnnounceFonts();
-                _ = AnnTextFont;
+                PreloadAnnounceGameFaces();
 
                 _ = OnbPreviewPluginFace;
                 PreloadOnboardingGameFaces();

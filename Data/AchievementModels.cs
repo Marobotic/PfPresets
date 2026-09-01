@@ -28,7 +28,8 @@ namespace PfPresets
         /// <summary>ClassJob row id, or 0 when the clear predates the plugin sending it.</summary>
         public uint Job { get; set; }
 
-        /// <summary>The short form, as the roster derives it: UCOB, FRU, M4S.</summary>
+        /// <summary>The short form, as the roster derives it: UCOB and FRU for the Ultimates, and
+        /// the boss's own name for a savage tier clear - "Lindwurm II".</summary>
         [JsonProperty("fight_label")]
         public string FightLabel { get; set; } = string.Empty;
 
