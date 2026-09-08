@@ -72,6 +72,25 @@ namespace PfPresets
         public bool Cleared { get; set; }
 
         /// <summary>
+        /// Whether the party ran it undersized - the game's own Unrestricted Party setting, which
+        /// turns level and item level sync off.
+        ///
+        /// SENT SO THE SERVER CAN REFUSE TO ISSUE A VOTE ALLOWANCE FOR IT. An undersized run is the
+        /// one duty shape somebody can arrange at will, with whoever they like, as often as they
+        /// like: one overpowered character carries content the rest of the party is not playing on
+        /// its own terms, so a vote out of it says nothing about having played together. The duty is
+        /// still filed - it happened, and the record still protects everybody in it from votes
+        /// forged elsewhere - but nobody is offered a row.
+        ///
+        /// READ AT THE START, because that is when the setting is the one the queue went in under.
+        /// It reads the local client's own checkbox, which for a party queue is not necessarily the
+        /// leader's, so it can be false when the run really was unsynced. That is the safe direction
+        /// to be wrong in: false is what every client before this one said about every duty, and it
+        /// means the allowance is decided the way it already was rather than refused.
+        /// </summary>
+        public bool Undersized { get; set; }
+
+        /// <summary>
         /// Whether anybody left the party while the duty was running.
         ///
         /// Local bookkeeping, not part of the sealed evidence - it decides whether the duty is

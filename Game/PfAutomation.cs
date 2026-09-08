@@ -1229,18 +1229,6 @@ namespace PfPresets
                 preset.ResolveCommentBytes(MaxCommentLength), MaxCommentLength + 1);
         }
 
-        /// <summary>
-        /// How many of the eight slot flags the listing currently in memory actually recruits for,
-        /// or 0 when nothing has been applied this session.
-        ///
-        /// Written here because it cannot be worked out afterwards. A closed seat and a seat the
-        /// game has reset both read as a mask of zero, and the only moment anybody knows which is
-        /// which is when the preset - the thing that says "omit this one" - is being written. The
-        /// locked-slot adjuster runs minutes later off nothing but game memory, and this is what
-        /// stops it treating an omitted seat as a free one and recruiting for it.
-        /// </summary>
-        private int activeSlotCount;
-
         private unsafe void WriteSlotFlagsToMemory(PfPresetData preset)
         {
             var agent = AgentLookingForGroup.Instance();
@@ -1256,10 +1244,6 @@ namespace PfPresets
                 var autoSlots = GetAutoAdjustedSlots();
                 for (int i = 0; i < 8; i++)
                     pSlotFlags[i] = i < autoSlots.Count ? GetAutoSlotGameMask(autoSlots[i]) : 0;
-
-                // An auto-adjusted composition is built from the seats the party still needs, so
-                // it has no omissions in it - every slot it produces is one being recruited for.
-                activeSlotCount = Math.Min(autoSlots.Count, 8);
 
                 if (preset.AllowDoubleCaster)
                     ApplyDoubleCasterSlot(pSlotFlags, autoSlots);
@@ -1301,8 +1285,6 @@ namespace PfPresets
                     ? JobMasks.ToGameMask(slot.AcceptedJobFlags)
                     : JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role));
             }
-
-            activeSlotCount = next;
 
             // The tail: every seat past the last real one, whether it was omitted or was never in
             // this preset to begin with. Both are closed, and the game reads them the same way.

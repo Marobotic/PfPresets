@@ -109,6 +109,39 @@ namespace PfPresets
             if (pfAutomation.IsInDuty())
                 return;
 
+            // THE WINDOW WAITS FOR THE SERVER TO SAY WHO MAY BE VOTED ON.
+            //
+            // It used to open on everybody who was in the room and find out afterwards whether any
+            // of it counted - and the rule it was judged against, that the other person's client
+            // also filed this duty, could not be true yet at the moment it opened. Both clients
+            // walk out of the instance within seconds of each other. A vote cast into that gap was
+            // held server-side, and a held vote is indistinguishable from a counted one out here.
+            //
+            // So nothing is drawn until the answer is back. Waiting returns WITHOUT clearing the
+            // encounter, which is the difference between "not yet" and "never": the window is still
+            // coming, and the very next frame asks again.
+            //
+            // Skipped is the end of it. The duty was undersized, or the hour ran out with nobody
+            // ever cleared - and past the hour the server stops accepting votes for that duty, so a
+            // row that outlived it would be a button that fails on press.
+            //
+            // Unavailable falls straight through to the old behaviour, and that is deliberate: a
+            // server too old to answer, or one that cannot be reached, must not cost anybody their
+            // vote panel. See RatingService.Allowance.cs.
+            if (Ratings != null)
+            {
+                var allowance = Ratings.AllowanceStateFor(encounter.Id);
+
+                if (allowance == RatingService.AllowanceState.Waiting)
+                    return;
+
+                if (allowance == RatingService.AllowanceState.Skipped)
+                {
+                    promptEncounter = null;
+                    return;
+                }
+            }
+
             // Whatever is left AFTER the server has had its say. A prompt whose whole roster turns
             // out to have opted out closes itself rather than sitting there with no rows in it.
             var visibleRows = VisiblePromptRows();
@@ -376,6 +409,13 @@ namespace PfPresets
             var state = StateFor(contact.Identity);
             if (state.Done || state.Sending || contact.Member.Rated)
                 return true;
+
+            // The allowance, asked per row for the same reason the opt-out is: it settles member by
+            // member as each of their clients files, so a list filtered once at open would be
+            // filtered before most of the answers existed. Answers true when there is no allowance
+            // to consult, which is what keeps an unreachable server from emptying the window.
+            if (promptEncounter != null && !Ratings.MayVoteOn(promptEncounter.Id, contact.Identity))
+                return false;
 
             return Ratings.IsRateableNow(contact.Identity);
         }

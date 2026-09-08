@@ -583,6 +583,24 @@ namespace PfPresets
         // ══════════════════════════════════════════════════════════
 
         /// <summary>One person you can rate. Returns true if a rating was cast this frame.</summary>
+        /// <summary>
+        /// Whether this row has finished leaving and would draw nothing at all.
+        ///
+        /// EXPOSED BECAUSE THE COUNT HAS TO ASK THE SAME QUESTION THE ROW DOES. "You can still rate
+        /// these" printed the length of the eligible list and then drew a row per entry - and a row
+        /// whose exit animation has completed returns without drawing anything (see the early
+        /// return below). Rate everybody in the list and every row vanished while the heading went
+        /// on saying "4 people to rate" over an empty card.
+        ///
+        /// The list was not wrong and neither was the row; they were simply answering different
+        /// questions. This is that question, asked once, so both use the same answer.
+        /// </summary>
+        internal bool RateRowHasGone(Contact contact)
+        {
+            var (_, collapseRaw) = RowExitPhases(StateFor(contact.Identity));
+            return collapseRaw >= 0.995f;
+        }
+
         private bool DrawRateRow(Contact contact, bool showDutyLine = true)
         {
             var identity = contact.Identity;

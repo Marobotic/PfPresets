@@ -82,6 +82,12 @@ namespace PfPresets
                     started = ToUnixMsEvidence(encounter.StartedUtc),
                     ended = ToUnixMsEvidence(encounter.CompletedUtc),
                     cleared = encounter.Cleared,
+
+                    // Read by /duty/report, ignored by /achievements. The two routes take the same
+                    // sealed payload and each reads the fields it cares about, which is why there
+                    // is one duty description rather than two to keep in step.
+                    undersized = encounter.Undersized,
+
                     job = (int)encounter.LocalJobId,
                     region = RegionOf?.Invoke(me.World),
                     party = party,

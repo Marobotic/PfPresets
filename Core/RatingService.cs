@@ -487,8 +487,25 @@ namespace PfPresets
             // would tell the voter why, and "the plugin is broken" is the reasonable conclusion.
             foreach (var c in candidates)
             {
-                if (IsRateableNow(c.Identity))
-                    result.Add(c);
+                if (!IsRateableNow(c.Identity))
+                    continue;
+
+                // THE ALLOWANCE APPLIES HERE TOO, and leaving it out of this list was the hole.
+                //
+                // The post-duty window was gated on the server's answer and this list was not - so
+                // the same people the window refused to offer were sitting in "You can still rate
+                // these" on the profile tab, votable, a click away. Gating one surface and not the
+                // other is not a weaker rule, it is no rule: anybody could simply use the other
+                // door. This is the one function both surfaces build their list from, which is why
+                // the check belongs here rather than in either of them.
+                //
+                // MayVoteOn answers true when there is no allowance on file, so a duty that
+                // finished before this build, or one filed while the server was unreachable,
+                // behaves exactly as it always did.
+                if (!MayVoteOn(c.EncounterId, c.Identity))
+                    continue;
+
+                result.Add(c);
             }
 
             return result;

@@ -148,6 +148,7 @@ namespace PfPresets
                     DutyRowId = dutyRowId,
                     DutyName = ResolveDutyName(dutyRowId),
                     StartedUtc = DateTime.UtcNow,
+                    Undersized = ReadUnrestrictedParty(),
                 };
                 seen.Clear();
                 seenByName.Clear();
@@ -164,6 +165,29 @@ namespace PfPresets
         }
 
         private void OnDutyCompleted(IDutyStateEventArgs args) => Finish(cleared: true);
+
+        /// <summary>
+        /// The game's Unrestricted Party setting - "undersized party", the one that turns level and
+        /// item level sync off.
+        ///
+        /// FALSE ON ANY DOUBT. This is read straight off the client and the read can fail: the
+        /// struct is not there yet during a load, and a plugin reload picks a duty up halfway
+        /// through with no idea what it was queued under. False is what every build before this one
+        /// effectively said about every duty, so a failed read leaves the allowance decided exactly
+        /// as it is today rather than refusing a run that was probably synced.
+        /// </summary>
+        private unsafe bool ReadUnrestrictedParty()
+        {
+            try
+            {
+                var finder = FFXIVClientStructs.FFXIV.Client.Game.UI.ContentsFinder.Instance();
+                return finder != null && finder->IsUnrestrictedParty;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         /// <summary>The local player's current job, or 0 if they cannot be read - which happens on
         /// a zone change racing the duty's end.</summary>

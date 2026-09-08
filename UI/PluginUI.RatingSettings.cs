@@ -316,7 +316,9 @@ namespace PfPresets
 
             DrawSetting("Auto-adjust locked slots", () => config.AutoAdjustLockedJobsEnabled,
                 v => config.AutoAdjustLockedJobsEnabled = v,
-                "Keeps one-job slots in step with who has already joined.", last: true);
+                "Reopens a seat left locked to one job when its player leaves. "
+                + "Omitted slots stay omitted, and nothing is re-posted unless a seat needs it.",
+                last: true);
 
             EndSettingsSection();
         }

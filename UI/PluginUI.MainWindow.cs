@@ -1763,9 +1763,11 @@ namespace PfPresets
                 config.Save();
             }
             SameLineHelpDot("FooterAutoAdjust",
-                "While you're recruiting as party leader, if a member leaves, any Party Finder slot "
-                + "locked to a single job is widened to that job's role - White Mage to regen "
-                + "healers, Viper to melee - so the freed seat is easier to fill.");
+                "While you're recruiting as party leader, five seconds after a member leaves the "
+                + "listing is read back and any slot left locked to a single job is widened to "
+                + "that job's role - White Mage to regen healers, Viper to melee - so the freed "
+                + "seat is easier to fill. Omitted slots stay omitted, and if every slot already "
+                + "asks for a role your listing is left up untouched.");
         }
 
         private string chipEditingId = string.Empty;

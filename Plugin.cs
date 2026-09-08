@@ -212,6 +212,12 @@ namespace PfPresets
             // ones are worth a post and says no to nearly all of them, silently.
             this.dutyTracker.EncounterCompleted += this.ratingService.PostAchievement;
 
+            // Filed in its own right rather than off the back of the achievement post, because the
+            // two ask different questions: an achievement is about the feed and only some duties
+            // qualify, while the vote allowance is about the post-duty window and every duty with
+            // somebody else in it does. See RatingService.Allowance.cs.
+            this.dutyTracker.EncounterCompleted += this.ratingService.FileDutyForAllowance;
+
             // Combat is the service's one reason to hold a filed duty back - see
             // TickPendingDuties. Handed in as a predicate rather than a reference to the automation
             // layer, because that is the only thing it needs to know and the rating service has no
@@ -567,6 +573,7 @@ namespace PfPresets
             // Drains at most one filed duty per frame, and only out of combat. Returns on a count
             // check the rest of the time.
             this.ratingService.TickPendingDuties();
+            this.ratingService.TickAllowances();
 
             // Framework rather than draw, for the reason the two above are: an announcement that
             // only arrives while our own window happens to be open is an announcement for the two
@@ -653,6 +660,7 @@ namespace PfPresets
             clientState.Login -= this.SyncOptOutOnLogin;
             this.dutyTracker.EncounterCompleted -= this.playerHistory.RecordEncounter;
             this.dutyTracker.EncounterCompleted -= this.ratingService.PostAchievement;
+            this.dutyTracker.EncounterCompleted -= this.ratingService.FileDutyForAllowance;
             this.dutyTracker.Dispose();
             this.ratingService.Dispose();
             this.ratingApi.Dispose();

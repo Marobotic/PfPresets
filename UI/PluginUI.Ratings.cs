@@ -757,6 +757,12 @@ namespace PfPresets
 
             var eligible = Ratings?.EligibleToRate();
 
+            // WHAT WILL ACTUALLY DRAW, which is not the same as what is eligible. A row that has
+            // finished its exit animation takes no space and paints nothing, so counting the
+            // eligible list left the card claiming people it was not showing. See RateRowHasGone.
+            if (eligible is { Count: > 0 })
+                eligible = eligible.FindAll(c => !RateRowHasGone(c));
+
             // The section is absent when there is nobody in it, heading and all.
             //
             // It used to keep its heading over a line explaining that the group turns up here after

@@ -515,6 +515,43 @@ namespace PfPresets
                 },
                 requireAuth: identified).ConfigureAwait(false);
 
+        /// <summary>
+        /// Files a finished duty and asks who this character may vote on out of it.
+        ///
+        /// The same sealed payload the achievement post carries - one duty, described once, read by
+        /// two routes. The achievement post is about the feed and only some duties qualify; this is
+        /// about the vote window and every duty does.
+        ///
+        /// A SERVER THAT DOES NOT KNOW THIS ROUTE IS NOT AN ERROR. It answers 404, which arrives
+        /// here as NotFound, and the caller reads that as "this server predates the allowance" and
+        /// falls back to the old behaviour. That is the whole of the backwards compatibility on
+        /// this side: nothing is withheld from somebody whose server cannot answer.
+        /// </summary>
+        public async Task<ApiResult<DutyAllowanceResponse>> ReportDutyAsync(DutyReportRequest request)
+        {
+            if (string.IsNullOrEmpty(request.Evidence))
+                return ApiResult<DutyAllowanceResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<DutyAllowanceResponse>(
+                HttpMethod.Post, "duty/report", request).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Asks again about a duty already filed, while anybody in it is still to be heard from.
+        ///
+        /// Polled on a backoff rather than a timer: what it is waiting for is other people's clients
+        /// filing as each of them leaves the instance, and nothing at either end can hurry that.
+        /// </summary>
+        public async Task<ApiResult<DutyAllowanceResponse>> GetDutyAllowanceAsync(
+            DutyAllowanceRequest request)
+        {
+            if (request.Duty <= 0 || request.Party.Count < 2)
+                return ApiResult<DutyAllowanceResponse>.Fail(ApiStatus.BadRequest);
+
+            return await SendAsync<DutyAllowanceResponse>(
+                HttpMethod.Post, "duty/allowance", request).ConfigureAwait(false);
+        }
+
         private async Task<ApiResult<TRes>> SendAsync<TRes>(
             HttpMethod method,
             string path,

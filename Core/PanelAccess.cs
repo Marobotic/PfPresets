@@ -1,5 +1,6 @@
 #if PFP_RATINGS
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -7,6 +8,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -115,19 +117,134 @@ namespace PfPresets
             this.pluginInterface = pluginInterface;
             this.log = log;
             string baseUrl = (string.IsNullOrWhiteSpace(config.RatingApiBaseUrl) ? "https://api.marobotic.dev/pfp/v2/" : (config.RatingApiBaseUrl.TrimEnd('/') + "/"));
-            http = new HttpClient
+
+            // THE CONNECTION IS SET UP ONCE AND KEPT, which is most of why the console used to sit
+            // on "Loading..." for several seconds. A default HttpClient opens a fresh socket per
+            // burst of traffic, and opening one to this API costs a DNS lookup, a TCP handshake and
+            // a TLS handshake before a single byte of the answer moves - paid again on the next
+            // screen, and the one after that. A pooled connection with a long life pays it once.
+            //
+            // HTTP/2 matters for the same reason: the handshake and the session both cross this
+            // socket, and on HTTP/1.1 they queue behind each other rather than sharing it. The
+            // policy falls back on its own if the server or a proxy in the way will not speak it.
+            var handler = new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10L),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5L),
+                ConnectTimeout = TimeSpan.FromSeconds(10L),
+                EnableMultipleHttp2Connections = true,
+            };
+
+            http = new HttpClient(handler)
             {
                 BaseAddress = new Uri(baseUrl),
-                Timeout = TimeSpan.FromSeconds(20L)
+                Timeout = TimeSpan.FromSeconds(20L),
+                DefaultRequestVersion = HttpVersion.Version20,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
             };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("PfPresets/" + version);
+            http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            http.DefaultRequestHeaders.ExpectContinue = false;
             Load();
+        }
+
+        // ── Warm-up ───────────────────────────────────────────────
+
+        /// <summary>
+        /// A screen that has already been fetched, and when.
+        ///
+        /// Only ever screens asked for with no controls set - the state a tab is in when you arrive
+        /// at it. A filtered screen belongs to the filter that produced it and would be wrong to
+        /// hand back to somebody who has not set that filter.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, (ScreenResponse Screen, DateTime At)> screenCache = new();
+
+        private int warmStarted;
+
+        /// <summary>
+        /// Signs in and fetches the first screen in the background, at load, so opening the console
+        /// is a cache read rather than three round trips.
+        ///
+        /// THIS IS THE FIX FOR THE WAIT, and the wait was never one slow request. Opening the tab
+        /// ran the whole protocol from cold: a challenge, a session, and only then the screen -
+        /// three sequential trips to the API, each one waiting on the last, with the connection
+        /// itself being built during the first. Nothing about that is parallelisable at the moment
+        /// somebody clicks, because each step needs the answer to the one before it.
+        ///
+        /// So it is not done at that moment. It is done at load, when nobody is waiting, and by the
+        /// time the tab is opened there is a live connection, a valid session and a screen already
+        /// in hand. Idempotent, and safe to call from anywhere: the interlock means only the first
+        /// caller does the work.
+        /// </summary>
+        public void BeginWarm()
+        {
+            if (key == null || !Enabled)
+            {
+                return;
+            }
+
+            // One at a time rather than once ever: a warm-up that failed because the machine was
+            // offline at load should be able to run again when the console is next reached for.
+            if (Interlocked.CompareExchange(ref warmStarted, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _ = Task.Run(async delegate
+            {
+                try
+                {
+                    if (!(await EnsureSessionAsync().ConfigureAwait(false)))
+                    {
+                        return;
+                    }
+
+                    // The default screen, cached by the call itself. Asked for by the same empty
+                    // id the console uses on its first draw, not by null - the cache is keyed on
+                    // what was asked for, and warming a key nobody reads back warms nothing.
+                    await ScreenAsync(string.Empty, null).ConfigureAwait(false);
+
+                    // And a challenge for whatever the first action turns out to be.
+                    PrimeNonce();
+                }
+                catch (Exception ex)
+                {
+                    log.Debug("[Panel] Warm-up did not complete: " + ex.Message);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref warmStarted, 0);
+                }
+            });
+        }
+
+        /// <summary>A screen fetched earlier, if there is one for this id. The caller shows it at
+        /// once and refreshes underneath, rather than blanking for a round trip.</summary>
+        public bool TryCachedScreen(string? id, out ScreenResponse screen, out DateTime at)
+        {
+            if (screenCache.TryGetValue(id ?? string.Empty, out var hit))
+            {
+                screen = hit.Screen;
+                at = hit.At;
+                return true;
+            }
+            screen = null!;
+            at = DateTime.MinValue;
+            return false;
         }
 
         public void SetEnabled(bool on)
         {
             Enabled = on;
             SaveState();
+
+            // Switched back on mid-session, there was nothing to warm at load. Warming now means
+            // the console tab it just put back is as quick as it would have been.
+            if (on)
+            {
+                BeginWarm();
+            }
         }
 
         public void SetDevPresets(bool on)
@@ -220,6 +337,10 @@ namespace PfPresets
                 }));
                 TryRestrictPermissions(KeyPath);
                 log.Information("[Panel] Registered as " + label + ".");
+
+                // Enrolled just now, so the load-time warm-up found no key and did nothing. The
+                // console tab appears the moment this returns; give it something to draw.
+                BeginWarm();
                 return string.Empty;
             }
             catch (CryptographicException ex)
@@ -268,6 +389,63 @@ namespace PfPresets
             return (await PostAsync<ChallengeResponse>("panels/hello", new { label }).ConfigureAwait(false))?.Nonce;
         }
 
+        // ── Challenges, fetched before they are needed ────────────
+
+        /// <summary>
+        /// A challenge held ready for the next action, and the moment it arrived.
+        ///
+        /// Every action costs two round trips - fetch a nonce, then post the signed action - and
+        /// the first of them is pure latency with nothing depending on its contents. So one is
+        /// fetched in the background after each use, and the next action spends only the trip that
+        /// actually does something.
+        ///
+        /// A held challenge is not trusted past <see cref="NonceGoodFor"/>, and never trusted
+        /// blindly: <see cref="DoAsync"/> retries once with a fresh one if the server refuses,
+        /// because a nonce the server has forgotten and a genuinely refused action look the same
+        /// from here and only one of them is worth reporting.
+        /// </summary>
+        private string? spareNonce;
+
+        private DateTime spareNonceAt = DateTime.MinValue;
+
+        private static readonly TimeSpan NonceGoodFor = TimeSpan.FromSeconds(45L);
+
+        private void PrimeNonce()
+        {
+            if (key == null)
+            {
+                return;
+            }
+            _ = Task.Run(async delegate
+            {
+                try
+                {
+                    string? fresh = await ChallengeAsync().ConfigureAwait(false);
+                    if (fresh != null)
+                    {
+                        spareNonceAt = DateTime.UtcNow;
+                        spareNonce = fresh;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Debug("[Panel] Could not pre-fetch a challenge: " + ex.Message);
+                }
+            });
+        }
+
+        /// <summary>The held challenge if there is a fresh one, otherwise a new one off the wire.
+        /// Either way it is consumed - a nonce is used once.</summary>
+        private async Task<(string? Nonce, bool WasSpare)> TakeNonceAsync()
+        {
+            string? held = Interlocked.Exchange(ref spareNonce, null);
+            if (held != null && DateTime.UtcNow - spareNonceAt < NonceGoodFor)
+            {
+                return (held, true);
+            }
+            return (await ChallengeAsync().ConfigureAwait(false), false);
+        }
+
         private async Task<bool> EnsureSessionAsync()
         {
             if (key == null)
@@ -313,11 +491,20 @@ namespace PfPresets
             {
                 return null;
             }
-            return await PostAsync<ScreenResponse>("panels", new
+            ScreenResponse? screen = await PostAsync<ScreenResponse>("panels", new
             {
                 screen = id,
                 controls = controls
             }, sessionToken).ConfigureAwait(false);
+
+            // Kept only when nothing was filtering it - see the note on screenCache. This is what
+            // the warm-up fills and what a second visit to a tab is drawn from.
+            if (screen != null && (controls == null || controls.Count == 0))
+            {
+                screenCache[id ?? string.Empty] = (screen, DateTime.UtcNow);
+            }
+
+            return screen;
         }
 
         public async Task<string> DoAsync(string token, Dictionary<string, object>? inputs = null)
@@ -326,23 +513,48 @@ namespace PfPresets
             {
                 return "Couldn't sign in.";
             }
-            string nonce = await ChallengeAsync().ConfigureAwait(false);
+
+            var (nonce, wasSpare) = await TakeNonceAsync().ConfigureAwait(false);
             if (nonce == null)
             {
                 return "Couldn't get a challenge.";
             }
-            ScreenActionResponse res = await PostAsync<ScreenActionResponse>("panels/act", new
+
+            ScreenActionResponse? res = await ActAsync(token, inputs, nonce).ConfigureAwait(false);
+
+            // A HELD CHALLENGE GETS ONE SECOND CHANCE, AND ONLY A HELD ONE. It may have gone stale
+            // between being fetched and being wanted, and a stale nonce is refused in exactly the
+            // same words as an action the server genuinely will not do - so the difference has to
+            // be settled by asking again rather than by reading the answer. A challenge fetched a
+            // moment ago is not retried, because for that one a refusal means what it says.
+            if ((res == null || !res.Ok) && wasSpare)
             {
-                token = token,
-                inputs = inputs,
-                nonce = nonce,
-                signature = Sign($"{label}|{nonce}|{token}")
-            }, sessionToken).ConfigureAwait(false);
+                string? fresh = await ChallengeAsync().ConfigureAwait(false);
+                if (fresh != null)
+                {
+                    res = await ActAsync(token, inputs, fresh).ConfigureAwait(false);
+                }
+            }
+
+            // Whatever happened, the next action should not have to wait for a challenge either.
+            PrimeNonce();
+
             if (res == null || !res.Ok)
             {
                 return "The server refused it.";
             }
             return res.Note ?? string.Empty;
+        }
+
+        private Task<ScreenActionResponse?> ActAsync(string token, Dictionary<string, object>? inputs, string nonce)
+        {
+            return PostAsync<ScreenActionResponse>("panels/act", new
+            {
+                token = token,
+                inputs = inputs,
+                nonce = nonce,
+                signature = Sign($"{label}|{nonce}|{token}")
+            }, sessionToken);
         }
 
         public async Task<(string Name, string World)?> ReadCharacterFromLinkAsync(string url)
@@ -486,6 +698,9 @@ namespace PfPresets
         public void Dispose()
         {
             key = null;
+            sessionToken = null;
+            spareNonce = null;
+            screenCache.Clear();
             http.Dispose();
         }
     }
