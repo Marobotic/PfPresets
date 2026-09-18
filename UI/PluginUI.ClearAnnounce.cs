@@ -1045,15 +1045,24 @@ namespace PfPresets
 
             isMainWindowVisible = true;
             activeTab = MainTab.Achievements;
-            clearsView = ClearsView.Broadcast;
+
+            // WHICHEVER LIST THE POST IS ACTUALLY ON. The tab holds two lists of other people's
+            // clears now, and a banner about a first clear that opened the Ultimate reclears would
+            // land somebody in a column their clear is not in - with a ring waiting for a card that
+            // is never drawn.
+            // A savage floor clear is on both First clears and Savage; First clears is where the
+            // banner lands, because the announcement is about it being a first.
+            bool first = post.IsFirstClear;
+            clearsView = first ? ClearsView.First : ClearsView.Ultimate;
+
             // ToTop beats the Restore that returning to the tab sets a frame later - see the note
             // in DrawPostList, where the three cases are ordered.
-            broadcastScroll.ToTop = true;
+            ScrollFor(clearsView).ToTop = true;
 
             announceFocusId = post.Id;
             announceFocusUntil = DateTime.UtcNow.AddSeconds(12);
 
-            Ratings?.RevealFeedTop();
+            Ratings?.RevealFeedTop(first);
         }
 
         /// <summary>Whether this card is the one an announcement was pressed about. Expires on its

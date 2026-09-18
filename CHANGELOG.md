@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.5.4.0
+
+### Updates
+
+The clears tab is three lists: First clears, Savage and Ultimates, with My clears after them. It had been one column carrying two unlike things. A first clear happens once and is the one somebody remembers; an Ultimate reclear happens most evenings, several times a night. Mixed together the second buried the first, and by morning the clear that mattered was three screens down among the farm parties. The number on the tab still counts first clears, and now keeps counting while you are reading either of the other two - being shown a page of reclears is not being shown the thing the number was about.
+
+Savage reclears are recorded. The Savage list carries every clear of the current tier's floors, the first ones and the weekly farm alike. None of it interrupts anybody: a banner is still only for a first savage clear or for an Ultimate.
+
+The clears cards lead with the person. Each card now shows that player's own portrait where the fight's picture used to be. Eight reclears of UCOB in an evening drew the same Bahamut eight times, which is a column of identical rows telling you nothing about the eight different people in it. The fight's art is still there, behind the card. It also comes from the server now instead of being compiled into the plugin, so a fight added in a patch turns up with its picture without waiting for a plugin release.
+
+Clicking somebody in the clears opens their profile. The face and the name on any card go straight to that player's card in the plugin, and Back returns you to the list where you were. Reading a name off a card, switching tab and typing it in again was the plugin failing to join two things it already had.
+
+The rating window after a duty now knows who you can actually rate. It used to open on everybody who was in the room and find out afterwards whether any of it counted: a vote needs the other person's client to have filed the same duty, and that cannot be true yet at the moment the window appears, because everybody leaves the instance within a few seconds of each other. A vote cast into that gap was held, and a held vote looks exactly like a counted one from your side. The window now waits for the answer and offers a row only for the people it can really take a vote on. If the server cannot be reached it behaves exactly as it did before.
+
+Rows of choices slide to what you pressed rather than snapping to it - the lists in the clears tab, and the settings that work the same way.
+
+### Bugs Fixed
+
+A clear was announced to some people and not others. Two people could be in the same party for the same kill and only one of them see the banner, and it was not random. The plugin tracked how far through the feed it had got by the time of the newest clear it had been shown - but the feed is ordered by when each clear was posted, and those are not the same order: eight people in one party report seconds apart, a report can be retried, and the queue is sometimes busy. A clear posted after one that had happened later than it fell behind the mark and was dropped for good. Whether that happened to you came down to where your own check fell, which is exactly why it hit one person in a party and not the one sitting beside them. About one clear in nine was exposed to it.
+
+Announcements also arrive together now. Every client was checking on its own timer, started whenever the game launched, so two people in the same room could be nearly two minutes apart on the same clear. They are on a shared schedule now and land within a few seconds of each other.
+
+"Show names as" was ignored in the clears. Setting names to initials abbreviated them everywhere in the plugin except the clears cards, which went on printing everybody in full. They follow the setting now, on the cards and in their tooltips.
+
+Auto-adjust locked slots could rewrite a listing into one nobody had asked for. When somebody left it opened the listing and filled every seat it could not account for from a fresh two tanks, two healers and four DPS - so a listing with a healer omitted, one healer in it, and that healer leaving came back out as five DPS seats, the omission gone and the roles reshuffled. It now reads the listing where it stands and only ever widens a seat locked to a single job to that job's role. An omitted seat is never written to, your own seat is left alone, and when there is nothing to widen the listing is not re-posted at all.
+
+"You can still rate these" counted people who were no longer on screen. Rating everybody in the list left the heading saying there were four still to rate above an empty card. The heading and the list ask the same question now.
+
 ## 3.5.3.0
 
 ### Updates

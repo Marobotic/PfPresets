@@ -39,20 +39,19 @@ namespace PfPresets
     /// of an install, which seeds and says nothing.
     ///
     /// WHERE THE POSTS COME FROM. Nothing here opens a connection of its own. The feed's existing
-    /// top-of-feed read is the only request involved: <see cref="ObserveForAnnounce"/> is called
-    /// from inside it, and <see cref="TickAnnouncePoll"/> only asks that same read to happen on a
-    /// timer while nobody has the tab open. One request either way, and none at all while the
-    /// announcer is off or nobody is logged in.
+    /// top-of-feed read is the only request involved: <see cref="RefreshForAnnounce"/> asks for one
+    /// page of the undivided feed on a timer and hands it to <see cref="ObserveForAnnounce"/>, which
+    /// keeps nothing. None at all while the announcer is off or nobody is logged in.
     /// </summary>
     internal sealed partial class RatingService
     {
         /// <summary>
-        /// How often the feed is read for the announcer's sake, when nothing else is reading it.
+        /// How often the whole feed is read for the announcer's sake.
         ///
-        /// The same two minutes the open tab uses, deliberately: this is the same request, and a
-        /// client with the tab open must not end up polling twice as fast as one without it. The
-        /// throttle is shared - see the feedReadAt check below - so opening the tab does not add a
-        /// poll, it just takes over the one already running.
+        /// The same two minutes an open tab uses. It is no longer the same REQUEST as the tab's -
+        /// the tab reads one half of the feed at a time and the announcer has to watch both, so it
+        /// keeps its own unscoped read; see the note in TickAnnouncePoll for why neither half can
+        /// stand in for it.
         ///
         /// A clear announced up to two minutes late is still a clear announced. Halving this to make
         /// it feel live would double a row read on our box for every client in the plugin, which is
@@ -109,22 +108,56 @@ namespace PfPresets
         private readonly object announceLock = new();
 
         /// <summary>
-        /// Ids already announced, so the same clear cannot arrive twice.
+        /// Ids already announced, against the clear time each was announced at, so the same clear
+        /// cannot arrive twice.
         ///
-        /// The mark alone is not enough. Two clears can share a millisecond, and a post whose
-        /// ClearedAt is exactly the mark would either be announced on every poll forever (compare
-        /// with >=) or lost (compare with >). The set settles it, and the mark is what survives a
-        /// restart.
+        /// THIS IS THE DUPLICATE GUARD AND THE MARK IS NOT. They answer different questions: the
+        /// mark says how far down the feed this client has accounted for, and cannot say whether
+        /// one particular post was shown - two clears can share a millisecond, and the mark is
+        /// deliberately moved past posts that were never announced at all. The set settles
+        /// duplicates within a session; the mark settles backlog across restarts.
         ///
-        /// Bounded, because it is fed by the server: the oldest half is dropped when it fills, and
-        /// anything that old is outside the freshness window anyway.
+        /// PRUNED BY AGE, NOT BY COUNT. It used to drop its oldest half on reaching a fixed size,
+        /// which is a guess about how busy the feed is - and on an evening busy enough to reach it,
+        /// the ids being dropped were exactly the recent ones still inside the freshness window and
+        /// so still announceable. Forgetting an id only once it is too old to be announced again
+        /// makes the guard airtight and lets its size follow the traffic.
         /// </summary>
-        private readonly HashSet<string> announced = new(StringComparer.Ordinal);
-        private readonly Queue<string> announcedOrder = new();
-        private const int AnnouncedMemory = 240;
+        private readonly Dictionary<string, long> announced = new(StringComparer.Ordinal);
 
-        /// <summary>When the poll last asked for a feed read on the announcer's behalf.</summary>
-        private DateTime announceCheckedAt = DateTime.MinValue;
+        /// <summary>A backstop on the above, and only that. Everything in it is pruned against
+        /// timestamps the server sent; a server sending them from a clock years fast would
+        /// otherwise grow it without limit.</summary>
+        private const int AnnouncedCap = 4096;
+
+        // ── When the poll fires, and why it is not "two minutes since the last one" ───
+        //
+        // ONE GRID, SO EVERY CLIENT READS AT ROUGHLY THE SAME INSTANT. A timer started when the
+        // plugin loaded puts each client on its own phase, so two people sitting in the same room
+        // could be a full interval apart on the same clear - one sees the banner as it lands and
+        // the other nearly two minutes later. A clear is a thing a group talks about while it is
+        // happening, and that gap is the difference between an announcement and an echo.
+        //
+        // The grid is absolute time divided by the interval, which is the same grid on every
+        // machine without anybody agreeing on anything: no handshake, just two clients doing the
+        // same arithmetic on the same clock.
+        //
+        // AND A PER-CLIENT OFFSET, BECAUSE A PERFECT GRID IS A STAMPEDE. Every client reading on
+        // the same millisecond turns a steady trickle into one spike every two minutes, which is
+        // the load shape that falls over exactly when the feed is busiest. The offset is small
+        // against the interval and large against a request: the reads still land together as far
+        // as anybody watching a screen is concerned, and arrive at the server spread over it.
+        //
+        // Chosen once per session rather than derived from anything stable - it only has to differ
+        // between clients, not persist within one.
+        private static readonly TimeSpan AnnouncePollSpread = TimeSpan.FromSeconds(20);
+
+        private readonly long announceJitterMs =
+            Random.Shared.NextInt64((long)AnnouncePollSpread.TotalMilliseconds);
+
+        /// <summary>Which grid slot the announcer last read in, or -1 to read on the next tick.
+        /// Frame thread only - the tick is the only thing that touches it.</summary>
+        private long announceSlot = -1;
 
         /// <summary>
         /// Whether somebody was logged in on the previous tick, so that logging in can be told from
@@ -168,9 +201,9 @@ namespace PfPresets
             announceMarkDirty = false;
 
             long mark = Volatile.Read(ref announceMark);
-            if (mark > config.ClearAnnouncementMark)
+            if (mark > config.ClearAnnouncementRankMark)
             {
-                config.ClearAnnouncementMark = mark;
+                config.ClearAnnouncementRankMark = mark;
                 config.Save();
             }
         }
@@ -229,30 +262,37 @@ namespace PfPresets
             if (!loggedIn)
                 return;
 
-            var now = DateTime.UtcNow;
-
             if (justLoggedIn)
             {
-                // What they missed, now rather than in two minutes' time. Both throttles are stood
-                // down for this one read: the announcer's own, and the one it shares with the feed
-                // tab - a client that was reading the feed on another character a moment ago would
-                // otherwise sit out the whole of its first two minutes back.
+                // What they missed, now rather than at the next grid instant.
                 announceCatchUp = true;
-                announceCheckedAt = DateTime.MinValue;
-                feedReadAt = DateTime.MinValue;
+                announceSlot = -1;
             }
 
-            if (now - announceCheckedAt < AnnouncePollAfter)
+            // The grid slot this moment falls in. A read happens when the slot changes, which is
+            // once per interval and - bar each client's own small offset - at the same instant on
+            // every client in the plugin. See the note on announceJitterMs.
+            long slot = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - announceJitterMs)
+                / (long)AnnouncePollAfter.TotalMilliseconds;
+
+            if (slot == announceSlot)
                 return;
 
-            // SHARED WITH THE TAB'S OWN THROTTLE. If somebody has the feed open, its poll is already
-            // doing this read and ObserveForAnnounce is already seeing the answer - so this waits
-            // rather than asking for the same rows a second time.
-            if (now - feedReadAt < AnnouncePollAfter)
-                return;
+            announceSlot = slot;
 
-            announceCheckedAt = now;
-            RefreshFeed();
+            // ITS OWN READ, OF THE WHOLE TABLE. This used to share the feed tab's poll, which was
+            // right while the tab read one undivided list: the same rows, so a client with it open
+            // did not pay twice.
+            //
+            // The tab reads one half at a time now, and neither half can stand in for this. Not
+            // because it would announce less - because it would announce WRONGLY: the mark below
+            // moves past everything it is shown, so a page of Ultimate reclears standing in for
+            // this read would mark a first clear as accounted for that nobody has ever seen, and
+            // nothing would ever announce it. See RefreshForAnnounce.
+            //
+            // The cost is one extra read every two minutes, and only while somebody has the clears
+            // tab open.
+            RefreshForAnnounce();
         }
 
         /// <summary>
@@ -261,11 +301,38 @@ namespace PfPresets
         /// Called from inside the feed read with whatever came back, before any of it is decided
         /// about - the announcer wants the posts themselves, not the version of the list that
         /// survives being merged into what is on screen. Everything it takes is a copy.
+        ///
+        /// TWO QUESTIONS, TWO CLOCKS, AND THEY ARE NOT THE SAME CLOCK. This is the whole of what
+        /// was wrong with this method before:
+        ///
+        ///   have I accounted for this post?   Answered against the post's RANK - the order the
+        ///                                     feed is actually served in. It has to be, because a
+        ///                                     mark is only a high-water mark if nothing can arrive
+        ///                                     after it with a lower value, and rank is assigned
+        ///                                     when a post is written.
+        ///   is this clear still news?         Answered against WHEN IT WAS CLEARED, because that
+        ///                                     is what "still news" means.
+        ///
+        /// Both used to be answered against the clear time, which made the first one wrong: a clear
+        /// published after one that happened later than it - a party of eight reporting seconds
+        /// apart, a retry, a busy queue - landed under a mark that had already moved past it and
+        /// was dropped for good. Whether that happened depended on which side of a client's own
+        /// two-minute poll the two posts fell, which is why one person in a party got the banner
+        /// and the person beside them never did.
         /// </summary>
-        private void ObserveForAnnounce(IReadOnlyList<AchievementPost> posts)
+        /// <param name="serverNowMs">The server's clock as of this read, from the feed response.
+        /// Every comparison below is between two of the server's own numbers, so a player whose PC
+        /// is an hour out neither misses announcements nor gets shown history.</param>
+        private void ObserveForAnnounce(IReadOnlyList<AchievementPost> posts, long serverNowMs)
         {
             if (!config.ClearAnnouncementsEnabled || posts.Count == 0)
                 return;
+
+            // Falls back to this machine's clock only against a server too old to send one, which
+            // is the behaviour this had throughout and is no worse than it was.
+            long nowMs = serverNowMs > 0
+                ? serverNowMs
+                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             // The worker's own copy, seeded from the config the first time through. Read from the
             // field rather than the config on every pass, because two reads can land close together
@@ -273,11 +340,15 @@ namespace PfPresets
             // until the tick writes it.
             long mark = Volatile.Read(ref announceMark);
             if (mark < 0)
-                mark = config.ClearAnnouncementMark;
+                mark = config.ClearAnnouncementRankMark;
 
             // THE FIRST READ OF AN INSTALL SEEDS AND SAYS NOTHING. See the header - this is the one
             // backlog rule the catch-up below does not lift, because somebody who has just
             // installed this does not yet know what a banner across their screen even is.
+            //
+            // It also covers the first read after the mark moved into the feed's own clock: the two
+            // marks are not comparable, so the old one is not carried over and this pass is a seed
+            // like any other.
             bool seeding = mark <= 0;
 
             // TAKEN, not read: a catch-up is spent by the first page that observes it, and every
@@ -287,11 +358,13 @@ namespace PfPresets
 
             string? mine = api.LocalIdentity is { IsValid: true } me ? me.Key : null;
 
+            long windowMs = (long)AnnounceFreshWindow.TotalMilliseconds;
+
             // At login the freshness window is exactly the wrong rule. Mid-session it means "this
             // client was asleep, do not replay history"; at login the history IS what is being
-            // asked for, and the mark already knows where it starts - it is the clear they were
-            // last told about, which is to say the moment they logged out.
-            var cutoff = catchUp ? DateTime.MinValue : DateTime.UtcNow - AnnounceFreshWindow;
+            // asked for, and the mark already knows where it starts - it is the post they were last
+            // told about, which is to say the moment they logged out.
+            long cutoff = catchUp ? long.MinValue : nowMs - windowMs;
             int cap = catchUp ? AnnounceCatchUpCap : AnnounceQueueCap;
 
             long newest = mark;
@@ -305,19 +378,24 @@ namespace PfPresets
                 if (string.IsNullOrEmpty(post.Id))
                     continue;
 
-                long at = new DateTimeOffset(DateTime.SpecifyKind(post.ClearedAt, DateTimeKind.Utc))
-                    .ToUnixTimeMilliseconds();
+                long rank = FeedRank(post);
+                long cleared = UnixMs(post.ClearedAt);
 
-                if (at > newest)
-                    newest = at;
+                if (rank > newest)
+                    newest = rank;
 
                 if (seeding)
                     continue;
 
-                if (at <= mark)
+                // Already accounted for. In the feed's own order, so nothing published after this
+                // read can land beneath it.
+                if (rank <= mark)
                     continue;
 
-                if (post.ClearedAt < cutoff)
+                // Too old to interrupt anybody for. A share re-ranks an old post to the top of the
+                // feed, so this is also what keeps a shared clear from a previous evening out of
+                // the queue - the rank is new, the clear is not.
+                if (cleared < cutoff)
                     continue;
 
                 // Your own clear. You were there; being told about it is being told what you just
@@ -325,26 +403,30 @@ namespace PfPresets
                 if (mine != null && string.Equals(post.Identity.Key, mine, StringComparison.Ordinal))
                     continue;
 
+                // THE SAVAGE FARM IS RECORDED AND NEVER ANNOUNCED. The server already keeps savage
+                // reclears out of the feed this reads, so this should never fire - it is here so
+                // the rule does not rest on one side alone. A banner is for a first savage clear or
+                // any Ultimate; a Tuesday M1S is on the Savage tab and that is the whole of it.
+                // Counted as seen above regardless, so it cannot come back round as "new".
+                if (!post.IsAnnounceable)
+                    continue;
+
                 lock (announceLock)
                 {
-                    if (!announced.Add(post.Id))
+                    // Keyed on the CLEAR time rather than the rank, because this is pruned by how
+                    // long a post stays announceable - which is what the freshness window measures.
+                    if (!announced.TryAdd(post.Id, cleared))
                         continue;
-
-                    announcedOrder.Enqueue(post.Id);
-
-                    // Bounded, because the ids come from the server. Half at a time rather than one
-                    // per add, so this is amortised and not a dictionary rebuild per post.
-                    if (announcedOrder.Count > AnnouncedMemory)
-                    {
-                        for (int drop = 0; drop < AnnouncedMemory / 2 && announcedOrder.Count > 0; drop++)
-                            announced.Remove(announcedOrder.Dequeue());
-                    }
                 }
 
                 worth.Add(post);
             }
 
-            // THE MARK MOVES EVEN WHEN NOTHING IS ANNOUNCED, and that is deliberate: a clear that
+            // Twice the window, so an id is only forgotten well after the post it belongs to has
+            // stopped being announceable and there is no edge for one to be re-announced across.
+            PruneAnnounced(nowMs - windowMs * 2);
+
+            // THE MARK MOVES EVEN WHEN NOTHING IS ANNOUNCED, and that is deliberate: a post that
             // was too old, or was yours, or overflowed the cap has still been accounted for, and
             // leaving the mark behind it would make the next poll consider it all over again.
             //
@@ -382,27 +464,72 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Puts the feed back at the top, showing anything the poll has been holding.
+        /// Where a post sits in the feed's own order, in the server's clock.
+        ///
+        /// THE FEED IS SORTED BY THIS AND NOT BY WHEN THE CLEAR HAPPENED. The announcer's mark has
+        /// to be kept in the same space as that sort or it is not a high-water mark at all - see
+        /// the note on this method's one caller.
+        ///
+        /// Falls back to the clear's own time against a server too old to send a rank, which is
+        /// exactly what this did before and is the best a client can do when it cannot see the
+        /// order the feed was built in.
+        /// </summary>
+        private static long FeedRank(AchievementPost post)
+            => post.RankAt is { } rank ? UnixMs(rank) : UnixMs(post.ClearedAt);
+
+        /// <summary>A UTC timestamp from the server as unix ms. The Kind is forced rather than
+        /// assumed: a DateTime deserialised out of JSON arrives Unspecified, and converting one of
+        /// those applies this machine's timezone to a number that is already UTC.</summary>
+        private static long UnixMs(DateTime value)
+            => new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc))
+                .ToUnixTimeMilliseconds();
+
+        /// <summary>
+        /// Forgets the ids of posts too old to be announced again, so the guard's size follows how
+        /// busy the feed is rather than a number picked in advance.
+        /// </summary>
+        private void PruneAnnounced(long before)
+        {
+            lock (announceLock)
+            {
+                if (announced.Count == 0)
+                    return;
+
+                List<string>? drop = null;
+
+                foreach (var entry in announced)
+                {
+                    if (entry.Value < before)
+                        (drop ??= new List<string>()).Add(entry.Key);
+                }
+
+                if (drop != null)
+                {
+                    foreach (string id in drop)
+                        announced.Remove(id);
+                }
+
+                // Nothing here is trustworthy enough to be the only bound - see AnnouncedCap.
+                if (announced.Count > AnnouncedCap)
+                    announced.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Puts one of the two lists back at the top, showing anything its poll has been holding.
         ///
         /// What pressing an announcement does. The post being announced is by definition the newest
-        /// one, so the top of a fresh feed is where it is - but the list on screen may be minutes
-        /// old, or parked behind the pill, or not read at all yet. This settles all three: apply
+        /// one, so the top of a fresh list is where it is - but what is on screen may be minutes
+        /// old, or parked behind the pill, or not read at all yet. Reveal settles all three: apply
         /// whatever is held, then ask for a read that lands straight on screen rather than behind
-        /// another pill.
+        /// another pill, past the poll's throttle. This is a click, not a timer, and the one thing
+        /// it must not do is take two minutes to show the post it was pressed about.
         /// </summary>
-        public void RevealFeedTop()
-        {
-            ApplyNewPosts();
-
-            // Their own press is what asked for this, so the answer is not something to offer them
-            // a pill about - see applyNextRead.
-            applyNextRead = true;
-
-            // Past the poll's throttle on purpose. This is a click, not a timer, and the one thing
-            // it must not do is take two minutes to show the post it was pressed about.
-            feedReadAt = DateTime.MinValue;
-            RefreshFeed();
-        }
+        /// <param name="firstClear">Which list the announced post is on. Taken from the post rather
+        /// than guessed, because the tab is about to switch to it and revealing the other one would
+        /// leave somebody looking at a list their clear is not in.</param>
+        public void RevealFeedTop(bool firstClear)
+            => (firstClear ? FirstClears : UltimateClears).Reveal();
     }
 }
 #endif

@@ -129,15 +129,20 @@ namespace PfPresets
         /// The unread badge's tick, alongside the poll's and for the same reason: the answer changes
         /// what the navigation looks like, so it is asked where the navigation is drawn.
         ///
-        /// Never while the feed itself is being read, where the tab in front of them is the answer
-        /// and a second one would be paid for and thrown away.
+        /// Never while the FIRST CLEARS list is being read, where the column in front of them is the
+        /// answer and a second one would be paid for and thrown away.
+        ///
+        /// That is narrower than "while the clears tab is open", and deliberately so now the tab
+        /// holds three lists. The badge counts first clears; somebody sitting on the Ultimate
+        /// reclears or on their own clears is being shown none of them, so the count is neither
+        /// answered nor claimed by their being there and has every reason to keep ticking.
         /// </summary>
         private void TickUnreadBadge()
         {
             if (!config.CommunityEnabled)
                 return;
 
-            if (activeTab == MainTab.Achievements)
+            if (activeTab == MainTab.Achievements && clearsView == ClearsView.First)
                 return;
 
             Ratings?.EnsureUnseenChecked();

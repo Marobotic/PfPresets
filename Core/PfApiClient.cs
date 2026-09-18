@@ -339,11 +339,16 @@ namespace PfPresets
         /// them and hand them a post twice or skip one. Those newer posts are not lost - the next
         /// top-of-feed read finds them and offers them as the "New clears" pill.
         /// </summary>
-        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(int page = 0, long before = 0)
+        /// <param name="scope">"first" | "ultimate", or null for the whole feed. The tab asks for
+        /// one of the two halves; the announcer, which is watching for anything worth a banner
+        /// rather than reading a list, asks for neither and gets both.</param>
+        public async Task<ApiResult<AchievementFeedResponse>> GetFeedAsync(
+            int page = 0, long before = 0, string? scope = null)
             => await SendAsync<AchievementFeedResponse>(
                 HttpMethod.Post, "achievements/feed",
                 new AchievementFeedRequest
                 {
+                    Scope = scope,
                     Page = Math.Max(0, page),
                     Before = before > 0 ? before : null,
                 }).ConfigureAwait(false);
@@ -367,10 +372,86 @@ namespace PfPresets
 
         /// <summary>How many posts have appeared since the mark. The badge's whole conversation with
         /// the server, and deliberately the cheapest call in this file.</summary>
-        public async Task<ApiResult<AchievementUnseenResponse>> GetUnseenAsync(long since)
+        public async Task<ApiResult<AchievementUnseenResponse>> GetUnseenAsync(
+            long since, string? scope = null)
             => await SendAsync<AchievementUnseenResponse>(
                 HttpMethod.Post, "achievements/unseen",
-                new AchievementUnseenRequest { Since = since }).ConfigureAwait(false);
+                new AchievementUnseenRequest { Since = since, Scope = scope }).ConfigureAwait(false);
+
+        /// <summary>
+        /// One cached image - a character's portrait, or a fight's art - as bytes.
+        ///
+        /// The one call in this class that does not speak JSON, and the one that needs no session.
+        /// The path is a content hash handed over on a feed the caller already had to be
+        /// authenticated to read, so there is nothing here a token would protect - and requiring one
+        /// would stop the response being cacheable, which is the whole reason the address is a hash.
+        ///
+        /// NO RETRIES AND NO BREAKER. A missing face costs a fallback glyph, and this runs once per
+        /// distinct portrait per machine ever - so a failure is worth exactly one attempt and a
+        /// shrug. It deliberately does not go through <c>SendAsync</c>: that would put pictures on
+        /// the same circuit breaker as votes, and a CDN having a bad minute must not be able to
+        /// convince the plugin the rating server is down.
+        ///
+        /// The path is checked against the shape the server issues rather than trusted, because it
+        /// arrives inside a feed row and is about to be concatenated onto a base URL.
+        /// </summary>
+        public async Task<byte[]?> GetPortraitAsync(string path)
+        {
+            if (cancel.IsCancellationRequested || !IsImagePath(path))
+                return null;
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, path);
+                using var response = await http.SendAsync(request, cancel.Token).ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                    return null;
+
+                byte[] bytes = await response.Content
+                    .ReadAsByteArrayAsync(cancel.Token).ConfigureAwait(false);
+
+                // The server's own ceiling is 256KB and these are around seven; anything past it is
+                // not a portrait, whatever it claims to be.
+                return bytes.Length is > 0 and <= MaxPortraitBytes ? bytes : null;
+            }
+            catch (Exception)
+            {
+                // Swallowed on purpose. The caller remembers the miss so it is not retried every
+                // frame, and there is nothing to tell anybody: this is a picture.
+                return null;
+            }
+        }
+
+        private const int MaxPortraitBytes = 256 * 1024;
+
+        /// <summary>Exactly the two shapes the server issues: <c>portrait/</c> or <c>art/</c>
+        /// followed by sixty-four hex digits. Anything else is not asked for at all.</summary>
+        private static bool IsImagePath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return false;
+
+            int slash = path.IndexOf('/');
+            if (slash < 0)
+                return false;
+
+            string prefix = path[..slash];
+            if (prefix is not ("portrait" or "art"))
+                return false;
+
+            if (path.Length != slash + 1 + 64)
+                return false;
+
+            for (int i = slash + 1; i < path.Length; i++)
+            {
+                char c = path[i];
+                if (!char.IsAsciiDigit(c) && (c < 'a' || c > 'f'))
+                    return false;
+            }
+
+            return true;
+        }
 
         public async Task<ApiResult<AchievementReactResponse>> HeartAsync(string id)
             => await SendAsync<AchievementReactResponse>(

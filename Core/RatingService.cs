@@ -176,6 +176,13 @@ namespace PfPresets
             this.encounters = encounters;
             this.history = history;
 
+            // The two clears lists. Built here because they need the api and the log, and defined
+            // in RatingService.Achievements.cs so everything that reads them stays in one file.
+            InitClearsFeeds(out var first, out var savage, out var ultimate);
+            FirstClears = first;
+            SavageClears = savage;
+            UltimateClears = ultimate;
+
             // Recover Recent players for installs that rated before the history file existed,
             // and put job icons on anything still missing one.
             history.SeedFrom(config.LocalCooldowns, encounters.LastKnownJob);

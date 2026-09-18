@@ -42,11 +42,57 @@ namespace PfPresets
         [JsonProperty("fight_slug")]
         public string FightSlug { get; set; } = string.Empty;
 
-        /// <summary>ultimate_first | ultimate_reclear | savage_tier.</summary>
+        /// <summary>ultimate_first | ultimate_reclear | savage_first | savage_reclear | savage_tier.
+        ///
+        /// `savage_tier` is the old shape of a savage first clear - one post for clearing the tier,
+        /// back when only the last floor qualified. Kept rather than migrated: those rows mean
+        /// exactly what they meant when they were written, and the feed reads them beside the new
+        /// ones because a first clear is a first clear.</summary>
         public string Kind { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Where this character's own face lives, relative to the API's base - or empty for
+        /// somebody whose portrait the server has not got.
+        ///
+        /// A PATH, NOT A URL, and it is addressed by the hash of its own bytes. Both halves of that
+        /// matter: the path is joined against whatever server this client is talking to, so a
+        /// cached feed does not carry a hostname around with it; and the hash means the image at an
+        /// address can never change, so it is downloaded once per machine and then kept forever
+        /// with nothing to invalidate. See PluginUI.Portraits.cs.
+        /// </summary>
+        public string Portrait { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The fight's own art, relative to the API's base - or empty for a fight the server has no
+        /// picture for.
+        ///
+        /// Addressed by content hash exactly like <see cref="Portrait"/>, and fetched and cached by
+        /// the same code. It replaces the eight jpgs that used to ship inside the plugin: those
+        /// covered the Ultimates and one savage boss, so the moment savage began posting every floor
+        /// most of the feed had no picture and the fix was a plugin release per tier. The server
+        /// derives the art from the roster's own FFLogs encounter ids, so a fight added next patch
+        /// arrives with a picture and nobody has to ship anything.
+        /// </summary>
+        public string Art { get; set; } = string.Empty;
 
         [JsonProperty("cleared_at")]
         public DateTime ClearedAt { get; set; }
+
+        /// <summary>
+        /// Where this post sits in the feed's own order, in the server's clock - or null from a
+        /// server too old to send it.
+        ///
+        /// NOT THE SAME AS <see cref="ClearedAt"/>, and the difference is the whole reason this
+        /// field exists. The feed is ordered by this; it is set when the post is written and again
+        /// when somebody shares it. A clear posted late - a party of eight whose clients report
+        /// seconds apart, a retry, a queue that was busy - has an older ClearedAt than a post
+        /// already on the feed and a NEWER rank, so the two orders genuinely disagree.
+        ///
+        /// Anything tracking "how far down this feed have I got" has to be kept in this clock. See
+        /// Configuration.ClearAnnouncementRankMark for what keeping it in the other one cost.
+        /// </summary>
+        [JsonProperty("rank_at")]
+        public DateTime? RankAt { get; set; }
 
         public int Hearts { get; set; }
 
@@ -74,8 +120,28 @@ namespace PfPresets
         /// <summary>Whether the one share this post gets has been used, by anybody.</summary>
         public bool Reshared { get; set; }
 
+        /// <summary>
+        /// A clear somebody will remember, as opposed to an evening's work they have had before.
+        ///
+        /// The three kinds that mean "the first time": an Ultimate's, a savage floor's, and the
+        /// tier clears posted under the older scheme. It decides which of the two lists a post
+        /// belongs to, so it is one predicate rather than a comparison written out at each of the
+        /// places that ask - the sort of thing that ends up disagreeing with itself.
+        /// </summary>
         [JsonIgnore]
-        public bool IsFirstClear => Kind == "ultimate_first";
+        public bool IsFirstClear
+            => Kind is "ultimate_first" or "savage_first" or "savage_tier";
+
+        /// <summary>
+        /// Worth a banner across somebody's screen: every Ultimate clear, and a savage floor only
+        /// the first time.
+        ///
+        /// Everything is recorded - this decides what makes noise. A savage reclear is the weekly
+        /// farm, dozens a night, and it lives on the Savage tab and nowhere that interrupts anybody.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsAnnounceable
+            => Kind is "ultimate_first" or "ultimate_reclear" or "savage_first" or "savage_tier";
 
         [JsonIgnore]
         public CharacterIdentity Identity => new(Name, World);
@@ -91,7 +157,9 @@ namespace PfPresets
         public string KindLabel => Kind switch
         {
             "ultimate_first" => "First clear",
+            "savage_first" => "First clear",
             "ultimate_reclear" => "Reclear",
+            "savage_reclear" => "Reclear",
             "savage_tier" => "Tier cleared",
             _ => string.Empty,
         };
@@ -99,6 +167,17 @@ namespace PfPresets
 
     internal sealed class AchievementFeedRequest
     {
+        /// <summary>
+        /// Which half of the feed: "first" | "ultimate", or null for all of it.
+        ///
+        /// Null is what every build before the split sent, and the server still answers it with the
+        /// undivided feed - so this is a narrowing a client asks for rather than a shape it is
+        /// given. The announcer's own read leaves it null on purpose: it is watching for anything
+        /// worth a banner, and a scoped read would be watching half the table.
+        /// </summary>
+        [JsonProperty("scope", NullValueHandling = NullValueHandling.Ignore)]
+        public string? Scope { get; set; }
+
         /// <summary>Which page, zero-based. Pages rather than a cursor: the feed is short enough to
         /// number, and somebody who wants page four wants page four.</summary>
         public int Page { get; set; }
@@ -148,6 +227,19 @@ namespace PfPresets
         /// <summary>The mark from the last feed the reader was shown, in unix ms. Never zero - a
         /// client with no mark has never opened the tab and does not ask.</summary>
         public long Since { get; set; }
+
+        /// <summary>
+        /// Which half of the feed the badge is counting. This client asks for "first".
+        ///
+        /// The badge counts first clears and nothing else, and that is a decision about what a
+        /// number on the navigation is FOR. It interrupts a reading to say something happened; an
+        /// Ultimate reclear happens most evenings, several times, and a badge that rang for each
+        /// would be a badge people learn to ignore. It also keeps the mark honest: the count covers
+        /// exactly the list that reading the First clears tab shows somebody, so being shown it is
+        /// what earns clearing the number.
+        /// </summary>
+        [JsonProperty("scope", NullValueHandling = NullValueHandling.Ignore)]
+        public string? Scope { get; set; }
     }
 
     internal sealed class AchievementUnseenResponse

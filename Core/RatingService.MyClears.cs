@@ -65,6 +65,38 @@ namespace PfPresets
         /// <summary>How many the server says there are in total, not how many are loaded.</summary>
         public int MyClearsTotal { get; private set; }
 
+        /// <summary>
+        /// Copies a reaction onto this list's copy of a post, if it has one.
+        ///
+        /// Your own clears are the same rows the feed carries, so a post here can be the same post
+        /// somebody is looking at on First clears - and the heart on it is one heart. See
+        /// RatingService.SyncReaction, which is what calls this.
+        ///
+        /// A heart of your own is refused by the server, so in practice this is the share flag
+        /// travelling. It is written for all four fields anyway: the asymmetry is the server's rule
+        /// rather than this list's, and a sync that quietly handled three of four would be a trap
+        /// for whoever changes that rule.
+        /// </summary>
+        internal void SyncMyClearsReaction(AchievementPost source)
+        {
+            lock (mineLock)
+            {
+                foreach (var post in mine)
+                {
+                    if (ReferenceEquals(post, source)
+                        || !string.Equals(post.Id, source.Id, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    post.Hearts = source.Hearts;
+                    post.Hearted = source.Hearted;
+                    post.HeartLocked = source.HeartLocked;
+                    post.Reshared = source.Reshared;
+                }
+            }
+        }
+
         public IReadOnlyList<AchievementPost> MyClears()
         {
             lock (mineLock)

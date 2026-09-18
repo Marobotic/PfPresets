@@ -107,6 +107,7 @@ namespace PfPresets
 #if PFP_RATINGS
             DisposeProfileFonts();
             DisposeAnnounceFonts();
+            DisposePortraits();
 #endif
         }
 

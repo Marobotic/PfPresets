@@ -39,7 +39,30 @@ namespace PfPresets
         /// above the phone's, so in practice this is "a tablet gets two, a phone gets one".
         /// </summary>
         private const float FeedTwoColumnWidth = 720f;
+        /// <summary>The portrait slot. Square, because a Lodestone avatar is.</summary>
         private const float FeedIconSize = 44f;
+
+        /// <summary>
+        /// How much of a card's right-hand side the fight's own art occupies.
+        ///
+        /// A fraction rather than a fixed width, because the card is a fraction of the window and a
+        /// fixed panel would be a third of a narrow card and a sliver of a wide one. Clamped at both
+        /// ends: below the minimum it stops reading as a picture at all, and above the maximum it
+        /// starts competing with the name instead of sitting behind it.
+        /// </summary>
+        private const float FeedArtFraction = 0.42f;
+        private const float FeedArtMinWidth = 96f;
+        private const float FeedArtMaxWidth = 240f;
+
+        /// <summary>
+        /// How strongly the fight's art shows through.
+        ///
+        /// Low, and it took several passes to believe how low it had to be. The art is a mood - it
+        /// says which fight this is at a glance, from across a column - and the card is about a
+        /// person. Anything above about a quarter and the boss is what the eye lands on, which is
+        /// the arrangement this redesign exists to get away from; the name has to win.
+        /// </summary>
+        private const float FeedArtAlpha = 0.22f;
         private const float FeedJobIconSize = 18f;
         private const float FeedActionHeight = 34f;
 
@@ -56,18 +79,41 @@ namespace PfPresets
         /// </summary>
         private static float FeedLoadMoreMargin => ImGui.GetWindowHeight();
 
-        /// <summary>The two halves of this tab: everybody's clears, and your own.</summary>
+        /// <summary>
+        /// The three lists this tab holds.
+        ///
+        /// It was two - everybody's clears, and your own - and the first of those was carrying two
+        /// unlike things at once. A first clear happens once and is the thing somebody will
+        /// remember; an Ultimate reclear happens most evenings. Four hundred of the second buried
+        /// forty-five of the first, so the clear that mattered was three screens down by morning.
+        ///
+        /// THE TWO PUBLIC LISTS OVERLAP RATHER THAN PARTITION. A first Ultimate clear is on both,
+        /// because it is both things - and a reader who opened "Ultimates" to see Ultimate clears
+        /// would be surprised to find the best ones filtered out of it. It is one row on the server
+        /// either way, so it carries one heart count between the two appearances; see
+        /// RatingService.SyncReaction for the one thing that costs on this side.
+        ///
+        /// The order is the order of how much a reader wants them, left to right.
+        /// </summary>
         private enum ClearsView
         {
-            Broadcast = 0,
-            Mine = 1,
+            First = 0,
+            Savage = 1,
+            Ultimate = 2,
+            Mine = 3,
         }
 
-        private ClearsView clearsView = ClearsView.Broadcast;
+        private ClearsView clearsView = ClearsView.First;
 
         /// <summary>In <see cref="ClearsView"/>'s own order, and held rather than built - this is
         /// read on every frame the tab is open.</summary>
-        private static readonly string[] ClearsViewLabels = { "Broadcast", "My clears" };
+        private static readonly string[] ClearsViewLabels =
+            { "First clears", "Savage", "Ultimates", "My clears" };
+
+        /// <summary>Without "My clears", for somebody who has not had one yet. A separate array
+        /// rather than a slice, so neither can be built wrong at a call site.</summary>
+        private static readonly string[] ClearsViewLabelsNoMine =
+            { "First clears", "Savage", "Ultimates" };
 
         /// <summary>
         /// Where one of the two lists had got to, and what to do about it on the next frame.
@@ -87,8 +133,31 @@ namespace PfPresets
             public bool ToTop;
         }
 
-        private readonly PostListScroll broadcastScroll = new();
+        private readonly PostListScroll firstScroll = new();
+        private readonly PostListScroll savageScroll = new();
+        private readonly PostListScroll ultimateScroll = new();
         private readonly PostListScroll mineScroll = new();
+
+        /// <summary>Where the list being drawn keeps its place. One per view, because they are three
+        /// different lists at three different depths - remembering a single number would put the
+        /// feed back at wherever whichever one was last read happened to be.</summary>
+        private PostListScroll ScrollFor(ClearsView view) => view switch
+        {
+            ClearsView.First => firstScroll,
+            ClearsView.Savage => savageScroll,
+            ClearsView.Ultimate => ultimateScroll,
+            _ => mineScroll,
+        };
+
+        /// <summary>Every list's scroll state, so "put them all back where they were" cannot quietly
+        /// miss one when a fourth is added.</summary>
+        private IEnumerable<PostListScroll> AllScrolls()
+        {
+            yield return firstScroll;
+            yield return savageScroll;
+            yield return ultimateScroll;
+            yield return mineScroll;
+        }
 
         /// <summary>
         /// The last frame this tab drew, so returning to it can be told apart from staying on it.
@@ -142,18 +211,21 @@ namespace PfPresets
             if (ratings == null || !config.CommunityEnabled)
                 return;
 
-            // Both lists are kept fresh whichever half is showing, so the pill and the tab strip
-            // are right the moment somebody switches rather than two minutes afterwards. Both are
-            // reads of our own tables and cost nobody a provider lookup.
-            ratings.EnsureFeedLoaded();
+            // Only the list on screen polls. Three streams that all kept themselves fresh would be
+            // three reads every two minutes to draw one of them, and the two nobody is looking at
+            // do not need to be right - they are re-read the moment they are asked for.
+            //
+            // "My clears" is the exception and is loaded whichever view is showing: it is what
+            // decides whether the third segment exists at all, and a strip that appears a beat after
+            // somebody arrives is a strip that moves under their cursor.
             ratings.EnsureMyClearsLoaded();
 
             // Coming back to the tab, as opposed to sitting on it. See feedLastFrame.
             int frame = ImGui.GetFrameCount();
             if (frame - feedLastFrame > 1)
             {
-                broadcastScroll.Restore = true;
-                mineScroll.Restore = true;
+                foreach (var s in AllScrolls())
+                    s.Restore = true;
             }
             feedLastFrame = frame;
 
@@ -168,82 +240,116 @@ namespace PfPresets
             // the body and sat hard against the header strip.
             ImGui.Dummy(new Vector2(0, Space.Gutter));
 
-            // THE CHOICE DISAPPEARS WHEN THERE IS NOTHING TO CHOOSE. A tab strip whose second half
-            // is empty is a strip advertising a dead end, and for anybody who has not cleared
-            // anything since installing the plugin it would be one. It arrives with their first
+            // THE THIRD SEGMENT DISAPPEARS WHEN THERE IS NOTHING BEHIND IT. A strip advertising a
+            // dead end is worse than a shorter strip, and for anybody who has not cleared anything
+            // since installing the plugin "My clears" would be one. It arrives with their first
             // clear and not before.
+            //
+            // The other two are always there. Both are lists of other people's clears and both have
+            // something in them from the day the plugin is installed, so neither can be the empty
+            // promise this rule exists to avoid.
             bool haveMine = ratings.MyClearsCount > 0;
-            if (!haveMine)
-                clearsView = ClearsView.Broadcast;
+            if (!haveMine && clearsView == ClearsView.Mine)
+                clearsView = ClearsView.First;
 
             // Same heading as "Your profile" and "Everyone you have met" - one primitive, so the
             // three cannot drift into three sizes.
-            DrawListHeading(clearsView == ClearsView.Mine ? "My clears" : "Recent clears");
-
-            if (haveMine)
+            DrawListHeading(clearsView switch
             {
-                int selected = (int)clearsView;
-                if (DrawSegmentedControl("clearsview", ClearsViewLabels, ref selected, width))
-                {
-                    clearsView = (ClearsView)selected;
+                ClearsView.Mine => "My clears",
+                ClearsView.Ultimate => "Ultimate clears",
+                ClearsView.Savage => "Savage clears",
+                _ => "First clears",
+            });
 
-                    // Whichever list is coming back should land where it was left, not at whatever
-                    // offset the other one happens to be sitting at.
-                    broadcastScroll.Restore = true;
-                    mineScroll.Restore = true;
-                }
+            int selected = (int)clearsView;
+            var labels = haveMine ? ClearsViewLabels : ClearsViewLabelsNoMine;
 
-                ImGui.Dummy(new Vector2(0, Space.Gap));
+            // FITTED, NOT STRETCHED. Three words spread across a 900px body are three words
+            // marooned in three enormous boxes - the strip stops reading as one group of related
+            // choices and starts reading as three separate buttons that happen to be adjacent.
+            // Sized to its own labels, it is a control; `width` is only the ceiling.
+            if (DrawSegmentedControl("clearsview", labels, ref selected, width, fit: true))
+            {
+                clearsView = (ClearsView)selected;
+
+                // Whichever list is coming back should land where it was left, not at whatever
+                // offset another one happens to be sitting at.
+                foreach (var s in AllScrolls())
+                    s.Restore = true;
             }
+
+            ImGui.Dummy(new Vector2(0, Space.Gap));
 
             if (clearsView == ClearsView.Mine)
             {
-                // NO MARK CLAIMED HERE. The badge counts other people's clears, and somebody
-                // reading their own has not been shown any - see the note above MarkFeedSeen about
-                // the one thing that number must never do.
+                // NO MARK CLAIMED HERE. The badge counts other people's first clears, and somebody
+                // reading their own has been shown none - see the note above MarkFeedSeen about the
+                // one thing that number must never do.
                 DrawMyClearsList(ratings, width);
                 ImGui.Unindent(FeedMargin);
                 return;
             }
 
-            // Being here is what reads the feed - not clicking the tab, and not scrolling to the
-            // bottom of it. Somebody who opens the tab, sees the top three posts and leaves has
-            // been told what the badge was for, and asking them to scroll before it clears would
-            // make the number a chore rather than a notice. See MarkFeedSeen.
-            ratings.MarkFeedSeen();
+            bool first = clearsView == ClearsView.First;
+
+            var stream = clearsView switch
+            {
+                ClearsView.Savage => ratings.SavageClears,
+                ClearsView.Ultimate => ratings.UltimateClears,
+                _ => ratings.FirstClears,
+            };
+
+            var scroll = ScrollFor(clearsView);
+
+            stream.EnsureLoaded();
+
+            // ONLY THE FIRST CLEARS LIST CLAIMS THE MARK, because the badge counts first clears -
+            // see the scope on the unseen request. Being HERE is what reads it, not clicking the tab
+            // and not scrolling to the bottom: somebody who opens the tab, sees the top three posts
+            // and leaves has been told what the badge was for, and asking them to scroll before it
+            // clears would make the number a chore rather than a notice.
+            if (first)
+                ratings.MarkFeedSeen();
 
             // Already at the top: nothing to lose your place in, so newer posts just appear. The
             // pill is for somebody who has scrolled away, and is drawn inside the list itself so it
             // can float over whatever they are reading - see DrawFloatingNewPostsPill.
-            if (ratings.HasNewPosts && broadcastScroll.Y <= 2f)
-                ratings.ApplyNewPosts();
+            if (stream.HasNewPosts && scroll.Y <= 2f)
+                stream.ApplyNewPosts();
 
-            var posts = ratings.Feed();
+            var posts = stream.Posts();
 
             if (posts.Count == 0)
             {
-                DrawFeedEmpty(ratings, width);
+                DrawFeedEmpty(stream, clearsView, width);
             }
             else
             {
-                // The service asks for the top when it has replaced the list under somebody - their
+                // The stream asks for the top when it has replaced the list under somebody - their
                 // own clear landing, broadcasting switched off. Taken here rather than inside the
-                // list so the flag cannot be swallowed by a frame the feed did not draw.
-                if (ratings.TakeFeedScrollRequest())
-                    broadcastScroll.ToTop = true;
+                // list so the flag cannot be swallowed by a frame that did not draw.
+                if (stream.TakeScrollRequest())
+                    scroll.ToTop = true;
 
-                DrawPostList("##FeedScroll", posts, width, broadcastScroll,
-                    ratings.FeedHasMore, ratings.FeedLoadingMore, ratings.LoadMoreFeed,
-                    "That's every clear on the feed.",
-                    newPosts: ratings.HasNewPosts,
+                DrawPostList($"##ClearsScroll{clearsView}",
+                    posts, width, scroll,
+                    stream.HasMore, stream.LoadingMore, stream.LoadMore,
+                    clearsView switch
+                    {
+                        ClearsView.Savage => "That's every savage clear on the feed.",
+                        ClearsView.Ultimate => "That's every Ultimate clear on the feed.",
+                        _ => "That's every first clear on the feed.",
+                    },
+                    newPosts: stream.HasNewPosts,
                     onNewPosts: () =>
                     {
-                        ratings.ApplyNewPosts();
+                        stream.ApplyNewPosts();
 
-                        // The list underneath has just been replaced with a newer one, so it is
-                        // read from the top. Set on the feed's own scroll state rather than a
-                        // shared flag: the two halves of this tab remember their places apart.
-                        broadcastScroll.ToTop = true;
+                        // The list underneath has just been replaced with a newer one, so it is read
+                        // from the top. Set on this list's own scroll state rather than a shared
+                        // flag: the three lists remember their places apart.
+                        scroll.ToTop = true;
                     });
             }
 
@@ -387,6 +493,19 @@ namespace PfPresets
             {
                 ImGui.EndChild();
             }
+
+            // AFTER THE CHILD, NOT INSIDE IT. OpenProfile switches the active tab, and doing that
+            // while the list it was pressed in is still being drawn leaves ImGui mid-window with a
+            // stack that no longer matches what the frame is about to draw. Here it is one frame
+            // later in appearance and entirely safe.
+            //
+            // Covers all four lists - the three feeds and My clears - because every one of them is
+            // drawn through here.
+            if (feedProfileClick is { } who)
+            {
+                feedProfileClick = null;
+                OpenProfile(who);
+            }
         }
 
         /// <summary>
@@ -517,12 +636,28 @@ namespace PfPresets
             ImGui.SetCursorPos(resume);
         }
 
-        private void DrawFeedEmpty(RatingService ratings, float width)
+        /// <summary>
+        /// What a list says when it has nothing in it.
+        ///
+        /// Three different sentences, because there are three different reasons to be looking at an
+        /// empty column and only one of them is "nothing has happened yet". The server's own note
+        /// wins when it has one - that is the case where something is actually wrong.
+        /// </summary>
+        private void DrawFeedEmpty(ClearsFeed stream, ClearsView view, float width)
         {
-            string note = ratings.FeedNote
-                ?? (ratings.FeedEverLoaded
-                    ? "No clears yet. Ultimate and savage tier clears turn up here as people get "
-                      + "them - yours and everybody else's."
+            string note = stream.Note
+                ?? (stream.EverLoaded
+                    ? view switch
+                    {
+                        ClearsView.Savage =>
+                            "No savage clears yet. Every clear of the current tier's floors turns up "
+                            + "here - first clears and the weekly farm alike.",
+                        ClearsView.Ultimate =>
+                            "No Ultimate clears yet. They turn up here as people run them.",
+                        _ =>
+                            "No first clears yet. An Ultimate or a savage floor cleared for the first "
+                            + "time turns up here as people get them - yours and everybody else's.",
+                    }
                     : "Loading...");
 
             // Unformatted: this is the server's own wording, and ImGui's Text* overloads treat
@@ -533,6 +668,69 @@ namespace PfPresets
             ImGui.TextUnformatted(note);
             ImGui.PopStyleColor();
             ImGui.PopTextWrapPos();
+        }
+
+        /// <summary>
+        /// Somebody whose profile a click on the feed asked for, acted on once the list is closed.
+        ///
+        /// Recorded rather than acted on where it happens, because opening a profile changes the
+        /// active tab and does it from inside the scrolling child the cards are drawn in. The
+        /// Ratings tab learned this the hard way with its own search results - see clickedProfile
+        /// in PluginUI.Ratings.cs, which is the same pattern for the same reason. Its own field
+        /// rather than that one, so two unrelated lists cannot clear each other's click.
+        /// </summary>
+        private CharacterIdentity? feedProfileClick;
+
+        /// <summary>
+        /// A rectangle on a feed card that opens that person's profile in the plugin.
+        ///
+        /// WHY THE FEED NEEDED THIS. A feed of clears is a feed of people, and the question every
+        /// row raises is "who is that" - which the plugin can already answer in full, on the card
+        /// the Ratings tab draws. Until now the way to ask it was to read the name off the card,
+        /// switch tab, and type it back in, which is the plugin failing to join two things it has
+        /// both of.
+        ///
+        /// THE FACE AND THE NAME, AND NOTHING ELSE. Not the whole card: the fight art, the chip and
+        /// the timestamp are not claims about a person, and a card that navigates wherever it is
+        /// pressed is a card you cannot read without being taken somewhere. The two things that ARE
+        /// the person are the two things that go.
+        ///
+        /// Draws nothing. Whatever it covers is the affordance, and the caller lights that up from
+        /// the hover state this returns.
+        /// </summary>
+        private bool FeedProfileHotspot(AchievementPost post, string id, Vector2 min, Vector2 max)
+        {
+            var size = max - min;
+
+            // A card narrow enough to leave no room for a name still draws one, clipped. There is
+            // nothing to press at a zero or negative size and ImGui would assert on it.
+            if (size.X <= 1f || size.Y <= 1f)
+                return false;
+
+            Vector2 resume = ImGui.GetCursorScreenPos();
+
+            ImGui.SetCursorScreenPos(min);
+            ImGui.InvisibleButton($"##feedwho{id}{post.Id}", size);
+
+            bool hovered = ImGui.IsItemHovered();
+
+            if (hovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+                // The abbreviated name, like everywhere else - somebody who has asked not to see
+                // full names has not made an exception for tooltips.
+                PaddedTooltip($"Open {DisplayName(post.Name)}'s profile");
+            }
+
+            if (ImGui.IsItemClicked())
+                feedProfileClick = post.Identity;
+
+            // Put back, because the caller is midway through laying a card out and this borrowed
+            // the cursor to place a button by hand.
+            ImGui.SetCursorScreenPos(resume);
+
+            return hovered;
         }
 
         /// <summary>
@@ -599,34 +797,71 @@ namespace PfPresets
             float x = min.X + FeedCardPad;
             float centreY = min.Y + bodyHeight * 0.5f;
 
-            // ── The fight's art, framed like every other slot in the plugin ──
+            // ── The fight, behind everything ──
+            //
+            // Drawn first so every other thing on the card sits on top of it, which is the whole
+            // arrangement in one sentence: the fight is the ground, the person is the subject.
+            DrawCardArt(post, min, width, bodyHeight);
+
+            // ── Whose clear it is, framed like every other slot in the plugin ──
+            //
+            // THE PERSON, NOT THE FIGHT. This slot used to hold the boss, and eight reclears of
+            // UCOB in an evening drew the same picture of Bahamut eight times - a column of
+            // identical rows saying nothing about the eight different people in it. The face is the
+            // part that differs between two cards, so the face is what goes where the eye lands.
             var artMin = new Vector2(x, centreY - FeedIconSize * 0.5f);
             var artMax = new Vector2(artMin.X + FeedIconSize, artMin.Y + FeedIconSize);
 
+            // ── The face opens the profile ──
+            //
+            // Submitted before the tile is painted so the hover state is known in time to light it,
+            // and so the card's footer buttons - submitted after - keep their own hit areas. It
+            // draws nothing itself: the portrait under it is the affordance.
+            bool faceHot = FeedProfileHotspot(post, "face", artMin, artMax);
+
             dl.AddRectFilled(artMin, artMax, ImGui.ColorConvertFloat4ToU32(Panel), Radius.Tile);
 
-            var art = FightArt(post.FightSlug, post.FightLabel);
-            if (art != null)
+            var portrait = CachedImage(post.Portrait);
+
+            if (portrait != null)
             {
-                dl.AddImage(art.Handle, artMin, artMax);
+                dl.AddImageRounded(portrait.Handle, artMin, artMax, Vector2.Zero, Vector2.One,
+                    0xFFFFFFFF, Radius.Tile, ImDrawFlags.RoundCornersAll);
             }
             else
             {
-                using (pluginInterface.UiBuilder.IconFontHandle.Push())
-                {
-                    string glyph = (post.Kind == "savage_tier"
-                        ? FontAwesomeIcon.Book
-                        : FontAwesomeIcon.Crown).ToIconString();
+                // No face: the fight's own art, which is exactly the card this was before portraits
+                // existed. A perfectly good card, and a far better fallback than an empty tile -
+                // somebody with a hidden Lodestone profile is not a card with a hole in it.
+                var fallback = CachedImage(post.Art) ?? FightArt(post.FightSlug, post.FightLabel);
 
-                    Vector2 gs = ImGui.CalcTextSize(glyph);
-                    dl.AddText(new Vector2(artMin.X + (FeedIconSize - gs.X) * 0.5f,
-                                           artMin.Y + (FeedIconSize - gs.Y) * 0.5f),
-                        ImGui.ColorConvertFloat4ToU32(Dim), glyph);
+                if (fallback != null)
+                {
+                    dl.AddImageRounded(fallback.Handle, artMin, artMax, Vector2.Zero, Vector2.One,
+                        0xFFFFFFFF, Radius.Tile, ImDrawFlags.RoundCornersAll);
+                }
+                else
+                {
+                    using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                    {
+                        string glyph = (post.IsFirstClear
+                            ? FontAwesomeIcon.Crown
+                            : FontAwesomeIcon.User).ToIconString();
+
+                        Vector2 gs = ImGui.CalcTextSize(glyph);
+                        dl.AddText(new Vector2(artMin.X + (FeedIconSize - gs.X) * 0.5f,
+                                               artMin.Y + (FeedIconSize - gs.Y) * 0.5f),
+                            ImGui.ColorConvertFloat4ToU32(Dim), glyph);
+                    }
                 }
             }
 
-            dl.AddRect(artMin, artMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
-                Radius.Tile, ImDrawFlags.None, 1f);
+            // The frame is the hover state: a ring in the accent colour, over the same rectangle
+            // the border already occupies, so nothing moves and nothing is added - the line that is
+            // always there simply changes colour and thickens by a pixel.
+            dl.AddRect(artMin, artMax,
+                ImGui.ColorConvertFloat4ToU32(faceHot ? Accent : CardBorder),
+                Radius.Tile, ImDrawFlags.None, faceHot ? 2f : 1f);
 
             // ── Measure both lines before drawing either ──
             //
@@ -638,10 +873,16 @@ namespace PfPresets
 
             string when = LocalClearTime(post.ClearedAt);
 
+            // DisplayName, here and everywhere below. A name is measured, truncated, drawn and
+            // put in a tooltip on this card, and all four have to be the same string - measuring
+            // the full name and drawing an abbreviated one lays the card out for text that is not
+            // on it. post.Name stays the real name and is what the profile is opened with.
+            string shown = DisplayName(post.Name);
+
             using (UiRowNameFont.Push())
             {
                 nameH = ImGui.GetTextLineHeight();
-                nameW = ImGui.CalcTextSize(post.Name).X;
+                nameW = ImGui.CalcTextSize(shown).X;
             }
 
             using (UiBodyFont.Push())
@@ -690,16 +931,36 @@ namespace PfPresets
 
             float nameRoom = textWidth - (nameX - textX) - worldW - 10f;
 
+            // Cut to fit and measured BEFORE the hot spot is placed, because the hot spot has to
+            // be the width of the text actually drawn - a target sized to the untruncated name
+            // reaches out over the fight line beside it.
+            string name;
             using (UiRowNameFont.Push())
             {
-                string name = Truncate(post.Name, nameRoom);
-                dl.AddText(new Vector2(nameX, topY), ImGui.ColorConvertFloat4ToU32(Ink), name);
+                name = Truncate(shown, nameRoom);
                 nameW = ImGui.CalcTextSize(name).X;
             }
 
+            // The name and the world are one label about one person, so they are one target - a hot
+            // spot that stops at the end of the name is a hot spot people miss.
+            bool nameHot = FeedProfileHotspot(post, "name",
+                new Vector2(nameX, topY),
+                new Vector2(nameX + nameW + 8f + worldW, topY + nameH));
+
+            using (UiRowNameFont.Push())
+                dl.AddText(new Vector2(nameX, topY),
+                    ImGui.ColorConvertFloat4ToU32(nameHot ? Accent : Ink), name);
+
+            // Underlined on hover as well as recoloured. Colour alone is the one cue somebody with
+            // a colour deficiency may not get, and this is the card's only navigation.
+            if (nameHot)
+                dl.AddLine(new Vector2(nameX, topY + nameH - 1f),
+                    new Vector2(nameX + nameW, topY + nameH - 1f),
+                    ImGui.ColorConvertFloat4ToU32(Accent), 1f);
+
             using (UiLabelFont.Push())
                 dl.AddText(new Vector2(nameX + nameW + 8f, topY + (nameH - smallH) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Faint), post.World);
+                    ImGui.ColorConvertFloat4ToU32(nameHot ? Accent : Faint), post.World);
 
             // Line two: the fight, by the name people say out loud rather than its initials.
             using (UiBodyFont.Push())
@@ -707,6 +968,140 @@ namespace PfPresets
                 string title = Truncate(post.Title, textWidth);
                 dl.AddText(new Vector2(textX, topY + nameH + lineGap),
                     ImGui.ColorConvertFloat4ToU32(post.IsFirstClear ? Ink : Dim), title);
+            }
+        }
+
+        /// <summary>
+        /// The fight's art, along the card's right edge, faint enough to read over.
+        ///
+        /// WHY IT IS BACKGROUND NOW. It used to be the 44px tile on the left, and that slot is the
+        /// one the eye lands on first - so the loudest thing on a card about a person was a picture
+        /// of a boss, repeated identically down a column of eight different people. The picture is
+        /// still worth having: it says which fight this is from across the room, before any text is
+        /// read. It just is not the subject, so it is drawn like a ground rather than like a
+        /// portrait.
+        ///
+        /// Three things make it recede rather than compete, and all three are needed:
+        ///
+        ///   FAINT       Tinted to about a fifth. See FeedArtAlpha for how low that had to go.
+        ///   FADED IN    A left-to-right gradient of the card's own colour over its left half, so it
+        ///               emerges from the card instead of starting at a hard vertical seam - which
+        ///               is what it looks like without this, and reads as a rendering fault.
+        ///   COVERED     Cropped to fill its panel rather than squashed into it. The art is square
+        ///               and the panel is a wide letterbox, so the vertical middle is taken and the
+        ///               rest is left out; stretching it instead is instantly visible on anything
+        ///               with a face in it.
+        ///
+        /// Clipped to the card's own top-right corner, and stopping at the divider above the
+        /// footer, so the buttons keep their flat ground and their rounded bottom corners.
+        /// </summary>
+        private void DrawCardArt(AchievementPost post, Vector2 min, float width, float bodyHeight)
+        {
+            var dl = ImGui.GetWindowDrawList();
+
+            // THE SERVER'S COPY FIRST. It has one for every fight in the roster, including ones this
+            // build has never heard of; the embedded set is the fallback for an older server and for
+            // the moments before the download lands.
+            var art = CachedImage(post.Art) ?? FightArt(post.FightSlug, post.FightLabel);
+
+            float panelWidth = Math.Clamp(width * FeedArtFraction, FeedArtMinWidth, FeedArtMaxWidth);
+
+            // Never wider than the card has room for. On the narrowest card the clamp's minimum
+            // could otherwise reach past the portrait and under the name.
+            panelWidth = MathF.Min(panelWidth, width - FeedIconSize - FeedCardPad * 3f);
+            if (panelWidth < 40f)
+                return;
+
+            // HELD ONE PIXEL INSIDE THE CARD'S OWN OUTLINE, on the two edges it touches.
+            //
+            // The border is drawn before the body, so a panel flush to the card's edge paints over
+            // it - and at this alpha the line does not disappear, it goes patchy, which reads as a
+            // rendering fault rather than as a design. The same one-pixel inset the footer buttons
+            // take against the same border, for the same reason. The bottom edge is not inset: the
+            // divider above the footer is drawn afterwards and covers the seam itself.
+            float right = min.X + width - 1f;
+            var panelMin = new Vector2(right - panelWidth, min.Y + 1f);
+            var panelMax = new Vector2(right, min.Y + bodyHeight);
+
+            // COVER, NOT STRETCH. The source is square; the panel is wide and short. Taking a
+            // horizontal band out of the middle keeps the aspect ratio, and the middle is where the
+            // boss is in every one of these images.
+            float band = MathF.Min(1f, (panelMax.Y - panelMin.Y) / panelWidth);
+            var uvMin = new Vector2(0f, 0.5f - band * 0.5f);
+            var uvMax = new Vector2(1f, 0.5f + band * 0.5f);
+
+            uint tint = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, FeedArtAlpha));
+
+            if (art != null)
+            {
+                dl.AddImageRounded(art.Handle, panelMin, panelMax, uvMin, uvMax, tint,
+                    Radius.Card - 1f, ImDrawFlags.RoundCornersTopRight);
+            }
+            else
+            {
+                // NO ART FOR THIS FIGHT, which is the ordinary case for a savage floor - the
+                // shipped set covers the Ultimates and the tier's final boss and nothing else.
+                //
+                // A glyph rather than nothing. Half a feed of cards with a picture and half with a
+                // blank right-hand side does not read as "some art is missing", it reads as the
+                // cards being two different designs; one faint mark in the same place keeps the
+                // composition whether or not a file exists. Drop a jpg named after the roster slug
+                // into Data/Icons/bosses and this branch stops being reached for that fight.
+                DrawCardArtGlyph(dl, post, panelMin, panelMax);
+            }
+
+            // The fade. Opaque card colour on the left, nothing on the right, over the panel's own
+            // left half - so there is no edge where the picture begins.
+            //
+            // The card under a first clear is Raised rather than Field, so the gradient has to be
+            // whichever of the two this card is painted in or the fade ends in a faint vertical
+            // band of the wrong grey.
+            var ground = post.IsFirstClear ? Raised : Field;
+            uint solid = ImGui.ColorConvertFloat4ToU32(ground);
+            uint clear = ImGui.ColorConvertFloat4ToU32(ground with { W = 0f });
+
+            float fadeTo = panelMin.X + panelWidth * 0.55f;
+
+            dl.AddRectFilledMultiColor(
+                panelMin, new Vector2(fadeTo, panelMax.Y),
+                solid, clear, clear, solid);
+        }
+
+        /// <summary>
+        /// A fight with no art of its own, marked rather than left blank.
+        ///
+        /// Deliberately faint and deliberately large: it is filling the role the picture would, so
+        /// it has to sit at the same depth. A glyph at label size in the corner of the panel would
+        /// read as a badge - something with a meaning to work out - rather than as texture.
+        /// </summary>
+        private void DrawCardArtGlyph(ImDrawListPtr dl, AchievementPost post,
+            Vector2 panelMin, Vector2 panelMax)
+        {
+            float height = panelMax.Y - panelMin.Y;
+
+            using (pluginInterface.UiBuilder.IconFontHandle.Push())
+            {
+                string mark = (post.IsFirstClear
+                    ? FontAwesomeIcon.Crown
+                    : FontAwesomeIcon.Dragon).ToIconString();
+
+                Vector2 size = ImGui.CalcTextSize(mark);
+                if (size.X <= 0f || size.Y <= 0f)
+                    return;
+
+                // Scaled to the panel rather than drawn at the font's own size, so it fills the
+                // same area the art would have. ImGui's AddText takes a size, which scales the
+                // glyph from the atlas - fine for one large mark at low opacity.
+                float scale = (height * 0.72f) / size.Y;
+                float fontSize = ImGui.GetFontSize() * scale;
+
+                Vector2 scaled = size * scale;
+
+                dl.AddText(ImGui.GetFont(), fontSize,
+                    new Vector2(panelMax.X - scaled.X - FeedCardPad,
+                                panelMin.Y + (height - scaled.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(Ink with { W = FeedArtAlpha * 0.55f }),
+                    mark);
             }
         }
 

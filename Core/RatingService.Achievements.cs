@@ -10,6 +10,12 @@ namespace PfPresets
     /// <summary>
     /// The achievements feed: other people's clears, and the two things you can do about them.
     ///
+    /// TWO LISTS, NOT ONE. First clears in one and Ultimate reclears in the other, because they are
+    /// two unlike things and mixing them meant the second burying the first. The lists themselves
+    /// live in ClearsFeed - see that file for why the split is there rather than a filter applied
+    /// here. What stays in this file is what belongs to neither list on its own: the unread badge,
+    /// the announcer's own read of the undivided table, and the two reactions.
+    ///
     /// Everything here reaches our own server and stops there. No provider is involved, nothing is
     /// looked up on anybody's behalf, and the feed is the same rows for everybody - so this is one
     /// of the few parts of the plugin that can poll on a timer without costing anyone anything.
@@ -21,98 +27,150 @@ namespace PfPresets
     /// </summary>
     internal sealed partial class RatingService
     {
-        /// <summary>How often an open tab re-reads the feed. Slow on purpose - a clear is not news
-        /// that goes stale in seconds, and every client doing this is a row read on our box.</summary>
-        private static readonly TimeSpan FeedPollAfter = TimeSpan.FromMinutes(2);
-
-        private readonly List<AchievementPost> feed = new();
-
         /// <summary>
-        /// Newer posts the poll has fetched but not shown.
-        ///
-        /// A feed that rewrites itself under somebody mid-read is a feed that loses their place,
-        /// so the poll parks what it finds here and the tab offers it. Empty whenever what is on
-        /// screen is current, which is nearly always.
+        /// First clears: an Ultimate's, a savage floor's, and the tier clears posted under the
+        /// older scheme. The list somebody opens the tab for.
         /// </summary>
-        private readonly List<AchievementPost> incoming = new();
+        public ClearsFeed FirstClears { get; }
 
-        private readonly object feedLock = new();
+        /// <summary>Every savage floor clear of the current tier. Only ever first clears, because
+        /// a savage floor is only posted the first time - so this is the savage half of
+        /// <see cref="FirstClears"/>, given its own tab so it reads as a place.</summary>
+        public ClearsFeed SavageClears { get; }
 
-        private DateTime feedReadAt = DateTime.MinValue;
-        private int feedInFlight;
+        /// <summary>Every Ultimate clear, first ones included - and most of the table.</summary>
+        public ClearsFeed UltimateClears { get; }
 
-        // ── How the feed grows ────────────────────────────────────
-        //
-        // ONE LIST THAT ONLY GETS LONGER, not a page at a time. The feed used to be numbered, and
-        // numbering it was the wrong shape for what it is: a river of other people's clears, read
-        // top-down until you lose interest. Nobody wants "page four" of that - page four is not a
-        // place, it is however far down you happened to get - and the numbers meant losing your
-        // place was one misclick away.
-        //
-        // The pieces below are what makes appending safe:
-        //
-        //   feedCursor    The instant the first page was read, in the SERVER's clock. Every page
-        //                 after the first is asked for against it, so the read is of the feed as it
-        //                 stood then. Without it, a clear posted mid-scroll shifts every row down
-        //                 by one and the next page hands back a post already on screen while
-        //                 quietly skipping another.
-        //   feedNextPage  Which page has not been asked for yet.
-        //   feedPagesKnown How many the server said there are, under that cursor.
-        //
-        // Newer posts are not lost by the cursor - the top-of-feed poll still finds them, and they
-        // are offered as the pill exactly as before. Pressing it starts a new list from the top,
-        // which is the one moment it is right to throw the accumulated pages away.
-
-        /// <summary>Unix ms in the server's clock, or zero before the first page has landed (and
-        /// against a server too old to send one, where paging falls back to plain offsets).</summary>
-        private long feedCursor;
-
-        private int feedNextPage;
-        private int feedPagesKnown = 1;
-        private int feedMoreInFlight;
-
-        /// <summary>Pages and cursor belonging to a read parked behind the pill, promoted with it
-        /// in <see cref="ApplyNewPosts"/> - the held list is a different feed from the one on
-        /// screen, and its pagination has to travel with it or the first scroll after pressing the
-        /// pill would append the old feed's page two to the new feed's page one.</summary>
-        private int pendingPages = 1;
-        private long pendingCursor;
-
-        /// <summary>Whether there is more feed below what has been handed over. False also while
-        /// nothing has loaded at all, so the tab does not offer to extend an empty list.</summary>
-        public bool FeedHasMore
+        /// <summary>Both, in the order the tab draws them, so a caller wanting to do something to
+        /// each does not have to name them and cannot miss one when a third appears.</summary>
+        private IEnumerable<ClearsFeed> Streams
         {
-            get { lock (feedLock) return feed.Count > 0 && feedNextPage < feedPagesKnown; }
+            get
+            {
+                yield return FirstClears;
+                yield return SavageClears;
+                yield return UltimateClears;
+            }
         }
 
-        /// <summary>True while the next page is out, so the foot of the list can say so rather
-        /// than ending in a way that looks like the end.</summary>
-        public bool FeedLoadingMore => feedMoreInFlight != 0;
+        /// <summary>Built here rather than in the main constructor so the two streams and the
+        /// things that read them stay in one file. Called from RatingService's own ctor.</summary>
+        private void InitClearsFeeds(out ClearsFeed first, out ClearsFeed savage, out ClearsFeed ultimate)
+        {
+            first = new ClearsFeed(api, log, () => config.CommunityEnabled, "first", "First clears");
+            savage = new ClearsFeed(api, log, () => config.CommunityEnabled, "savage", "Savage clears");
+            ultimate = new ClearsFeed(api, log, () => config.CommunityEnabled, "ultimate", "Ultimate clears");
 
-        /// <summary>Set when the change came from this client - their own clear, their own share,
-        /// their own opt-out. Offering somebody a pill to see a thing they just did themselves
-        /// would be absurd, so the next read lands straight on screen.</summary>
-        private volatile bool applyNextRead;
+            // ONLY THE FIRST CLEARS STREAM POKES THE BADGE, because the badge counts first clears.
+            // Wiring the other one to it would have a page of Ultimate reclears asking for a number
+            // that cannot have changed.
+            first.HeldNewPosts = () => unseenAskNow = true;
+        }
 
-        private volatile string? feedNote;
-        private DateTime feedNoteUntil = DateTime.MinValue;
+        /// <summary>
+        /// Reads the top of the WHOLE feed, for the announcer alone.
+        ///
+        /// Unscoped, and separate from either stream's own poll, and both of those are load-bearing:
+        ///
+        ///   unscoped   The announcer is watching for anything worth a banner. A scoped read would
+        ///              be watching half the table, and whichever half was not being watched would
+        ///              simply never announce.
+        ///   separate   The announcer's mark moves past everything it has looked at. If a stream's
+        ///              read fed it, a page of Ultimate reclears would mark a first clear as
+        ///              accounted for - and that clear would then never be announced to anybody,
+        ///              because the mark says it already was.
+        ///
+        /// The cost is one extra read every two minutes, and only for a client that has the clears
+        /// tab actually open - which is a small minority at any instant. Nothing is kept from it:
+        /// the posts are observed and dropped.
+        /// </summary>
+        private void RefreshForAnnounce()
+        {
+            if (Interlocked.CompareExchange(ref announceReadInFlight, 1, 0) != 0)
+                return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await api.GetFeedAsync(0).ConfigureAwait(false);
+
+                    if (result.IsOk && result.Value != null)
+                        ObserveForAnnounce(result.Value.Posts, result.Value.Now);
+                }
+                catch (Exception ex)
+                {
+                    log.Debug($"[Ratings] Announce read failed: {ex.Message}");
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref announceReadInFlight, 0);
+                }
+            });
+        }
+
+        private int announceReadInFlight;
+
+        /// <summary>
+        /// Puts both lists back at the top on the next frame either is drawn.
+        ///
+        /// For the changes that make them wrong rather than stale: broadcasting going off, an
+        /// opt-out landing, their own clear being posted. Cheaper than working out which rows
+        /// survive, and there is no case where it matters that it is not.
+        /// </summary>
+        public void ResetClearsFeeds()
+        {
+            foreach (var stream in Streams)
+                stream.Reset();
+        }
+
+        /// <summary>
+        /// Says both lists are out of date without asking for anything.
+        ///
+        /// Both, rather than the one a change belongs to, because working out which is more code
+        /// than it saves: a share can be on either list, broadcasting affects both, and the cost of
+        /// being wrong is a stale list. Neither fetches until its tab is drawn - see Invalidate.
+        /// </summary>
+        private void InvalidateClearsFeeds()
+        {
+            foreach (var stream in Streams)
+                stream.Invalidate();
+        }
 
         /// <summary>Posts being hearted or shared right now, so a button held down issues one
         /// request rather than one per frame.</summary>
         private readonly ConcurrentDictionary<string, byte> reacting = new();
 
-        /// <summary>True until the first read lands, so the tab can say "loading" once rather than
-        /// showing an empty feed and calling it empty.</summary>
-        public bool FeedEverLoaded { get; private set; }
+        /// <summary>
+        /// One character's portrait, as bytes, or null.
+        ///
+        /// A pass-through so the UI's texture cache does not need its own HttpClient pointed at the
+        /// same server. There is nothing for this class to decide about a picture - see
+        /// PfApiClient.GetPortraitAsync for why it is the one call here with no retries and no
+        /// circuit breaker behind it.
+        /// </summary>
+        public Task<byte[]?> GetPortraitAsync(string path) => api.GetPortraitAsync(path);
 
-        /// <summary>Something to say instead of posts, or null. Expires on its own.</summary>
-        public string? FeedNote =>
-            DateTime.UtcNow <= feedNoteUntil ? feedNote : null;
-
-        /// <summary>Whether the poll is holding something newer than what is on screen.</summary>
-        public bool HasNewPosts
+        /// <summary>
+        /// Puts a reaction onto every copy of the post that is loaded anywhere.
+        ///
+        /// The lists overlap now: a first Ultimate clear is on both First clears and Ultimates, and
+        /// anybody's own clear is additionally on My clears. All of those are the same row on the
+        /// server with one heart count between them - so a heart has to be seen to move in all of
+        /// them at once, or switching tabs shows somebody their own heart apparently undone.
+        ///
+        /// Called after every optimistic change and again after the server's answer, so the
+        /// correction lands everywhere the guess did.
+        /// </summary>
+        private void SyncReaction(AchievementPost post)
         {
-            get { lock (feedLock) return incoming.Count > 0; }
+            if (string.IsNullOrEmpty(post.Id))
+                return;
+
+            foreach (var stream in Streams)
+                stream.SyncReaction(post);
+
+            SyncMyClearsReaction(post);
         }
 
         // ── The unread mark ───────────────────────────────────────
@@ -134,13 +192,26 @@ namespace PfPresets
         private DateTime unseenCheckedAt = DateTime.MinValue;
         private int unseenInFlight;
 
-        /// <summary>Set by the poll when it parks posts nobody has been shown, so the next tick
-        /// asks straight away instead of waiting out a window it is already in the middle of.
-        /// Volatile: written by the poll's worker, read by the frame.</summary>
+        /// <summary>
+        /// Ask on the next tick rather than waiting out the window.
+        ///
+        /// Set when something has been learned first-hand that the badge ought to reflect now - a
+        /// clear of the reader's own landing, broadcasting being switched off. It still asks the
+        /// server for the number rather than counting anything itself: this client cannot tell
+        /// whose clears it is looking at, and a reader's own must never ring a bell.
+        ///
+        /// Volatile: written by a worker, read by the frame.
+        /// </summary>
         private volatile bool unseenAskNow;
 
-        /// <summary>How many posts have appeared since the mark, as the server last counted
-        /// them.</summary>
+        /// <summary>How many FIRST CLEARS have appeared since the mark, as the server last counted
+        /// them.
+        ///
+        /// First clears and nothing else, which is a decision about what a number on the navigation
+        /// is for. It interrupts a reading to say something happened; an Ultimate reclear happens
+        /// most evenings, several times over, and a badge that rang for each of them is a badge
+        /// people learn to ignore - at which point it is worse than no badge, because the tab wears
+        /// a permanent smudge nobody believes.</summary>
         public int UnseenCount { get; private set; }
 
         /// <summary>The count hit the server's ceiling, so the badge says "99+".</summary>
@@ -185,7 +256,7 @@ namespace PfPresets
             {
                 try
                 {
-                    var result = await api.GetUnseenAsync(since).ConfigureAwait(false);
+                    var result = await api.GetUnseenAsync(since, "first").ConfigureAwait(false);
 
                     // A failed count leaves the badge exactly as it was. There is no such thing as
                     // an error state for this: the alternative to a number is no number, and
@@ -223,9 +294,12 @@ namespace PfPresets
         /// </summary>
         public void MarkFeedSeen()
         {
-            long shown;
-            lock (feedLock)
-                shown = feedMark;
+            // THE FIRST CLEARS STREAM, AND ONLY THAT ONE. The badge counts first clears - see the
+            // scope on the unseen request - so the mark it moves has to belong to the list that
+            // shows them. Taking it from whichever list happened to be open would let somebody
+            // reading Ultimate reclears clear a badge about a first clear they were never shown,
+            // which is the exact failure the rule at the top of this section exists to prevent.
+            long shown = FirstClears.ShownMark;
 
             // Nothing has been SHOWN yet: the first read is still out, every read has failed, or
             // the only thing that has arrived is parked behind the pill. Either way there is
@@ -244,334 +318,6 @@ namespace PfPresets
             // The next tick asks fresh rather than sitting on a three-minute-old answer about a
             // mark that no longer exists.
             unseenCheckedAt = DateTime.MinValue;
-        }
-
-        /// <summary>
-        /// The server's clock as of the last feed that was actually PUT ON SCREEN, in unix ms.
-        /// Zero until one is. Guarded by feedLock: written by the poll's worker, read by the frame.
-        /// </summary>
-        private long feedMark;
-
-        /// <summary>
-        /// The mark belonging to posts the poll is holding behind the pill.
-        ///
-        /// A read that lands while somebody is mid-feed does not replace what they are looking at -
-        /// it waits. Its mark has to wait with it, or the act of fetching a post would be what
-        /// marks it read, and the clear that was never drawn would leave no badge behind. Promoted
-        /// in ApplyNewPosts, which is the moment those posts are genuinely shown.
-        /// </summary>
-        private long pendingMark;
-
-        /// <summary>Shows what the poll has been holding. The tab scrolls itself back to the top
-        /// afterwards - the whole point is that something above you has changed.</summary>
-        public void ApplyNewPosts()
-        {
-            lock (feedLock)
-            {
-                if (incoming.Count == 0)
-                    return;
-
-                feed.Clear();
-                feed.AddRange(incoming);
-                incoming.Clear();
-
-                // A NEW LIST, so its pagination starts over. Whatever had been scrolled into view
-                // belonged to the older feed; keeping those pages and appending the new feed's
-                // second page under them would interleave two different reads of the same table.
-                feedPagesKnown = pendingPages;
-                feedCursor = pendingCursor;
-                feedNextPage = 1;
-
-                // These are on screen now, so their mark is finally ours to claim. Pressing the
-                // pill is the only thing that turns a held read into a shown one.
-                if (pendingMark > feedMark)
-                    feedMark = pendingMark;
-
-                pendingMark = 0;
-                pendingCursor = 0;
-            }
-        }
-
-        /// <summary>A snapshot for the frame. Copied under the lock because the poll writes from a
-        /// worker thread while the UI reads.</summary>
-        public IReadOnlyList<AchievementPost> Feed()
-        {
-            lock (feedLock)
-                return feed.ToArray();
-        }
-
-        /// <summary>
-        /// Reads the feed if it is time to, which is safe to call every frame.
-        ///
-        /// Only ever called while the tab is open. A feed nobody is looking at is a feed that does
-        /// not need to be fresh.
-        /// </summary>
-        public void EnsureFeedLoaded()
-        {
-            // Nothing is asked for while opted out. The tab is gone in that state so this should
-            // not be reachable, but the poll is the thing that would keep talking to the server
-            // after somebody asked us to stop - so it checks for itself rather than trusting that
-            // every caller has already been removed.
-            if (!config.CommunityEnabled)
-                return;
-
-            if (DateTime.UtcNow - feedReadAt < FeedPollAfter)
-                return;
-
-            RefreshFeed();
-        }
-
-        /// <summary>
-        /// Adds the next page to the bottom of the list.
-        ///
-        /// Called by the tab as the list nears its own end, so it is safe to call on any frame and
-        /// does nothing on nearly all of them. A failed read is silent and leaves everything as it
-        /// was: the next scroll asks again, which is a better answer than an error message at the
-        /// foot of somebody's feed.
-        /// </summary>
-        public void LoadMoreFeed()
-        {
-            if (!config.CommunityEnabled)
-                return;
-
-            int page;
-            long cursor;
-
-            lock (feedLock)
-            {
-                if (feed.Count == 0 || feedNextPage >= feedPagesKnown)
-                    return;
-
-                page = feedNextPage;
-                cursor = feedCursor;
-            }
-
-            if (Interlocked.CompareExchange(ref feedMoreInFlight, 1, 0) != 0)
-                return;
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var result = await api.GetFeedAsync(page, cursor).ConfigureAwait(false);
-
-                    if (!result.IsOk || result.Value == null)
-                        return;
-
-                    lock (feedLock)
-                    {
-                        // The list may have been replaced while this was in flight - the pill
-                        // pressed, their own clear landing, broadcasting switched off. That read
-                        // owns the feed now and this page is of one that no longer exists.
-                        if (feedNextPage != page || feedCursor != cursor)
-                            return;
-
-                        var posts = result.Value.Posts;
-
-                        // Nothing came back where the count said there would be. Believe what
-                        // arrived rather than the arithmetic, and stop asking - otherwise the tab
-                        // reaches the bottom, asks, gets nothing, and asks again every frame.
-                        if (posts.Count == 0)
-                        {
-                            feedPagesKnown = page;
-                            return;
-                        }
-
-                        // Deduped by id. The cursor makes a duplicate unlikely rather than
-                        // impossible: a reshare re-ranks a post to the top, which lifts it out of
-                        // the page it used to sit in and shuffles everything below it up one.
-                        var known = new HashSet<string>(StringComparer.Ordinal);
-                        foreach (var p in feed)
-                            known.Add(p.Id);
-
-                        foreach (var p in posts)
-                        {
-                            if (known.Add(p.Id))
-                                feed.Add(p);
-                        }
-
-                        feedPagesKnown = Math.Max(feedPagesKnown, Math.Max(1, result.Value.Pages));
-                        feedNextPage = page + 1;
-                    }
-
-                    // NO MARK IS CLAIMED HERE, for the same reason page one used to be the only
-                    // page that could claim one: the mark is a time, and reading further DOWN the
-                    // feed proves nothing about what has arrived at the top of it.
-                }
-                catch (Exception ex)
-                {
-                    log.Debug($"[Ratings] Feed page {page} failed: {ex.Message}");
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref feedMoreInFlight, 0);
-                }
-            });
-        }
-
-        /// <summary>Set when a read has replaced the whole list, so it is drawn from the top rather
-        /// than at whatever offset the previous one had been left at.</summary>
-        private bool feedScrollWanted;
-
-        public bool TakeFeedScrollRequest()
-        {
-            if (!feedScrollWanted) return false;
-            feedScrollWanted = false;
-            return true;
-        }
-
-        public void RefreshFeed()
-        {
-            if (Interlocked.CompareExchange(ref feedInFlight, 1, 0) != 0)
-                return;
-
-            feedReadAt = DateTime.UtcNow;
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // ALWAYS THE TOP OF THE FEED, and never against the cursor. This is the read
-                    // that answers "has anything new appeared?", and asking it inside the snapshot
-                    // the rest of the pages are pinned to would be asking it to answer no.
-                    var result = await api.GetFeedAsync(0).ConfigureAwait(false);
-
-                    if (!result.IsOk || result.Value == null)
-                    {
-                        // Only worth saying once the tab has nothing else to show. A failed poll
-                        // behind a feed that is already on screen is invisible and self-correcting.
-                        if (!FeedEverLoaded)
-                        {
-                            feedNote = !string.IsNullOrWhiteSpace(result.Message)
-                                ? result.Message
-                                : "Couldn't reach the server.";
-                            feedNoteUntil = DateTime.UtcNow.AddSeconds(20);
-                        }
-
-                        return;
-                    }
-
-                    var posts = result.Value.Posts;
-                    int pages = Math.Max(1, result.Value.Pages);
-
-                    // BEFORE THE MERGE BELOW, on the posts as they arrived. The announcer wants to
-                    // know what the server just said, which is not the same as what survives being
-                    // reconciled with whatever is on screen: a read that gets parked behind the pill
-                    // has still found the clear, and a client with no window open has no screen for
-                    // it to be reconciled against. See RatingService.Announce.cs.
-                    ObserveForAnnounce(posts);
-
-                    // The mark this read is entitled to claim - IF its posts end up in front of
-                    // somebody. Whether they do is decided below, and the two cases are not the
-                    // same: a read that is held behind the pill has shown nobody anything.
-                    //
-                    // Falls back to this machine's clock against a server that does not send one.
-                    // It is the wrong clock, and it is still much better than the alternative:
-                    // without a mark the tab wears the never-opened dot forever, and a mark nobody
-                    // can clear is a permanent smudge on the navigation. The count endpoint does
-                    // not exist on such a server either, so the only thing this fallback decides is
-                    // that the dot goes away when they look - which is the whole of what it means.
-                    long mark = result.Value.Now > 0
-                        ? result.Value.Now
-                        : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-                    // The cursor every page after the first is read against. Only ever taken from
-                    // the server's own clock: the fallback above is fine for a mark, which is only
-                    // ever compared against itself, and wrong for this, which the server compares
-                    // against its own timestamps. Zero leaves paging on plain offsets, which is
-                    // what this did before the cursor existed and is still correct - just no longer
-                    // proof against a post arriving mid-scroll.
-                    long cursor = result.Value.Now;
-
-                    lock (feedLock)
-                    {
-                        // Nothing on screen yet, or the same top post. Anything else is held,
-                        // because replacing a list somebody is reading loses their place and moves
-                        // the thing they were about to press.
-                        bool nothingShown = feed.Count == 0;
-                        bool sameTop = !nothingShown && posts.Count > 0
-                            && string.Equals(posts[0].Id, feed[0].Id, StringComparison.Ordinal);
-
-                        if (nothingShown || applyNextRead)
-                        {
-                            // A NEW LIST FROM THE TOP. Everything scrolled into view belonged to
-                            // the feed being replaced, so the pages start over with it.
-                            feed.Clear();
-                            feed.AddRange(posts);
-                            incoming.Clear();
-                            pendingMark = 0;
-                            pendingCursor = 0;
-
-                            feedPagesKnown = pages;
-                            feedCursor = cursor;
-                            feedNextPage = 1;
-
-                            // Only when something was actually displaced. The first read of all has
-                            // nothing to scroll back to and would only be fighting a restored
-                            // position for no reason.
-                            if (!nothingShown)
-                                feedScrollWanted = true;
-
-                            // Only ever forward: two reads can land out of order, and taking the
-                            // earlier answer's mark would un-see posts already shown.
-                            if (mark > feedMark)
-                                feedMark = mark;
-                        }
-                        else if (sameTop)
-                        {
-                            // NOTHING NEW AT THE TOP, so the pages below it are still the right
-                            // pages and are left exactly where they are. What this read is good for
-                            // is the counts: hearts move on posts that are already on screen, and
-                            // throwing away everything scrolled into view to collect them would be
-                            // the pagination bug this rewrite exists to remove, wearing a poll's
-                            // clothes.
-                            for (int i = 0; i < posts.Count && i < feed.Count; i++)
-                                feed[i] = posts[i];
-
-                            // Trusted downward as well as up: a post coming off the feed - somebody
-                            // opting out, a removal - genuinely shortens it.
-                            feedPagesKnown = Math.Max(pages, feedNextPage);
-
-                            if (mark > feedMark)
-                                feedMark = mark;
-                        }
-                        else
-                        {
-                            incoming.Clear();
-                            incoming.AddRange(posts);
-
-                            // Held, and so are its mark and its pagination - see pendingMark. What
-                            // is on screen is still the older feed, and that is all anybody has
-                            // been shown.
-                            if (mark > pendingMark)
-                                pendingMark = mark;
-
-                            pendingPages = pages;
-                            pendingCursor = cursor;
-
-                            // We have just learned first-hand that there is something they have not
-                            // been shown, so the badge does not sit out the rest of a three-minute
-                            // window before finding out. It still asks the server for the number
-                            // rather than counting these itself - the client cannot tell whose
-                            // clears these are, and their own must not ring a bell.
-                            unseenAskNow = true;
-                        }
-
-                        applyNextRead = false;
-                    }
-
-                    FeedEverLoaded = true;
-                    feedNote = null;
-                }
-                catch (Exception ex)
-                {
-                    log.Debug($"[Ratings] Feed read failed: {ex.Message}");
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref feedInFlight, 0);
-                }
-            });
         }
 
         /// <summary>
@@ -597,6 +343,7 @@ namespace PfPresets
 
             post.Hearted = true;
             post.Hearts += 1;
+            SyncReaction(post);
 
             _ = Task.Run(async () =>
             {
@@ -605,7 +352,10 @@ namespace PfPresets
                     var result = await api.HeartAsync(post.Id).ConfigureAwait(false);
 
                     if (result.IsOk && result.Value != null)
+                    {
                         ApplyReaction(post, result.Value, optimisticHearted: true);
+                        SyncReaction(post);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -636,6 +386,7 @@ namespace PfPresets
 
             post.Hearted = false;
             post.Hearts = Math.Max(0, post.Hearts - 1);
+            SyncReaction(post);
 
             _ = Task.Run(async () =>
             {
@@ -644,7 +395,10 @@ namespace PfPresets
                     var result = await api.UnheartAsync(post.Id).ConfigureAwait(false);
 
                     if (result.IsOk && result.Value != null)
+                    {
                         ApplyReaction(post, result.Value, optimisticHearted: false);
+                        SyncReaction(post);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -713,12 +467,12 @@ namespace PfPresets
                     if (result.IsOk)
                     {
                         post.Reshared = true;
+                        SyncReaction(post);
 
                         // A share moves the post to the top, so the order on screen is now wrong.
                         // Re-read rather than shuffle the local copy: the server decides the order
                         // and this is the one action that changes it.
-                        applyNextRead = true;
-                        feedReadAt = DateTime.MinValue;
+                        InvalidateClearsFeeds();
                     }
                 }
                 catch (Exception ex)
@@ -897,8 +651,7 @@ namespace PfPresets
                         log.Debug($"[Ratings] Achievement posted: {result.Value.Fight} ({result.Value.Kind})");
 
                         // Their own clear should be at the top the next time they look.
-                        applyNextRead = true;
-                        feedReadAt = DateTime.MinValue;
+                        InvalidateClearsFeeds();
 
                         // And on their own list, which has just gained a row. Marked rather than
                         // read: the tab may not be open, and a list nobody is looking at can wait
@@ -1080,8 +833,7 @@ namespace PfPresets
                     await api.SetBroadcastAsync(me, broadcast).ConfigureAwait(false);
 
                     // What is on the feed has changed, whichever way it went.
-                    applyNextRead = true;
-                    feedReadAt = DateTime.MinValue;
+                    InvalidateClearsFeeds();
                 }
                 catch (Exception ex)
                 {

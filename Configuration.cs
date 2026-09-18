@@ -469,6 +469,24 @@ namespace PfPresets
         public long ClearAnnouncementMark { get; set; }
 
         /// <summary>
+        /// How far down the feed the announcer has accounted for, as the SERVER's rank clock
+        /// (unix ms). Zero means this install has never announced one.
+        ///
+        /// A SECOND FIELD RATHER THAN A NEW MEANING FOR THE ONE ABOVE, and the two are not
+        /// interchangeable. <see cref="ClearAnnouncementMark"/> held the newest CLEAR TIME the
+        /// announcer had seen, which is not the order the feed is served in - so a clear published
+        /// after one that happened later than it fell permanently behind the mark and was never
+        /// announced to that client, while a client whose poll happened to catch both in one read
+        /// announced both. That is the "my partner got the banner and I did not" bug, and it is why
+        /// this is measured against the feed's own ordering instead.
+        ///
+        /// Read back as zero on the first run after the change, which seeds and announces nothing -
+        /// one quiet poll, rather than re-announcing everything inside the freshness window because
+        /// two marks in two different clocks were compared as if they were one.
+        /// </summary>
+        public long ClearAnnouncementRankMark { get; set; }
+
+        /// <summary>
         /// The poll whose Vote tab has actually been opened, by slug. Empty until one has been.
         ///
         /// A slug rather than a flag, so the next poll marks the tab by itself: a boolean would have

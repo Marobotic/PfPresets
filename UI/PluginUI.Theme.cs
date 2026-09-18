@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -1067,58 +1068,243 @@ namespace PfPresets
         /// hold their own labels - and the caller keeps its dropdown.
         /// </summary>
         /// <returns>True on the frame a different segment was chosen.</returns>
-        private bool DrawSegmentedControl(string id, string[] options, ref int value, float width)
+        /// <summary>
+        /// Where a segmented control's selection pill currently is, as it slides towards where it
+        /// ought to be.
+        ///
+        /// AN OFFSET FROM THE TRACK'S LEFT EDGE, NEVER A SCREEN POSITION. Screen coordinates move
+        /// when the window does, and a pill interpolating towards a new screen position would go
+        /// skating across its own track every time somebody dragged the window - an animation
+        /// triggered by something that is not a selection change at all.
+        /// </summary>
+        private sealed class SegmentPill
+        {
+            public float X;
+            public float W;
+
+            /// <summary>The track this was last measured against. A different one means the layout
+            /// changed rather than the selection, and the pill is put where it belongs rather than
+            /// sent gliding there - see the note in DrawSegmentedControl.</summary>
+            public float TrackW = -1f;
+
+            public bool Seeded;
+        }
+
+        private readonly Dictionary<string, SegmentPill> segmentPills = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// How fast the pill catches up, as an exponential decay constant.
+        ///
+        /// Framed as a rate rather than a duration so the motion is the same on a 60Hz monitor and
+        /// a 165Hz one - a per-frame fraction would make the animation nearly twice as fast on the
+        /// second, which is the single most common way this effect is got wrong. At 18 the pill is
+        /// about 95% of the way there in a sixth of a second: quick enough to feel like a direct
+        /// response to the press, slow enough to see which way it went.
+        /// </summary>
+        private const float SegmentPillSpeed = 18f;
+
+        /// <summary>Air either side of a label when the track is sized to its contents.</summary>
+        private const float SegmentFitPad = 18f;
+
+        /// <summary>
+        /// A row of mutually exclusive choices, with the selection sliding between them.
+        ///
+        /// THE PILL MOVES, IT DOES NOT JUMP. It used to be drawn inside whichever segment was
+        /// active, which is one line of code and reads as a light switching off in one box and on
+        /// in another - the eye is told the answer changed but not that it MOVED, and on a
+        /// three-segment strip it stops being obvious which direction you went. One object sliding
+        /// between positions is how every touch platform settled this, and the reason is that it
+        /// preserves the relationship between where you were and where you are.
+        ///
+        /// The label colours cross-fade by how much of each segment the pill actually covers, so a
+        /// word is never briefly unreadable in the middle of the trip - which is what happens if the
+        /// colour is switched on the frame the selection changes while the pill is still travelling.
+        /// </summary>
+        /// <param name="width">The track's width, or - with <paramref name="fit"/> - the most it may
+        /// take.</param>
+        /// <param name="fit">Size each segment to its own label instead of dividing the width
+        /// evenly. For a strip whose choices are words rather than a control that wants to fill a
+        /// column: a three-word strip stretched across a 900px body is three words marooned in the
+        /// middle of three enormous boxes, and it stops reading as a group at all.</param>
+        private bool DrawSegmentedControl(string id, string[] options, ref int value, float width,
+            bool fit = false)
         {
             const float trackPad = 3f;
             const float segH = 30f;
             float trackH = segH + trackPad * 2f;
 
+            int count = options.Length;
+            if (count == 0)
+                return false;
+
             Vector2 origin = ImGui.GetCursorScreenPos();
             var dl = ImGui.GetWindowDrawList();
 
-            dl.AddRectFilled(origin, new Vector2(origin.X + width, origin.Y + trackH),
+            // ── How wide each segment is ──
+            var segW = new float[count];
+            float trackW;
+
+            if (fit)
+            {
+                float total = 0f;
+
+                using (UiSegmentFont.Push())
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        segW[i] = MathF.Ceiling(ImGui.CalcTextSize(options[i]).X) + SegmentFitPad * 2f;
+                        total += segW[i];
+                    }
+                }
+
+                float room = MathF.Max(1f, width - trackPad * 2f);
+
+                // Longer than it is allowed to be: everything shrinks by the same factor, so the
+                // segments stay in proportion to their labels and the ellipsis below does the rest.
+                if (total > room)
+                {
+                    float scale = room / total;
+                    for (int i = 0; i < count; i++)
+                        segW[i] *= scale;
+
+                    total = room;
+                }
+
+                trackW = total + trackPad * 2f;
+            }
+            else
+            {
+                float even = (width - trackPad * 2f) / count;
+                for (int i = 0; i < count; i++)
+                    segW[i] = even;
+
+                trackW = width;
+            }
+
+            dl.AddRectFilled(origin, new Vector2(origin.X + trackW, origin.Y + trackH),
                 ImGui.ColorConvertFloat4ToU32(Field), Radius.Control);
-            dl.AddRect(origin, new Vector2(origin.X + width, origin.Y + trackH),
+            dl.AddRect(origin, new Vector2(origin.X + trackW, origin.Y + trackH),
                 ImGui.ColorConvertFloat4ToU32(BorderControl), Radius.Control, ImDrawFlags.None, 1f);
 
-            float segW = (width - trackPad * 2f) / options.Length;
-            bool changed = false;
+            // ── Where each segment starts, as an offset from the track ──
+            var segX = new float[count];
+            float running = trackPad;
 
-            for (int i = 0; i < options.Length; i++)
+            for (int i = 0; i < count; i++)
             {
-                var min = new Vector2(origin.X + trackPad + segW * i, origin.Y + trackPad);
-                var max = new Vector2(min.X + segW, min.Y + segH);
+                segX[i] = running;
+                running += segW[i];
+            }
 
-                ImGui.SetCursorScreenPos(min);
-                ImGui.InvisibleButton($"##seg{id}{i}", new Vector2(segW, segH));
-                bool hot = ImGui.IsItemHovered();
+            // ── The hit test, before anything is painted over it ──
+            //
+            // Every segment is submitted first so the selection used for the pill below is this
+            // frame's, not last frame's - a press would otherwise start the slide one frame late,
+            // which is invisible on its own and becomes a stutter when someone clicks twice.
+            bool changed = false;
+            var hot = new bool[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                ImGui.SetCursorScreenPos(new Vector2(origin.X + segX[i], origin.Y + trackPad));
+                ImGui.InvisibleButton($"##seg{id}{i}", new Vector2(segW[i], segH));
+
+                hot[i] = ImGui.IsItemHovered();
 
                 if (ImGui.IsItemClicked() && value != i)
                 {
                     value = i;
                     changed = true;
                 }
+            }
 
-                bool active = value == i;
+            int active = Math.Clamp(value, 0, count - 1);
 
-                if (active)
-                    dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
-                else if (hot)
-                    dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
+            // ── The pill, sliding ──
+            if (!segmentPills.TryGetValue(id, out var pill))
+            {
+                pill = new SegmentPill();
+                segmentPills[id] = pill;
+            }
+
+            float targetX = segX[active];
+            float targetW = segW[active];
+
+            // SNAPPED WHEN THE TRACK ITSELF CHANGED SIZE. A window being resized moves every
+            // segment, and interpolating towards the new geometry would animate a selection that
+            // nobody touched - the pill drifting after the layout, one step behind, for as long as
+            // the drag lasts.
+            bool relayout = !pill.Seeded || MathF.Abs(pill.TrackW - trackW) > 0.5f;
+
+            if (relayout)
+            {
+                pill.X = targetX;
+                pill.W = targetW;
+                pill.Seeded = true;
+            }
+            else
+            {
+                // Frame-rate independent: the fraction covered this frame is derived from how long
+                // the frame actually took. See SegmentPillSpeed.
+                float t = 1f - MathF.Exp(-ImGui.GetIO().DeltaTime * SegmentPillSpeed);
+                t = Math.Clamp(t, 0f, 1f);
+
+                pill.X += (targetX - pill.X) * t;
+                pill.W += (targetW - pill.W) * t;
+
+                // Landed. Snapping the last fraction of a pixel stops the lerp asymptoting forever
+                // and repainting a stationary pill at ever finer offsets.
+                if (MathF.Abs(targetX - pill.X) < 0.35f) pill.X = targetX;
+                if (MathF.Abs(targetW - pill.W) < 0.35f) pill.W = targetW;
+            }
+
+            pill.TrackW = trackW;
+
+            var pillMin = new Vector2(origin.X + pill.X, origin.Y + trackPad);
+            var pillMax = new Vector2(pillMin.X + pill.W, pillMin.Y + segH);
+
+            dl.AddRectFilled(pillMin, pillMax, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
+
+            // ── The labels ──
+            for (int i = 0; i < count; i++)
+            {
+                float left = origin.X + segX[i];
+                float right = left + segW[i];
+
+                // Hover, only where the pill is not. A highlight under the pill is invisible, and
+                // one that lights up as the pill leaves reads as the strip flickering.
+                float covered = segW[i] <= 0f ? 0f : Math.Clamp(
+                    (MathF.Min(right, pillMax.X) - MathF.Max(left, pillMin.X)) / segW[i], 0f, 1f);
+
+                if (hot[i] && covered < 0.5f)
+                {
+                    dl.AddRectFilled(new Vector2(left, origin.Y + trackPad),
+                        new Vector2(right, origin.Y + trackPad + segH),
+                        ImGui.ColorConvertFloat4ToU32(Raised with { W = Raised.W * (1f - covered) }),
+                        Radius.Small);
+                }
 
                 using (UiSegmentFont.Push())
                 {
-                    // Ellipsised, not clipped. A segment is sized by division rather than by its
-                    // label, so the longest word decides nothing and any of them can overrun.
-                    string shown = Fit(options[i], segW - 12f);
+                    // Ellipsised, not clipped: a segment can be narrower than its own label, either
+                    // because the width was divided evenly or because the fit above was scaled down.
+                    string shown = Fit(options[i], segW[i] - 12f);
                     Vector2 ts = ImGui.CalcTextSize(shown);
-                    dl.AddText(new Vector2(min.X + (segW - ts.X) * 0.5f, min.Y + (segH - ts.Y) * 0.5f),
-                        ImGui.ColorConvertFloat4ToU32(active ? OnAccent : hot ? Ink : Dim), shown);
+
+                    // Cross-faded by coverage rather than switched on the active index, so a label
+                    // the pill is halfway across is halfway between the two colours instead of
+                    // being briefly the wrong one against the wrong ground.
+                    var resting = hot[i] ? Ink : Dim;
+                    var ink = Vector4.Lerp(resting, OnAccent, covered);
+
+                    dl.AddText(new Vector2(left + (segW[i] - ts.X) * 0.5f,
+                                           origin.Y + trackPad + (segH - ts.Y) * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(ink), shown);
                 }
             }
 
             ImGui.SetCursorScreenPos(origin);
-            ImGui.Dummy(new Vector2(width, trackH));
+            ImGui.Dummy(new Vector2(trackW, trackH));
 
             return changed;
         }
