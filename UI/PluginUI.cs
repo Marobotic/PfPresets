@@ -183,6 +183,7 @@ namespace PfPresets
                 DrawVoteNudge();
                 DrawCoordinationOverlay();
                 DrawWatchedListings();
+                DrawTellWindow();
 
                 // AFTER the main window, because the settings section inside it is what arms the
                 // placement preview - drawn before it, the sample would always be one frame stale

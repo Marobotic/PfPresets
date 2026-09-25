@@ -147,7 +147,10 @@ namespace PfPresets
             var source = response.Listings;
             var shown = FilterPfBoard(source);
 
-            DrawPfBoardStatusLine(board, response, shown.Count, source.Count, width);
+            // The listings the board can show at all - read, and not yet full - so "12 of 40"
+            // counts the same things the list does, before a search narrows it.
+            int listed = source.Count(l => l.OnBoard && (l.SlotsTotal <= 0 || l.SlotsFilled < l.SlotsTotal));
+            DrawPfBoardStatusLine(board, response, shown.Count, listed, width);
 
             ImGui.Dummy(new Vector2(0, Space.Tight));
 
@@ -602,8 +605,13 @@ namespace PfPresets
             // Never a full listing: every seat taken means it is not recruiting. Across all its
             // parties, so an alliance with room in another party stays. The server leaves these
             // out too; this covers a board fetched before it did.
+            //
+            // ONLY LISTINGS. A party known only from its members' reports - names, but no listing
+            // anybody has read - is not shown: without the recruiter's comment and seats it is not
+            // a listing, just a list of people. Its names still reach the board when they match a
+            // listing that has been read, and a member on a current build shares the listing itself.
             IEnumerable<PfBoardListing> result = listings.Where(l =>
-                l.OnBoard ? l.SlotsTotal <= 0 || l.SlotsFilled < l.SlotsTotal : l.Members.Count < 8);
+                l.OnBoard && (l.SlotsTotal <= 0 || l.SlotsFilled < l.SlotsTotal));
 
             if (q.Length > 0)
             {
@@ -639,7 +647,10 @@ namespace PfPresets
             if (pfMyListingKey != null
                 && new CharacterIdentity(l.LeaderName, l.LeaderWorld).Key == pfMyListingKey)
                 return 0;
-            // Private listings last, whoever runs them: most people cannot get in.
+            // Duties this character has not unlocked last of all - it cannot join them - and below
+            // those, nothing; then private listings, whoever runs them: most people cannot get in.
+            if (ListingLockedHere(l))
+                return 10;
             if (IsPrivateListing(l))
                 return 9;
             if (!string.IsNullOrWhiteSpace(l.CoordinationId))
@@ -843,6 +854,8 @@ namespace PfPresets
                 float lh = ImGui.GetTextLineHeight();
                 bool tagFits = chips.Count > 0 && tagSize.X < textRoom * 0.45f;
                 float lockW = IsPrivateListing(listing) ? DrawPfLock(dl, new Vector2(tx, cy - lh), lh) : 0f;
+                if (listing.Beginners)
+                    lockW += DrawPfSprout(dl, new Vector2(tx + lockW, cy - lh), lh);
                 float nameRoom = textRoom - lockW - (tagFits ? tagSize.X + 8f : 0f);
                 string shown = Fit(duty, nameRoom);
                 dl.AddText(new Vector2(tx + lockW, cy - lh), ImGui.ColorConvertFloat4ToU32(rowHot ? Accent : FbWhite), shown);
@@ -908,6 +921,7 @@ namespace PfPresets
             int seats = PfSeatCount(listing);
             int count = Math.Min(8, seats + listing.Applicants.Count);
             var size = new Vector2(PfCompactSeat, PfCompactSeatH);
+            var order = PfSeatOrder(listing.Slots, 0, seats);
 
             Vector4 RoleOfJob(uint job) => JobData.FindById(job) is { } j ? GetRoleColor(RoleOf(j)) : FbSlate500;
 
@@ -924,15 +938,15 @@ namespace PfPresets
                     PfHeldDot(dl, min, max);
                     tip = $"Held for {DisplayName(applicant.Name)} @ {applicant.World}";
                 }
-                else if (listing.Slots[i].Job > 0)
+                else if (listing.Slots[order[i]].Job > 0)
                 {
-                    uint job = (uint)listing.Slots[i].Job;
+                    uint job = (uint)listing.Slots[order[i]].Job;
                     dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(RoleOfJob(job)), 2f);
                     tip = JobData.FindById(job)?.Name ?? "In the party";
                 }
                 else
                 {
-                    var slot = listing.Slots[i];
+                    var slot = listing.Slots[order[i]];
                     bool omitted = IsOmittedMask(slot.Accepting);
                     var accepted = Board?.JobsAccepted(slot.Accepting).ToList() ?? new List<uint>();
                     if (omitted)
@@ -1067,6 +1081,23 @@ namespace PfPresets
                 DrawGlyphAtOn(dl, watching ? FontAwesomeIcon.EyeSlash : FontAwesomeIcon.Eye, eyeMin, eye,
                     watching ? FbBlue : eyeHot ? FbWhite : FbSlate400, UiIconSmall);
                 right -= eye + 8f;
+
+                // Send the recruiter a tell, from anywhere - a tell reaches any world.
+                var tellMin = new Vector2(right - eye, origin.Y);
+                ImGui.SetCursorScreenPos(tellMin);
+                if (ImGui.InvisibleButton($"##pftell{key}", new Vector2(eye)))
+                    OpenTell(listing.LeaderName, listing.LeaderWorld);
+                bool tellHot = ImGui.IsItemHovered();
+                if (tellHot)
+                {
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                    PaddedTooltip($"Send {DisplayName(listing.LeaderName)} a tell");
+                }
+                ImGui.SetCursorScreenPos(back);
+                dl.AddRectFilled(tellMin, tellMin + new Vector2(eye), ImGui.ColorConvertFloat4ToU32(
+                    (tellHot ? FbNeutral700 : FbNeutral800) with { W = 0.8f }), Radius.Control);
+                DrawGlyphAtOn(dl, FontAwesomeIcon.CommentDots, tellMin, eye, tellHot ? FbWhite : FbSlate400, UiIconSmall);
+                right -= eye + 8f;
             }
 
             if (listing.OnBoard && listing.SecondsRemaining > 0)
@@ -1086,6 +1117,8 @@ namespace PfPresets
             using (UiNameFont.Push())
             {
                 float lockW = IsPrivateListing(listing) ? DrawPfLock(dl, new Vector2(textLeft, y), ImGui.GetTextLineHeight()) : 0f;
+                if (listing.Beginners)
+                    lockW += DrawPfSprout(dl, new Vector2(textLeft + lockW, y), ImGui.GetTextLineHeight());
                 dl.AddText(new Vector2(textLeft + lockW, y), ImGui.ColorConvertFloat4ToU32(FbWhite), Fit(duty, right - textLeft - lockW));
                 y += ImGui.GetTextLineHeight() + 1f;
             }
@@ -1265,10 +1298,7 @@ namespace PfPresets
         {
             var chips = new List<(string, Vector4)>(4);
             if (!listing.OnBoard)
-            {
-                chips.Add(("Recruiting", Dim));
                 return chips;
-            }
 
             // The game's flags (None 1, Completion 2, Practice 4, Loot 8) as the preset's ids.
             int objective = listing.Objective switch
@@ -1294,8 +1324,7 @@ namespace PfPresets
             if (completion >= 0)
                 chips.Add((DisplayNames.GetCompletionStatusName(completion), colour));
 
-            if (listing.Beginners)
-                chips.Add(("Beginners welcome", colour));
+            // Beginners welcome is the game's sprout before the duty's name, not a chip - see DrawPfSprout.
 
             if (pfBoardAcrossDcs && listing.Dc.Length > 0)
                 chips.Add((listing.Dc, Dim));
@@ -1330,7 +1359,7 @@ namespace PfPresets
         /// image; an omitted one dimmer still; a seat held for an applicant carries their job with a
         /// stronger ring. Hover names the job or lists what the seat takes.
         /// </summary>
-        private void DrawPfSlots(PfBoardListing listing, float width)
+        private void DrawPfSlots(PfBoardListing listing, float width, bool caption = true)
         {
             if (listing.Parties > 1)
             {
@@ -1338,6 +1367,7 @@ namespace PfPresets
                 return;
             }
 
+            if (caption)
             using (UiHelpFont.Push())
             {
                 int total = (listing.SlotsTotal > 0 ? listing.SlotsTotal : listing.Slots.Count) + listing.Applicants.Count;
@@ -1352,9 +1382,11 @@ namespace PfPresets
             int seats = PfSeatCount(listing);
             int count = seats + listing.Applicants.Count;
             float inner = PfSeat;
+            var order = PfSeatOrder(listing.Slots, 0, seats);
 
             for (int i = 0; i < count; i++)
             {
+                int si = i < seats ? order[i] : i;
                 var min = start + new Vector2((i % perRow) * (PfSeat + PfSeatGap), (i / perRow) * (PfSeat + PfSeatRowGap));
                 var max = min + new Vector2(PfSeat);
                 var innerMin = min;
@@ -1371,19 +1403,22 @@ namespace PfPresets
                     PfHeldDot(dl, min, max);
                     tip = $"Held for {DisplayName(applicant.Name)} @ {applicant.World}";
                 }
-                else if (listing.Slots[i].Job > 0)
+                else if (listing.Slots[si].Job > 0)
                 {
-                    var slot = listing.Slots[i];
+                    var slot = listing.Slots[si];
                     if (TryGetIconHandle(IconJobBase + (uint)slot.Job, out var jh))
                         dl.AddImage(jh, innerMin, innerMin + new Vector2(inner));
                     tip = JobData.FindById((uint)slot.Job)?.Name ?? "In the party";
                 }
                 else
                 {
-                    var slot = listing.Slots[i];
+                    var slot = listing.Slots[si];
                     bool omitted = IsOmittedMask(slot.Accepting);
                     var accepted = Board?.JobsAccepted(slot.Accepting).ToList() ?? new List<uint>();
+                    int drawnFrom = dl.VtxBuffer.Size;
                     DrawSlotMiniIcon(omitted ? OmittedSlot : SeatAsSlot(accepted), innerMin, inner);
+                    if (!omitted)
+                        DimSince(dl, drawnFrom, OpenSeatAlpha);
                     tip = omitted ? OmittedSeatTip : PfJobList(accepted);
                 }
 
@@ -1432,6 +1467,38 @@ namespace PfPresets
                     last = i + 1;
             }
             return Math.Max(Math.Max(listing.SlotsTotal, last), 1);
+        }
+
+        /// <summary>How opaque a seat nobody is in is drawn: dimmer than a filled one, so what is
+        /// taken and what is open read apart at a glance.</summary>
+        private const float OpenSeatAlpha = 0.7f;
+
+        /// <summary>
+        /// The order a listing's seats are drawn in: taken seats first, then open ones, then omitted
+        /// ones, each group keeping the listing's own order. The game lists seats where each role
+        /// was put, which scatters the people in a party between the open seats; grouped, how full
+        /// it is reads left to right. Returns slot indexes, <paramref name="count"/> of them from
+        /// <paramref name="from"/>.
+        /// </summary>
+        private static int[] PfSeatOrder(List<PfBoardSlot> slots, int from, int count)
+        {
+            int end = Math.Min(slots.Count, from + count);
+            int Rank(int i) => slots[i].Job > 0 ? 0 : IsOmittedMask(slots[i].Accepting) ? 2 : 1;
+            return Enumerable.Range(from, Math.Max(0, end - from)).OrderBy(Rank).ThenBy(i => i).ToArray();
+        }
+
+        /// <summary>Fades everything drawn on <paramref name="dl"/> since vertex
+        /// <paramref name="from"/> to <paramref name="alpha"/> of its own opacity - a whole icon,
+        /// however it was drawn.</summary>
+        private static unsafe void DimSince(ImDrawListPtr dl, int from, float alpha)
+        {
+            var vtx = (ImDrawVert*)dl.VtxBuffer.Data;
+            for (int i = from; i < dl.VtxBuffer.Size; i++)
+            {
+                uint col = vtx[i].Col;
+                uint a = (uint)((col >> 24) * alpha);
+                vtx[i].Col = (col & 0x00FFFFFF) | (a << 24);
+            }
         }
 
         private static readonly RoleSlot OmittedSlot = new() { Role = RoleType.Omit };
@@ -1669,8 +1736,14 @@ namespace PfPresets
                 // Who sits where is from the last full read; the count is from the latest read of the
                 // list. When they disagree the seating is out of date, and it says so.
                 int changes = detailed ? Math.Abs(listing.SlotsFilled - AllianceSeatedAtCheck(listing)) : 0;
+                // Where the seats will come from, said plainly. On this data centre that is one press
+                // away; anywhere else only a read over there can see inside an alliance - the game
+                // opens listings on your own data centre only.
+                string unknown = join.Shown
+                    ? "who is in which party isn't known until it's checked"
+                    : $"who is in which party shows once a plugin user on {(listing.Dc.Length > 0 ? listing.Dc : "its data centre")} reads its Party Finder";
                 ImGui.TextColored(FbSlate400, $"{listing.SlotsFilled}/{total} in alliance"
-                    + (!detailed ? "  ·  who is in which party isn't known until it's checked"
+                    + (!detailed ? $"  ·  {unknown}"
                         : changes > 0 ? $"  ·  seats as last checked, {changes} change{(changes == 1 ? "" : "s")} since"
                         : string.Empty));
             }
@@ -1698,6 +1771,7 @@ namespace PfPresets
                 }
 
                 Vector2 start = ImGui.GetCursorScreenPos();
+                var partyOrder = detailed ? PfSeatOrder(listing.Slots, p * 8, 8) : null;
                 for (int i = 0; i < 8; i++)
                 {
                     var min = start + new Vector2(i * (PfSeat + PfSeatGap), 0f);
@@ -1705,7 +1779,7 @@ namespace PfPresets
                     ImGui.Dummy(new Vector2(PfSeat));
                     bool hot = ImGui.IsItemHovered();
 
-                    PfBoardSlot? slot = detailed ? listing.Slots[p * 8 + i]
+                    PfBoardSlot? slot = detailed ? listing.Slots[partyOrder![i]]
                         : p < listing.Slots.Count ? listing.Slots[p] : null;
                     string tip;
                     if (slot != null && detailed && slot.Job > 0)
@@ -1718,7 +1792,10 @@ namespace PfPresets
                     {
                         bool omitted = slot == null || IsOmittedMask(slot.Accepting);
                         var accepted = slot != null ? Board?.JobsAccepted(slot.Accepting).ToList() ?? new List<uint>() : new List<uint>();
+                        int drawnFrom = dl.VtxBuffer.Size;
                         DrawSlotMiniIcon(omitted ? OmittedSlot : SeatAsSlot(accepted), min, PfSeat);
+                        if (!omitted)
+                            DimSince(dl, drawnFrom, OpenSeatAlpha);
                         tip = omitted ? OmittedSeatTip : PfJobList(accepted);
                     }
                     if (hot)
@@ -1857,6 +1934,21 @@ namespace PfPresets
             PopIosMenuStyle();
         }
 
+        /// <summary>The game's New Adventurer sprout before a listing that welcomes beginners, as
+        /// the game's own list shows it. Returns the room it took.</summary>
+        private float DrawPfSprout(ImDrawListPtr dl, Vector2 at, float lineH)
+        {
+            uint icon = dutyDataHelper.NewAdventurerIcon();
+            if (icon == 0 || !TryGetIconHandle(icon, out var sprout))
+                return 0f;
+            float size = MathF.Min(lineH, 18f);
+            var min = new Vector2(at.X, at.Y + (lineH - size) * 0.5f);
+            dl.AddImage(sprout, min, min + new Vector2(size));
+            if (ImGui.IsMouseHoveringRect(min, min + new Vector2(size)) && ImGui.IsWindowHovered())
+                PaddedTooltip("Beginners welcome");
+            return size + 4f;
+        }
+
         /// <summary>A compact row's action pill, placed to the left of <paramref name="right"/> and
         /// moving it past itself. The accent when primary, glass otherwise. True when pressed.</summary>
         private bool DrawPfCompactPill(ImDrawListPtr dl, string id, string label, ref float right, float cy,
@@ -1961,7 +2053,11 @@ namespace PfPresets
                 return close;
             }
 
-            // Where and how long, as two small capsules.
+            // Where and how long as two small capsules, and on the same line, all the way right, how
+            // full it is - the one number a watch is kept for.
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 lineStart = ImGui.GetCursorScreenPos();
+            float lineRight = lineStart.X + ImGui.GetContentRegionAvail().X;
             bool any = false;
             if (listing.Dc.Length > 0)
             {
@@ -1975,11 +2071,111 @@ namespace PfPresets
                 OverlayPill($"{Math.Max(1, listing.SecondsRemaining / 60)}m left", FbBlue);
                 any = true;
             }
-            if (any)
-                ImGui.Dummy(new Vector2(0, 2f));
 
-            OverlayInset(width => DrawPfSlots(listing, width));
+            int total = listing.SlotsTotal > 0 ? listing.SlotsTotal : listing.Parties > 1 ? listing.Parties * 8 : listing.Slots.Count;
+            if (total > 0)
+            {
+                string count = $"{listing.SlotsFilled}/{total}";
+                Vector2 ps = PillSize(count);
+                DrawPillAt(dl, new Vector2(lineRight - ps.X, lineStart.Y), count,
+                    listing.SlotsFilled >= total ? FbGreen : FbSlate400);
+                if (!any)
+                    ImGui.Dummy(new Vector2(0, ps.Y));
+            }
+            ImGui.Dummy(new Vector2(0, 2f));
+
+            // The recruiter's own words, as the game shows them.
+            if (listing.Description.Length > 0)
+            {
+                float width = ImGui.GetContentRegionAvail().X;
+                using (CommentFont.Push())
+                    DrawCommentLines(WrapCommentToLines(listing.Description, width, 6), PfSlate300, width);
+                ImGui.Dummy(new Vector2(0, 2f));
+            }
+
+            OverlayInset(width => DrawPfSlots(listing, width, caption: false));
+
+            ImGui.Dummy(new Vector2(0, 4f));
+            if (OverlayButton("Send tell", $"##pfwatchtell{w.Key}", ImGui.GetContentRegionAvail().X, false))
+                OpenTell(listing.LeaderName, listing.LeaderWorld);
             return close;
+        }
+
+        // ── Tells ─────────────────────────────────────────────────
+
+        /// <summary>Who the tell window is writing to, while it is open.</summary>
+        private (string Name, string World)? pfTellTo;
+        private string pfTellText = string.Empty;
+        private string pfTellNote = string.Empty;
+        private bool pfTellSending;
+
+        private void OpenTell(string name, string world)
+        {
+            pfTellTo = (name, world);
+            pfTellText = string.Empty;
+            pfTellNote = string.Empty;
+        }
+
+        /// <summary>
+        /// A small window to write a tell to a listing's recruiter, sent as the game sends one -
+        /// "/tell Name@World", which reaches any world. The real name goes to the game; the name
+        /// on screen follows the name setting.
+        /// </summary>
+        private void DrawTellWindow()
+        {
+            if (pfTellTo is not { } to)
+                return;
+
+            bool close = false;
+            try
+            {
+                var vp = ImGui.GetMainViewport();
+                ImGui.SetNextWindowPos(vp.WorkPos + vp.WorkSize * 0.5f, ImGuiCond.FirstUseEver, new Vector2(0.5f, 0.5f));
+                if (BeginOverlayWindow("###pftellwindow", 340f, false))
+                {
+                    var (x, _) = DrawOverlayHeader("pftell", "Send tell", $"{DisplayName(to.Name)} @ {to.World}", null);
+                    close = x;
+
+                    float width = ImGui.GetContentRegionAvail().X;
+                    if (ImGui.IsWindowAppearing())
+                        ImGui.SetKeyboardFocusHere();
+                    DrawIosTextBox("##pftelltext", ref pfTellText, 400, new Vector2(width, 78f), pfTellSending);
+                    using (UiHelpFont.Push())
+                        ImGui.TextColored(pfTellNote.StartsWith("Sent", StringComparison.Ordinal) ? FbGreen
+                            : pfTellNote.Length > 0 ? Negative : FbSlate500,
+                            pfTellNote.Length > 0 ? pfTellNote : $"{pfTellText.Length}/400");
+
+                    ImGui.Dummy(new Vector2(0, 4f));
+                    var (send, cancel) = OverlayButtonPair(pfTellSending ? "Sending..." : "Send", "Cancel", "pftellbtn");
+                    if (cancel)
+                        close = true;
+                    if (send && !pfTellSending && pfTellText.Trim().Length > 0)
+                    {
+                        pfTellSending = true;
+                        string message = pfTellText;
+                        _ = pfAutomation.SendTellAsync(to.Name, to.World, message).ContinueWith(t =>
+                        {
+                            pfTellSending = false;
+                            if (t.IsCompletedSuccessfully && t.Result)
+                            {
+                                pfTellNote = $"Sent to {DisplayName(to.Name)}.";
+                                pfTellText = string.Empty;
+                            }
+                            else
+                            {
+                                pfTellNote = "Couldn't send that. Check you are logged in and the message is one line.";
+                            }
+                        });
+                    }
+                }
+            }
+            finally
+            {
+                EndOverlayWindow();
+            }
+
+            if (close)
+                pfTellTo = null;
         }
 
         // ── Names ─────────────────────────────────────────────────
@@ -2006,12 +2202,33 @@ namespace PfPresets
             // content the FATE zone, deep dungeon, treasure map or Gold Saucer game.
             string? specific = dutyDataHelper.ListingDutyName(listing.Category, listing.DutyType, (uint)listing.DutyId);
             if (specific != null)
-                return specific;
+                return ListingLockedHere(listing) ? (config.ShowLockedDutyNames ? $"{specific} (Locked Duty)" : "Locked Duty") : specific;
 
             // A whole category ("any dungeon"), or nothing at all - which the game itself calls None.
             string category = PfCategoryName(listing.Category);
             return category.Length > 0 ? category : "None";
         }
+
+        /// <summary>
+        /// Whether this character has not unlocked what a listing is for - a duty, or for a FATE
+        /// listing the zone (its aetherytes), for a deep dungeon the dungeon, and so on. Such a
+        /// listing reads "Locked Duty", the way the game's own window hides the spoiler, unless
+        /// "Show names of locked duties" is on; it sorts last and cannot be joined. Asked for every
+        /// listing every frame, so each answer is kept for a few seconds.
+        /// </summary>
+        private bool ListingLockedHere(PfBoardListing listing)
+        {
+            var key = (listing.Category, listing.DutyType, listing.DutyId);
+            var now = DateTime.UtcNow;
+            if (pfUnlockCache.TryGetValue(key, out var hit) && now - hit.At < TimeSpan.FromSeconds(10))
+                return hit.Locked;
+            var entry = dutyDataHelper.ListingDutyEntry(listing.Category, listing.DutyType, (uint)Math.Max(0, listing.DutyId));
+            bool locked = entry != null && !dutyDataHelper.IsDutyUnlocked(entry);
+            pfUnlockCache[key] = (locked, now);
+            return locked;
+        }
+
+        private readonly Dictionary<(int, int, int), (bool Locked, DateTime At)> pfUnlockCache = new();
 
         private static Type? pfCategoryType;
         private static readonly Dictionary<int, string> PfCategoryNames = new();

@@ -27,6 +27,16 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("4.0.1", "September 2026", new[]
+            {
+                "Alliance raids fill in by themselves. Any plugin user on a data centre now reads its alliance listings in full whenever they are idle for a moment, so every party's seats and who is in them show up for everybody - not only after a full Party Finder read.",
+                "Only real listings are on the board. A party is shown once its actual listing - the recruiter's own comment and seats - has been read; plugin users' names appear on it when they are in it, and party members now share the listing they joined through.",
+                "Locked content reads as Locked Duty, sorts to the bottom and cannot be joined - FATE listings included, which check the zone's aetherytes.",
+                "Join as a party leader and bring your party: every member's job and level is checked against the listing first.",
+                "Send a tell to any recruiter from their card or the watch window. The watch window also shows the listing's comment and its count on the top line.",
+                "Taken seats come first and open seats are dimmer, and a beginners-welcome listing shows the game's sprout.",
+            }),
+
             new("4.0.0", "September 2026", new[]
             {
                 "Ratings are retired. Nobody can vote on anybody, scores are no longer shown anywhere, and the window after a duty is gone. The Players tab keeps search, profiles, clears and everyone you have met.",

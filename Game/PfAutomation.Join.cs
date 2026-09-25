@@ -460,6 +460,35 @@ namespace PfPresets
             });
         }
 
+        /// <summary>
+        /// Sends a tell to a character on any world, as if typed: "/tell Name@World message". One
+        /// line, and short enough for the game's chat box - it refuses anything longer, and a tell
+        /// cut off in the middle is worse than one that is not sent.
+        /// </summary>
+        public Task<bool> SendTellAsync(string name, string world, string message)
+        {
+            message = message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world)
+                || message.Length == 0 || message.Length > 400)
+                return Task.FromResult(false);
+
+            string command = $"/tell {name}@{world} {message}";
+            return framework.RunOnFrameworkThread(() =>
+            {
+                unsafe
+                {
+                    var ui = UIModule.Instance();
+                    if (ui == null || !clientState.IsLoggedIn)
+                        return false;
+                    var entry = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String
+                        .FromSequence(Encoding.UTF8.GetBytes(command));
+                    ui->ProcessChatBoxEntry(entry);
+                    entry->Dtor(true);
+                    return true;
+                }
+            });
+        }
+
         // ── Joining ─────────────────────────────────────────────────
 
         /// <summary>
@@ -506,7 +535,23 @@ namespace PfPresets
         public sealed record FreshListing(
             ulong Id, uint DutyId, int Total, int Filled, int Parties, ulong[] Masks, uint[] Jobs,
             ushort MinItemLevel, byte Completion, byte JoinConditions, byte Objective,
-            TimeSpan TimeLeft, string Comment, ushort CurrentWorld, bool JoinEnabled);
+            TimeSpan TimeLeft, string Comment, ushort CurrentWorld, bool JoinEnabled,
+            string LeaderName = "", ushort HomeWorld = 0, uint Category = 0, bool Beginners = false,
+            byte LootRule = 0, byte DutySettings = 0);
+
+        /// <summary>
+        /// The listing of the party this character is in, as the game still holds it from when it
+        /// was opened to join - or null when it holds none, or one that is not this party's. No
+        /// window: the agent keeps it. Framework thread only.
+        /// </summary>
+        public unsafe FreshListing? CapturedLeaderListing()
+        {
+            ulong leader = GetPartyLeaderContentId();
+            if (leader == 0 || !CapturedListingIsUsable(leader))
+                return null;
+            var agent = AgentLookingForGroup.Instance();
+            return agent == null ? null : ReadFreshListing(agent->LastViewedListing.ListingId);
+        }
 
         /// <summary>
         /// Joins any listing on this data centre the way the game's own window would, but checks it
@@ -532,7 +577,7 @@ namespace PfPresets
             {
                 if (!readOnly)
                 {
-                    var gate = await JoinGateAsync();
+                    var gate = await JoinGateAsync(asGroup: true);
                     if (gate != JoinOutcome.Joined)
                         return (gate, null, null);
                 }
@@ -581,13 +626,16 @@ namespace PfPresets
 
         /// <summary>Whether a join may start at all: logged in, not in a duty, queue or fight, and
         /// not already in a party. Joined means "go ahead".</summary>
-        private Task<JoinOutcome> JoinGateAsync()
+        private Task<JoinOutcome> JoinGateAsync(bool asGroup = false)
             => framework.RunOnFrameworkThread(() =>
             {
                 if (!clientState.IsLoggedIn || IsInDuty() || IsInDutyQueue() || IsInCombat()
                     || RecruitingStatusSet() || IsRecruiting())
                     return JoinOutcome.NotNow;
-                return GetOtherPartyMemberDetails().Count > 0 ? JoinOutcome.InParty : JoinOutcome.Joined;
+                if (GetOtherPartyMemberDetails().Count == 0)
+                    return JoinOutcome.Joined;
+                // In a party: only a leader joining with the whole group may go ahead.
+                return asGroup && IsPartyLeader() ? JoinOutcome.Joined : JoinOutcome.InParty;
             });
 
         /// <summary>Opens a listing's detail window and waits for it to show that listing. Opening
@@ -665,13 +713,19 @@ namespace PfPresets
             return new FreshListing(
                 listingId, l.DutyId, l.TotalSlots, l.SlotsFilled, parties, masks, jobs,
                 l.AvgItemLv, (byte)l.CompletionStatus, (byte)l.JoinConditionFlags, (byte)l.Objective,
-                TimeSpan.FromSeconds(l.TimeLeft), CommentText.Decode(l.Comment), l.CurrentWorld, joinEnabled);
+                TimeSpan.FromSeconds(l.TimeLeft), CommentText.Decode(l.Comment), l.CurrentWorld, joinEnabled,
+                l.LeaderString ?? string.Empty, l.HomeWorld, (uint)l.Category, l.BeginnerFriendly != 0,
+                (byte)l.LootRule, (byte)l.DutyFinderSettingFlags);
         }
 
         /// <summary>Presses Join Party on the open detail window, types a private password if one is
         /// asked for, confirms, and waits for the party to change.</summary>
         private async Task<JoinOutcome> PressJoinAsync(int? password, int party = -1)
         {
+            // JOINED MEANS THE PARTY GREW. Joining alone, it goes from nobody to somebody; joining as
+            // a leader with a group, it goes from the group to the group plus the listing's party.
+            int before = await CountOtherPartyMembersAsync();
+
             // An alliance's window has a Join button per party in place of the one Join Party.
             bool clicked = await framework.RunOnFrameworkThread(() =>
             {
@@ -715,7 +769,7 @@ namespace PfPresets
             for (int i = 0; i < 100 && !disposed; i++)
             {
                 await Task.Delay(100);
-                if (await CountOtherPartyMembersAsync() > 0)
+                if (await CountOtherPartyMembersAsync() > before)
                     return JoinOutcome.Joined;
             }
 

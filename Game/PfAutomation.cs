@@ -245,9 +245,67 @@ namespace PfPresets
                 reason = "You are in the Duty Finder queue.";
             else if (IsInCombat())
                 reason = "You are in combat.";
-            else if (GetOtherPartyMemberDetails().Count > 0)
-                reason = "Leave your current party to join another.";
+            // A party can join together, led by its leader - the game takes the whole group into the
+            // listing when the seats fit all of them. A member who is not leading cannot.
+            else if (GetOtherPartyMemberDetails().Count > 0 && !IsPartyLeader())
+                reason = "Only your party's leader can join another party, and brings everyone with them.";
+            else if (GetOtherPartyMemberDetails().Any(m => m.IsSupportNpc))
+                reason = "Your party has support NPCs in it, which can't join a Party Finder listing.";
             return reason.Length == 0;
+        }
+
+        /// <summary>
+        /// Everyone who would go into a listing with this character - themselves first - with the
+        /// job and level each is on now. A party joins together when its leader joins, so every one
+        /// of them has to meet the duty. Levels come from the game's own party data: the cross-world
+        /// party's list for a cross-world party, the party group otherwise.
+        /// </summary>
+        public unsafe List<(string Name, uint JobId, int Level)> JoiningGroupMembers()
+        {
+            var (myJob, myLevel) = GetLocalJobAndLevel();
+            var group = new List<(string, uint, int)> { ("You", myJob, myLevel) };
+
+            var cross = InfoProxyCrossRealm.Instance();
+            if (cross != null && cross->IsInCrossRealmParty)
+            {
+                for (int i = 0; i < cross->GroupCount; i++)
+                {
+                    var g = cross->CrossRealmGroups[i];
+                    for (int c = 0; c < g.GroupMemberCount; c++)
+                    {
+                        var m = g.GroupMembers[c];
+                        if (m.ContentId != 0 && m.ContentId != playerState.ContentId)
+                            group.Add((m.NameString, m.ClassJobId, m.Level));
+                    }
+                }
+                return group;
+            }
+
+            var gm = GroupManager.Instance();
+            if (gm != null)
+            {
+                for (int i = 0; i < gm->MainGroup.MemberCount; i++)
+                {
+                    var m = gm->MainGroup.GetPartyMemberByIndex(i);
+                    if (m == null || m->ContentId == 0 || m->ContentId == playerState.ContentId)
+                        continue;
+                    group.Add((m->NameString, m->ClassJob, m->Level));
+                }
+            }
+            return group;
+        }
+
+        /// <summary>
+        /// The jobs of everyone who would go into a listing with this character: their own, then
+        /// each other player in the party. A party joins together when its leader joins.
+        /// </summary>
+        public List<uint> JoiningGroupJobs()
+        {
+            var jobs = new List<uint> { GetLocalJobAndLevel().JobId };
+            foreach (var m in GetOtherPartyMemberDetails())
+                if (!m.IsSupportNpc)
+                    jobs.Add(m.JobId);
+            return jobs;
         }
 
         public unsafe bool CanRecruit(out string reason)

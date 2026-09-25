@@ -90,6 +90,10 @@ namespace PfPresets
         private readonly ConcurrentDictionary<string, (DateTime When, List<PfMember> Members)> rosters = new();
         private readonly ConcurrentDictionary<string, byte> rosterInFlight = new();
 
+        /// <summary>Puts the listing this party joined through on the board. Set by Plugin in a build
+        /// with the board; while null, only the names are reported.</summary>
+        internal Action<PfAutomation.FreshListing>? ShareListing { get; set; }
+
         public PfCrowdsource(PfApiClient api, Configuration config, IPluginLog log,
             PfAutomation pfAutomation, WorldHelper worlds,
             Func<CharacterIdentity?> localIdentity, Func<string> currentWorld, Func<bool> suppressed)
@@ -223,6 +227,14 @@ namespace PfPresets
                 lastReport = DateTime.UtcNow;
                 reportedUnder = key;
                 reportedRoster = roster;
+
+                // THE LISTING TOO, NOT JUST THE NAMES. A member still holds the listing they joined
+                // through; shared, the party is on the board as the listing it is - comment, seats,
+                // time left - rather than as a bare list of names, however long it has been since
+                // anybody on its data centre browsed the Party Finder. The leader's own listing is
+                // reported by PfOwnListing, so only a member does this.
+                if (ShareListing != null && pfAutomation.CapturedLeaderListing() is { } held)
+                    ShareListing(held);
 
                 _ = Task.Run(async () =>
                 {

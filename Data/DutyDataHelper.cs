@@ -135,6 +135,36 @@ namespace PfPresets
         /// FATE listing names its zone, a deep dungeon listing its dungeon, a treasure hunt its map
         /// and a Gold Saucer listing its game. Null when there is nothing specific to name.
         /// </summary>
+        /// <summary>
+        /// What a Party Finder listing is for, as an entry this helper knows: an ordinary duty by its
+        /// row, or - for the categories that number their own content - the FATE zone, deep dungeon,
+        /// treasure map or Gold Saucer game its id points at. Null for a roulette or a whole
+        /// category. What <see cref="IsDutyUnlocked"/> is asked about, so a FATE listing is locked
+        /// exactly when its zone cannot be reached.
+        /// </summary>
+        public DutyEntry? ListingDutyEntry(int category, int dutyType, uint dutyId)
+        {
+            if (dutyId == 0)
+                return null;
+            if (dutyType == 2)
+                return GetDutyEntry(dutyId);
+            if (dutyType == 1)
+                return null;
+
+            EnsureLoaded();
+            Func<DutyEntry, bool>? inSpace = category switch
+            {
+                512 => d => IsFateZoneRowId(d.RowId),
+                8192 => d => IsDeepDungeonRowId(d.RowId),
+                1024 => d => IsTreasureMapRowId(d.RowId),
+                256 => d => IsGoldSaucerRowId(d.RowId),
+                _ => null,
+            };
+            return inSpace == null || cachedDuties == null
+                ? null
+                : cachedDuties.FirstOrDefault(d => inSpace(d) && GameDutyId(d) == dutyId);
+        }
+
         public string? ListingDutyName(int category, int dutyType, uint dutyId)
         {
             if (dutyId == 0)
@@ -258,6 +288,36 @@ namespace PfPresets
             "AAC Heavyweight M2 (Savage)",
             "AAC Heavyweight M1 (Savage)"
         };
+
+        private uint? newAdventurerIcon;
+
+        /// <summary>
+        /// The game's New Adventurer sprout - the icon the Party Finder puts in front of a listing
+        /// that welcomes beginners - read from the online status sheet rather than hard-coded, so a
+        /// patch that renumbers icons does not leave a blank. 0 when the sheet has no such status.
+        /// </summary>
+        public uint NewAdventurerIcon()
+        {
+            if (newAdventurerIcon is { } known)
+                return known;
+
+            uint icon = 0;
+            var sheet = dataManager.GetExcelSheet<Lumina.Excel.Sheets.OnlineStatus>();
+            foreach (var row in sheet)
+            {
+                if (row.Name.ExtractText().Equals("New Adventurer", StringComparison.OrdinalIgnoreCase))
+                {
+                    icon = row.Icon;
+                    break;
+                }
+            }
+            // The sheet names are in the client's language; row 32 is New Adventurer in every one.
+            if (icon == 0 && sheet.TryGetRow(32, out var fallback))
+                icon = fallback.Icon;
+
+            newAdventurerIcon = icon;
+            return icon;
+        }
 
         /// <summary>An item's item level, or 0 for an item the sheet does not know.</summary>
         public int ItemLevelOf(uint itemId)

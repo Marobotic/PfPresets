@@ -313,7 +313,7 @@ namespace PfPresets
                     l.MinIlvl = u.MinIlvl;
                     l.Objective = u.Objective;
                     l.Conditions = u.Conditions;
-                    l.SearchArea = u.SearchArea;
+                    l.SearchArea = u.SearchArea | (l.SearchArea & 2);   // the lock, see ShareFresh
                     l.Parties = u.Parties;
                     exact.Add(l);
                 }
@@ -392,9 +392,78 @@ namespace PfPresets
             return wanted;
         }
 
+        /// <summary>Listings a detail-only pass tried lately, so one that cannot be read is not
+        /// opened again every few seconds.</summary>
+        private readonly Dictionary<ulong, DateTime> detailTried = new();
+
+        /// <summary>Listings this client has read in full, with how many were in them then.</summary>
+        private readonly Dictionary<ulong, int> detailDone = new();
+
+        /// <summary>
+        /// The alliances on this data centre's board with no full seats yet, or seats whose count
+        /// the list has moved away from - what a pass between reads opens in full. Only from a board
+        /// of the data centre the character is on, since only those listings can be opened. Each is
+        /// offered again at most every few minutes.
+        /// </summary>
+        public IReadOnlyList<ulong> AlliancesMissingDetail()
+        {
+            string here = OwnDataCentre();
+            if (here.Length == 0)
+                return Array.Empty<ulong>();
+
+            var now = DateTime.UtcNow;
+            var b = Board;
+            bool boardIsHere = b != null && string.Equals(b.Dc, here, StringComparison.OrdinalIgnoreCase);
+
+            // Two places this data centre's alliances are known from: the board, when that is the
+            // board on screen, and the listings this client read itself, which are always from
+            // where it stands - so the pass works whichever data centre the tab is showing.
+            var candidates = new Dictionary<ulong, (int Seats, int Seated, int Filled)>();
+            if (boardIsHere)
+            {
+                foreach (var l in b!.Listings)
+                    if (l.OnBoard && l.Parties > 1 && ulong.TryParse(l.Id, out ulong id))
+                        candidates[id] = (l.Slots.Count, l.Slots.Count(x => x.Job > 0), l.SlotsFilled);
+            }
+            lock (gate)
+            {
+                foreach (var (u, at) in seenByLeader.Values)
+                {
+                    if (u.Parties <= 1 || !ulong.TryParse(u.Id, out ulong id) || candidates.ContainsKey(id))
+                        continue;
+                    if (TimeSpan.FromSeconds(u.SecondsRemaining) - (now - at) <= TimeSpan.Zero)
+                        continue;
+                    if (!string.Equals(worlds.GetDataCentre(u.CreatedWorld), here, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    candidates[id] = (u.Slots.Count, u.Slots.Count(x => x.Job > 0), u.SlotsFilled);
+                }
+            }
+
+            var wanted = new List<ulong>();
+            foreach (var (id, c) in candidates)
+            {
+                if (c.Seats >= 16 && c.Seated == c.Filled)
+                    continue;
+                // Read in full by this client already, and nobody has joined or left since.
+                if (detailDone.TryGetValue(id, out int filledThen) && filledThen == c.Filled)
+                    continue;
+                if (detailTried.TryGetValue(id, out var at) && now - at < TimeSpan.FromMinutes(3))
+                    continue;
+                wanted.Add(id);
+            }
+            foreach (ulong id in wanted)
+                detailTried[id] = now;
+            if (detailTried.Count > 500)
+                detailTried.Clear();
+            return wanted;
+        }
+
         /// <summary>A listing read in full during a read of the list: onto the board, and shared.</summary>
         public void TakeDetail(PfAutomation.FreshListing fresh)
         {
+            detailDone[fresh.Id] = fresh.Filled;
+            if (detailDone.Count > 500)
+                detailDone.Clear();
             string id = fresh.Id.ToString();
             ApplyFresh(id, fresh);
             ShareFresh(id, fresh);
@@ -442,6 +511,7 @@ namespace PfPresets
             l.SlotsTotal = fresh.Total;
             l.Parties = fresh.Parties;
             l.Description = fresh.Comment;
+            l.SearchArea |= fresh.JoinConditions & 2;
             l.SecondsRemaining = (int)Math.Max(1, fresh.TimeLeft.TotalSeconds);
             l.CheckedAt = DateTime.UtcNow;
         }
@@ -462,9 +532,12 @@ namespace PfPresets
             lock (gate)
                 seen = seenByLeader.Values.Select(v => v.Listing).FirstOrDefault(u => u.Id == listingId);
 
+            // A listing nobody has uploaded yet - a member sharing the one they joined through - is
+            // described by the game's own copy: the recruiter, their home world, the world it is on.
             string createdWorld = seen?.CreatedWorld ?? onBoard?.CreatedWorld ?? worlds.GetWorldName(fresh.CurrentWorld);
-            string leaderName = seen?.LeaderName ?? onBoard?.LeaderName ?? string.Empty;
-            string leaderWorld = seen?.LeaderWorld ?? onBoard?.LeaderWorld ?? string.Empty;
+            string leaderName = seen?.LeaderName ?? onBoard?.LeaderName ?? fresh.LeaderName;
+            string leaderWorld = seen?.LeaderWorld ?? onBoard?.LeaderWorld
+                ?? (fresh.HomeWorld != 0 ? worlds.GetWorldName(fresh.HomeWorld) : string.Empty);
             if (leaderName.Length == 0 || leaderWorld.Length == 0 || createdWorld.Length == 0)
                 return;
 
@@ -479,19 +552,21 @@ namespace PfPresets
                 LeaderWorld = leaderWorld,
                 CreatedWorld = createdWorld,
                 DutyId = (int)fresh.DutyId,
-                DutyType = seen?.DutyType ?? onBoard?.DutyType ?? 2,
-                Category = seen?.Category ?? onBoard?.Category ?? 0,
+                // A roulette's "duty" is the roulette; everything else is a duty by its own id.
+                DutyType = seen?.DutyType ?? onBoard?.DutyType ?? (fresh.Category == 2 ? 1 : 2),
+                Category = seen?.Category ?? onBoard?.Category ?? (int)fresh.Category,
                 Description = fresh.Comment.Length > DescriptionMax ? fresh.Comment[..DescriptionMax] : fresh.Comment,
                 MinIlvl = fresh.MinItemLevel,
-                Beginners = seen?.Beginners ?? onBoard?.Beginners ?? false,
-                // The listing's own flags as the board already has them: they do not change over a
-                // listing's life, and the game's objective bits sit one place off Dalamud's, which
-                // is what the board stores.
-                Objective = seen?.Objective ?? onBoard?.Objective ?? 0,
-                Conditions = seen?.Conditions ?? onBoard?.Conditions ?? 0,
-                LootRules = seen?.LootRules ?? onBoard?.LootRules ?? 0,
-                SearchArea = seen?.SearchArea ?? onBoard?.SearchArea ?? 0,
-                DutySettings = seen?.DutySettings ?? onBoard?.DutySettings ?? 0,
+                Beginners = seen?.Beginners ?? onBoard?.Beginners ?? fresh.Beginners,
+                // The game's flags and Dalamud's are the same bits, so the fresh copy fills in
+                // whatever the board does not have yet.
+                Objective = seen?.Objective ?? onBoard?.Objective ?? fresh.Objective,
+                Conditions = seen?.Conditions ?? onBoard?.Conditions ?? fresh.Completion,
+                LootRules = seen?.LootRules ?? onBoard?.LootRules ?? fresh.LootRule,
+                // Plus the private flag, which only a read of the listing itself carries - the list
+                // never says it, so this is how a private listing gets its lock for everybody.
+                SearchArea = (seen?.SearchArea ?? onBoard?.SearchArea ?? fresh.JoinConditions) | (fresh.JoinConditions & 2),
+                DutySettings = seen?.DutySettings ?? onBoard?.DutySettings ?? fresh.DutySettings,
                 Parties = fresh.Parties,
                 Slots = slots,
                 SlotsFilled = fresh.Filled,

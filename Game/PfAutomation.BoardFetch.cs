@@ -198,6 +198,57 @@ namespace PfPresets
             return read;
         }
 
+        /// <summary>
+        /// Reads listings in full on their own, without reading the list - the alliances the board
+        /// is missing seats for, between reads. Refused (0) whenever a read of the list could not
+        /// run either. Stops the moment <paramref name="playerBack"/> says the player is back.
+        /// </summary>
+        public async Task<int> ReadListingsInFullAsync(IReadOnlyList<ulong> ids, Action<FreshListing> onDetail,
+            Func<bool>? playerBack = null)
+        {
+            if (ids.Count == 0 || disposed)
+                return 0;
+            // Opening a listing can bring the list up with it; if the player did not have it open,
+            // it is kept out of sight like a read's, and shut again afterwards.
+            bool listWasOpen = false;
+            bool go = await framework.RunOnFrameworkThread(() =>
+            {
+                if (!CanFetchBoardNow(out _))
+                    return false;
+                unsafe { listWasOpen = GetBoardAddon() != null; }
+                isFetchingBoard = true;
+                hideBoardWindow = !listWasOpen;
+                return true;
+            });
+            if (!go)
+                return 0;
+
+            fetchAbort = playerBack;
+            try
+            {
+                return await ReadDetailsHiddenAsync(ids, onDetail);
+            }
+            finally
+            {
+                fetchAbort = null;
+                if (!listWasOpen)
+                {
+                    await framework.RunOnFrameworkThread(() =>
+                    {
+                        unsafe
+                        {
+                            RestoreBoardWindow(GetBoardAddon());
+                            var agent = AgentLookingForGroup.Instance();
+                            if (agent != null && GetBoardAddon() != null)
+                                agent->Hide();
+                        }
+                    });
+                }
+                hideBoardWindow = false;
+                isFetchingBoard = false;
+            }
+        }
+
         /// <summary>Puts a read's window back where the player had it, visible, so that is what
         /// the game saves when it closes.</summary>
         private unsafe void RestoreBoardWindow(AtkUnitBase* addon)

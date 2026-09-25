@@ -102,9 +102,27 @@ namespace PfPresets
             if (!automation.CanJoinParty(out string blocked))
                 return (true, false, "Join", blocked);
 
+            // Content this character has not unlocked - a duty, or for a FATE listing the zone -
+            // cannot be joined; the button says so rather than letting the game refuse it.
+            var what = duties.ListingDutyEntry(listing.Category, listing.DutyType, (uint)Math.Max(0, listing.DutyId));
+            if (what != null && !duties.IsDutyUnlocked(what))
+                return (true, false, "Join", listing.Category == 512
+                    ? "You haven't unlocked this FATE zone - attune to its aetheryte first."
+                    : "You haven't unlocked this duty.");
+
+            // Everyone going in has to be high enough level for the duty, and the button says so
+            // before it is pressed rather than after.
+            if (listing.DutyType == 2 && UnderLevel(what) is { } low)
+                return (true, false, "Join", low);
+
+            int group = automation.JoiningGroupJobs().Count;
             return (true, true, "Join",
-                "Join now, on this data centre.\n\nChecks the listing as it stands this second first - the seats, "
-                + "your job, item level and completion - and says why if it can't let you in.");
+                (group > 1
+                    ? $"Join now with your party of {group}, on this data centre.\n\nChecks the listing as it stands "
+                      + "this second first - a seat that takes each of your party's jobs, one per job, item level "
+                      + "and completion - and says why if it can't let you in."
+                    : "Join now, on this data centre.\n\nChecks the listing as it stands this second first - the "
+                      + "seats, your job, item level and completion - and says why if it can't let you in."));
         }
 
         /// <summary>The last result for this listing, while it is recent enough to show.</summary>
@@ -225,7 +243,7 @@ namespace PfPresets
                 PfAutomation.JoinOutcome.JoinUnavailable => ("Can't join: the Join button isn't available on this listing.", false),
                 PfAutomation.JoinOutcome.ListingMissing => ("This party is no longer listed.", false),
                 PfAutomation.JoinOutcome.NotNow => ("Can't join right now - you're recruiting, or in a duty, a queue or combat.", false),
-                PfAutomation.JoinOutcome.InParty => ("Leave your current party to join another.", false),
+                PfAutomation.JoinOutcome.InParty => ("Only your party's leader can join another party, with everyone.", false),
                 PfAutomation.JoinOutcome.Busy => ("PF Analysis is busy with another party. Try again in a moment.", false),
                 PfAutomation.JoinOutcome.PasswordPrompt => ("The game didn't ask for the password. Try again.", false),
                 PfAutomation.JoinOutcome.NotAccepted when gameSaid != null => ($"The game refused: {gameSaid}", false),
@@ -294,11 +312,14 @@ namespace PfPresets
                 && !string.Equals(listingWorld, currentWorld(), StringComparison.OrdinalIgnoreCase))
                 return $"this party only takes players on {listingWorld}.";
 
-            var duty = duties.GetDutyEntry(f.DutyId);
+            // Resolved the way the board resolves it: a FATE, deep dungeon, treasure map or Gold
+            // Saucer listing's id is not a duty row, and looking it up as one names the wrong thing.
+            int kind = f.Category == 2 ? 1 : (f.Category & (512 | 8192 | 1024 | 256)) != 0 ? 0 : 2;
+            var duty = duties.ListingDutyEntry((int)f.Category, kind, f.DutyId);
             if (duty != null)
             {
-                if (duty.ClassJobLevelRequired > 0 && level > 0 && level < duty.ClassJobLevelRequired)
-                    return $"{duty.Name} needs level {duty.ClassJobLevelRequired}; your {job.Abbreviation} is {level}.";
+                if (UnderLevel(duty) is { } low)
+                    return low;
                 if (!duties.IsDutyUnlocked(duty))
                     return $"you haven't unlocked {duty.Name}.";
             }
@@ -311,7 +332,7 @@ namespace PfPresets
             }
 
             const byte Complete = 2, Incomplete = 4;
-            if ((f.Completion & (Complete | Incomplete)) != 0 && automation.DutyCompleted(f.DutyId) is { } done)
+            if ((f.Completion & (Complete | Incomplete)) != 0 && (kind == 2 && duty != null ? automation.DutyCompleted(duty.RowId) : null) is { } done)
             {
                 string name = duty?.Name ?? "this duty";
                 if ((f.Completion & Complete) != 0 && !done)
@@ -320,31 +341,107 @@ namespace PfPresets
                     return $"the party is for players who haven't completed {name} yet.";
             }
 
-            bool seatFits = false;
+            // WHO GOES IN: this character, and - when leading a party - everybody in it. The game
+            // takes the whole group into the listing or nobody, so every one of them needs a seat.
+            var group = automation.JoiningGroupJobs();
+            string where = partyName != null ? $" in {partyName}" : string.Empty;
+
+            var openSeats = new List<int>();
             var openRoles = new SortedSet<string>();
             for (int i = from; i < end; i++)
             {
                 if (f.Jobs[i] != 0 || f.Masks[i] == 0)
                     continue;
-                if (PfAutomation.MaskTakesJob(f.Masks[i], jobId))
-                    seatFits = true;
+                openSeats.Add(i);
                 foreach (string role in RolesIn(f.Masks[i]))
                     openRoles.Add(role);
             }
-            if (!seatFits)
+            string takes = openRoles.Count > 0 ? $" Open seats take {string.Join(", ", openRoles)}." : string.Empty;
+
+            if (group.Count > openSeats.Count)
+                return $"there {(openSeats.Count == 1 ? "is 1 open seat" : $"are {openSeats.Count} open seats")}{where}, "
+                    + $"and your party is {group.Count}.";
+
+            // Everyone into a different seat that takes their job - a matching, not first come first
+            // served, so a seat that takes anybody is not spent on someone a narrower one would fit.
+            var unseated = UnseatedJobs(group, openSeats.Select(i => f.Masks[i]).ToList());
+            if (unseated.Count > 0)
             {
-                string takes = openRoles.Count > 0 ? $" Open seats take {string.Join(", ", openRoles)}." : string.Empty;
-                return $"no open seat{(partyName != null ? $" in {partyName}" : string.Empty)} takes {job.Abbreviation}.{takes}";
+                string names = string.Join(" and ", unseated.Select(j => JobData.FindById(j)?.Abbreviation ?? "?"));
+                return group.Count == 1
+                    ? $"no open seat{where} takes {job.Abbreviation}.{takes}"
+                    : $"no open seat{where} takes your {names}.{takes}";
             }
 
-            // One per job counts the whole listing - an alliance's rule spans all its parties.
-            if ((f.JoinConditions & OnePerJob) != 0 && f.Jobs.Contains(jobId))
-                return $"it's one player per job, and there's already a {job.Abbreviation}.";
+            // One per job counts the whole listing - an alliance's rule spans all its parties - and
+            // the group itself: two of the same job cannot both go in.
+            if ((f.JoinConditions & OnePerJob) != 0)
+            {
+                var clash = group.Where(j => f.Jobs.Contains(j)).Distinct().ToList();
+                var twice = group.GroupBy(j => j).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+                if (clash.Count > 0)
+                    return $"it's one player per job, and there's already a {string.Join(" and ", clash.Select(j => JobData.FindById(j)?.Abbreviation ?? "?"))}.";
+                if (twice.Count > 0)
+                    return $"it's one player per job, and your party has two {string.Join(" and ", twice.Select(j => JobData.FindById(j)?.Abbreviation ?? "?"))}.";
+            }
 
             if (!f.JoinEnabled)
                 return "the game isn't offering Join Party on this listing for you.";
 
             return null;
+        }
+
+        /// <summary>
+        /// Why the group cannot go into this duty on level, or null when everyone is high enough:
+        /// this character and, when leading a party, every member on the job they are on now.
+        /// </summary>
+        private string? UnderLevel(DutyEntry? duty)
+        {
+            if (duty == null || duty.ClassJobLevelRequired <= 0)
+                return null;
+
+            var low = automation.JoiningGroupMembers()
+                .Where(m => m.Level > 0 && m.Level < duty.ClassJobLevelRequired)
+                .Select(m => $"{(m.Name == "You" ? "your" : displayName(m.Name) + "'s")} "
+                    + $"{JobData.FindById(m.JobId)?.Abbreviation ?? "job"} is {m.Level}")
+                .ToList();
+            if (low.Count == 0)
+                return null;
+
+            return $"{duty.Name} needs level {duty.ClassJobLevelRequired}; {string.Join(", ", low)}.";
+        }
+
+        /// <summary>
+        /// The jobs that cannot be given a seat of their own, once everybody else has been placed as
+        /// well as they can be - empty when the whole group fits. Kuhn's augmenting paths: at most
+        /// eight people and eight seats, so exact and instant.
+        /// </summary>
+        private static List<uint> UnseatedJobs(List<uint> jobs, List<ulong> seatMasks)
+        {
+            var seatOf = new int[seatMasks.Count];
+            Array.Fill(seatOf, -1);
+
+            bool Place(int person, bool[] tried)
+            {
+                for (int seat = 0; seat < seatMasks.Count; seat++)
+                {
+                    if (tried[seat] || !PfAutomation.MaskTakesJob(seatMasks[seat], jobs[person]))
+                        continue;
+                    tried[seat] = true;
+                    if (seatOf[seat] < 0 || Place(seatOf[seat], tried))
+                    {
+                        seatOf[seat] = person;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            var unseated = new List<uint>();
+            for (int person = 0; person < jobs.Count; person++)
+                if (!Place(person, new bool[seatMasks.Count]))
+                    unseated.Add(jobs[person]);
+            return unseated;
         }
 
         private static IEnumerable<string> RolesIn(ulong mask)

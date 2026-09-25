@@ -204,6 +204,54 @@ namespace PfPresets
             }
         }
 
+        // ── Alliances in full, between reads ─────────────────────
+        //
+        // THE READ IS NOT ENOUGH ON ITS OWN. An alliance is only known seat by seat once somebody
+        // opens it, and a read only does that at its end - a read that is skipped because someone
+        // else read a moment ago, cut short when the player comes back, or done by hand in the
+        // game's window never gets there, and those are most reads. So the alliances this
+        // character's data centre is missing are read on their own, whenever there is a quiet
+        // moment, regardless of who read the list last.
+
+        private DateTime nextDetailCheck = DateTime.MinValue;
+        private bool detailRunning;
+
+        private void TickDetails()
+        {
+            var now = DateTime.UtcNow;
+            if (detailRunning || running || now < nextDetailCheck)
+                return;
+            nextDetailCheck = now + TimeSpan.FromSeconds(20);
+
+            if (activity.IdleFor < QuietBeforeRead || !automation.CanFetchBoardNow(out _))
+                return;
+
+            var ids = board.AlliancesMissingDetail();
+            if (ids.Count == 0)
+                return;
+
+            detailRunning = true;
+            var startedAt = DateTime.UtcNow;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    int read = await automation.ReadListingsInFullAsync(ids, board.TakeDetail,
+                        playerBack: () => activity.LastInput > startedAt).ConfigureAwait(false);
+                    if (read > 0)
+                        log.Information($"[PF Board] Read {read} alliance{(read == 1 ? "" : "s")} in full between reads.");
+                }
+                catch (Exception ex)
+                {
+                    log.Warning(ex, "[PF Board] Reading alliances in full failed.");
+                }
+                finally
+                {
+                    detailRunning = false;
+                }
+            });
+        }
+
         public void Tick()
         {
             TickBrowse();
@@ -214,6 +262,8 @@ namespace PfPresets
                 Status = "Off: Party Finder sharing is off.";
                 return;
             }
+
+            TickDetails();
 
             bool active = config.PfActiveShareEnabled;
             bool idle = activity.IdleFor >= IdleAfter;

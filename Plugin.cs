@@ -186,6 +186,7 @@ namespace PfPresets
 
             // A member whose game has lost the leader's listing reads it from the board instead.
             this.pfAutomation.LeaderListingFallback = this.pfBoard.LeaderListing;
+            this.pfCrowdsource.ShareListing = fresh => this.pfBoard.ShareFresh(fresh.Id.ToString(), fresh);
 
             // When the player last touched anything - shared by the board's reads and coordination.
             this.inputActivity = new InputActivity(keyState, pluginLog);
