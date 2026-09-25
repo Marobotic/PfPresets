@@ -32,8 +32,10 @@ namespace PfPresets
         /// <summary>Anything that draws over the whole window, before the frame ends.</summary>
         partial void DrawPanelOverlay();
 
+#if PFP_RATINGS
         /// <summary>Appends any tabs an optional component contributes to the shared list.</summary>
         partial void AddExtraTabs(System.Collections.Generic.List<(string, Dalamud.Interface.FontAwesomeIcon, MainTab)> tabs);
+#endif
 
         /// <summary>
         /// Draws the body for an extra tab when one is selected, and says so via `handled`.
@@ -46,6 +48,7 @@ namespace PfPresets
         /// <summary>An extra block at the foot of the settings tab.</summary>
         partial void DrawPanelSettings();
 
+#if PFP_RATINGS
         /// <summary>
         /// Moderator controls beside the site links on a profile card.
         ///
@@ -53,5 +56,6 @@ namespace PfPresets
         /// took so the site icons can shuffle left by exactly that much.
         /// </summary>
         partial void DrawSubjectActions(CharacterIdentity who, float rowY, ref float right);
+#endif
     }
 }

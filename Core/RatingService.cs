@@ -9,20 +9,6 @@ using Dalamud.Plugin.Services;
 
 namespace PfPresets
 {
-    /// <summary>What happened to a rating the user tried to submit, in terms the UI can show.</summary>
-    internal enum SubmitOutcome
-    {
-        Submitted,
-        OnCooldown,
-        OptedOut,
-        RateLimited,
-        Offline,
-        Rejected,
-
-        /// <summary>The target isn't someone this player has finished a duty with.</summary>
-        NotMet,
-    }
-
     /// <summary>Why a report did or didn't go out, in terms the dialog can explain.</summary>
     internal enum ReportOutcome
     {
@@ -44,50 +30,6 @@ namespace PfPresets
         public TimeSpan? RetryAfter { get; init; }
 
         public bool Ok => Outcome == ReportOutcome.Sent;
-    }
-
-    internal readonly struct SubmitResult
-    {
-        public SubmitOutcome Outcome { get; init; }
-        public double WeightApplied { get; init; }
-        public DateTime? NextEligibleAt { get; init; }
-
-        /// <summary>What the server said to show, when it said anything.</summary>
-        public string ServerMessage { get; init; }
-
-        /// <summary>
-        /// The server's wording wins.
-        ///
-        /// The sentences below are a fallback for when there is nothing to prefer - an unreachable
-        /// server, or one too old to send one. Everything else is worded on the server so it can be
-        /// corrected without thirty thousand people updating first.
-        /// </summary>
-        public string Message => !string.IsNullOrWhiteSpace(ServerMessage)
-            ? ServerMessage
-            : LocalMessage;
-
-        private string LocalMessage => Outcome switch
-        {
-            SubmitOutcome.Submitted => WeightApplied >= 0.999
-                ? "Rated."
-                : $"Rated, at {WeightApplied:0.##}x weight.",
-            SubmitOutcome.OnCooldown => NextEligibleAt is { } t
-                ? $"Already rated. You can rate them again {Humanise(t)}."
-                : "Already rated in the last 24 hours.",
-            SubmitOutcome.OptedOut => "They've opted out of ratings.",
-            SubmitOutcome.NotMet => "You can only rate people you've played with.",
-            SubmitOutcome.RateLimited => "Too many ratings just now. Try again shortly.",
-            SubmitOutcome.Offline => "Couldn't reach the rating server.",
-            _ => "That rating couldn't be sent.",
-        };
-
-        private static string Humanise(DateTime whenUtc)
-        {
-            var left = whenUtc - DateTime.UtcNow;
-            if (left <= TimeSpan.Zero) return "now";
-            if (left.TotalHours >= 1) return $"in {left.TotalHours:0} hour(s)";
-            return $"in {Math.Max(1, left.TotalMinutes):0} minute(s)";
-        }
     }
 
     /// <summary>
@@ -135,10 +77,6 @@ namespace PfPresets
         /// a gate that lives in the UI is a gate every new screen can forget.</summary>
         private readonly EncounterStore encounters;
 
-        /// <summary>What this install has rated. Consulted alongside the cooldown list so the lock
-        /// survives either file being lost.</summary>
-        private readonly RatingHistory history;
-
         /// <summary>The permanent player list, which doubles as the on-disk cache for jobs and for
         /// the last rating seen. Survives a reload, unlike the in-memory caches here.</summary>
         private readonly PlayerHistory players;
@@ -159,22 +97,17 @@ namespace PfPresets
 
         private readonly CancellationTokenSource cancel = new();
 
-        public RatingPolicy Policy { get; private set; } = RatingPolicy.Default;
-
         /// <summary>The rating server actually in use, surfaced so settings can show it.</summary>
         public string Endpoint => api.Endpoint;
 
         public RatingService(PfApiClient api, Configuration config, IPluginLog log,
-            EncounterStore encounters, RatingHistory history, VoteQueue votes,
-            PlayerHistory players)
+            EncounterStore encounters, PlayerHistory players)
         {
             this.api = api;
             this.players = players;
-            this.votes = votes;
             this.config = config;
             this.log = log;
             this.encounters = encounters;
-            this.history = history;
 
             // The two clears lists. Built here because they need the api and the log, and defined
             // in RatingService.Achievements.cs so everything that reads them stays in one file.
@@ -183,15 +116,7 @@ namespace PfPresets
             SavageClears = savage;
             UltimateClears = ultimate;
 
-            // Recover Recent players for installs that rated before the history file existed,
-            // and put job icons on anything still missing one.
-            history.SeedFrom(config.LocalCooldowns, encounters.LastKnownJob);
-            history.BackfillJobs(encounters.LastKnownJob);
-            PruneLocalCooldowns();
             _ = Task.Run(PumpAsync);
-            _ = Task.Run(FlushVotesAsync);
-            _ = Task.Run(LoadPolicyAsync);
-            _ = Task.Run(RefreshStatsAsync);
         }
 
         // ══════════════════════════════════════════════════════════
@@ -342,7 +267,7 @@ namespace PfPresets
                     if (!config.CommunityEnabled || pending.IsEmpty)
                         continue;
 
-                    var batch = TakeBatch(Math.Max(1, Policy.BatchMax));
+                    var batch = TakeBatch(32);
                     if (batch.Count == 0)
                         continue;
 
@@ -426,44 +351,9 @@ namespace PfPresets
                 players.RememberRating(who, value);
         }
 
-        private async Task LoadPolicyAsync()
-        {
-            try
-            {
-                var result = await api.GetPolicyAsync().ConfigureAwait(false);
-                if (result.IsOk)
-                    Policy = result.Value!;
-            }
-            catch (Exception)
-            {
-                // The defaults are correct as of this build; a fetch failure just means the client
-                // explains the rules using them instead of the server's current numbers.
-            }
-        }
-
         // ══════════════════════════════════════════════════════════
         //  COOLDOWN (client side)
         // ══════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// When the local player may next rate this target, or null if they may now.
-        ///
-        /// ALWAYS NULL ONCE THEY HAVE RATED THEM, which is to say: always null in every case this
-        /// used to answer. It greyed the button out for a day after a vote so the refusal was
-        /// instant rather than a round-trip, and that was right while a second vote was a second
-        /// vote. It is not any more - a vote is a position now, one per person, and pressing the
-        /// other arrow REPLACES the one you hold rather than adding to it. The server allows that
-        /// with no wait at all (see the revision path in submitVote), so a client that greys the
-        /// button for twenty-four hours is enforcing a rule nothing else has, and the feature it
-        /// blocks is the whole point of the change.
-        ///
-        /// Kept as a method rather than deleted because the surfaces that call it want to ask the
-        /// question, and because the server can still say no for reasons this cannot see - a vote
-        /// of theirs that was held rather than applied, a duty they have not shared. Those come
-        /// back as SubmitOutcome.OnCooldown carrying the server's own nextEligibleAt, which is the
-        /// answer that was always authoritative anyway.
-        /// </summary>
-        public DateTime? LocalCooldownUntil(CharacterIdentity who) => null;
 
         /// <summary>Forces a timestamp to UTC. A value round-tripped through JSON can come back
         /// Unspecified or Local, and comparing that against UtcNow is wrong by the offset.</summary>
@@ -474,59 +364,6 @@ namespace PfPresets
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
         };
 
-        /// <summary>
-        /// The people who can actually be rated right now: met in a duty inside the rating window,
-        /// and not already rated in the last 24 hours.
-        ///
-        /// The cooldown check is the important half. The encounter log's per-member "rated" flag
-        /// is a UI convenience and is scoped to one encounter; the cooldown is the real rule and
-        /// lives in the config, which survives a reload. Filtering on the flag alone is what let a
-        /// reload re-offer people who had already been rated that day.
-        /// </summary>
-        public List<Contact> EligibleToRate()
-        {
-            var candidates = encounters.EligibleToVote();
-            var result = new List<Contact>(candidates.Count);
-
-            // A hidden player - banned, or opted out - is dropped before the list is built rather
-            // than shown and refused. The server rejects the vote either way, but offering somebody
-            // a button that always fails is worse than not offering it: nothing about the refusal
-            // would tell the voter why, and "the plugin is broken" is the reasonable conclusion.
-            foreach (var c in candidates)
-            {
-                if (!IsRateableNow(c.Identity))
-                    continue;
-
-                // THE ALLOWANCE APPLIES HERE TOO, and leaving it out of this list was the hole.
-                //
-                // The post-duty window was gated on the server's answer and this list was not - so
-                // the same people the window refused to offer were sitting in "You can still rate
-                // these" on the profile tab, votable, a click away. Gating one surface and not the
-                // other is not a weaker rule, it is no rule: anybody could simply use the other
-                // door. This is the one function both surfaces build their list from, which is why
-                // the check belongs here rather than in either of them.
-                //
-                // MayVoteOn answers true when there is no allowance on file, so a duty that
-                // finished before this build, or one filed while the server was unreachable,
-                // behaves exactly as it always did.
-                if (!MayVoteOn(c.EncounterId, c.Identity))
-                    continue;
-
-                result.Add(c);
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Seals the duty this vote came out of into the request.
-        ///
-        /// A partial with no implementation in this repository, so an ordinary build erases both
-        /// the method and the call - see the note at the call site for why that is the right
-        /// failure rather than a broken one.
-        /// </summary>
-        partial void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence);
-
         /// <summary>Seals a statement about this character's own settings. Erased, with every call
         /// to it, in a build without the evidence component.</summary>
         partial void BuildSettingEvidence(string kind, ref string evidence);
@@ -534,36 +371,6 @@ namespace PfPresets
         /// <summary>Whether the local player has finished a duty with this character. Rating is
         /// only ever offered for people this returns true for.</summary>
         public bool HasMet(CharacterIdentity who) => encounters.HasMet(who);
-
-        public bool CanRate(CharacterIdentity who)
-            => HasMet(who) && IsRateableNow(who);
-
-        /// <summary>
-        /// Whether a rating button should be offered for someone the player has already met.
-        ///
-        /// THE ONE RULE, and it is one rule because it was two and they disagreed. The Ratings tab
-        /// dropped anybody the server had told us was hidden - banned, or opted out - and the
-        /// post-duty prompt only checked the local cooldown, so somebody who had opted out was
-        /// filtered out of one list and offered an up and a down arrow in the other.
-        ///
-        /// Answered from the rating cache, which is filled by <see cref="Prefetch"/> - the client
-        /// sends the roster, the server answers with each character's state, and this reads that
-        /// answer. An identity nobody has looked up yet reads as rateable, deliberately: the row
-        /// stands until the lookup lands and then goes, which is the right way round. Refusing to
-        /// draw anything until every answer is in would leave the prompt blank for a second after
-        /// every duty.
-        ///
-        /// It does not enforce anything. The server rejects a vote for a hidden character whatever
-        /// the client believes; this exists so nobody is shown a button that cannot work.
-        /// </summary>
-        public bool IsRateableNow(CharacterIdentity who)
-        {
-            if (LocalCooldownUntil(who) != null)
-                return false;
-
-            var cached = Get(who);
-            return cached?.Hidden != true && cached?.OptedOut != true;
-        }
 
         /// <summary>
         /// Whether this character is hidden from the community half: banned, or opted out.
@@ -577,354 +384,13 @@ namespace PfPresets
         /// </summary>
         public bool IsHidden(CharacterIdentity who) => Get(who)?.Hidden == true;
 
-        /// <summary>
-        /// Records that a rating just happened, stamped from our own clock.
-        ///
-        /// Deliberately not derived from the server's nextEligibleAt by subtracting the cooldown:
-        /// that timestamp arrives through JSON with whatever DateTimeKind the parser felt like,
-        /// and an hour's drift there silently reopens the window early.
-        /// </summary>
-        private void RecordLocalCooldown(CharacterIdentity who)
-        {
-            config.LocalCooldowns[who.Key] = DateTime.UtcNow;
-            config.Save();
-        }
-
-        /// <summary>Drops cooldown entries that have expired, so the config doesn't accumulate an
-        /// entry for every player ever rated.</summary>
-        private void PruneLocalCooldowns()
-        {
-            var cutoff = DateTime.UtcNow.AddHours(-Math.Max(1, Policy.CooldownHours));
-            var stale = new List<string>();
-            foreach (var kvp in config.LocalCooldowns)
-            {
-                if (Normalise(kvp.Value) < cutoff)
-                    stale.Add(kvp.Key);
-            }
-
-            if (stale.Count == 0)
-                return;
-
-            foreach (var key in stale)
-                config.LocalCooldowns.Remove(key);
-            config.Save();
-        }
-
         // ══════════════════════════════════════════════════════════
         //  WRITES
         // ══════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Submits a rating. Returns a result the UI can show verbatim; nothing here throws.
-        /// The weight sent alongside is advisory - the server recomputes it from its own ledger,
-        /// because a client-supplied weight is a client-controlled weight.
-        /// </summary>
-        public async Task<SubmitResult> SubmitAsync(
-            CharacterIdentity target,
-            VoteDirection vote,
-            int tags,
-            int dutyRowId,
-            SocialLink socialLink,
-            DateTime metAtUtc)
-        {
-            // Enforced here rather than only in the UI: every rating path goes through this
-            // method, so this is the one place the rule cannot be routed around.
-            if (!HasMet(target))
-                return new SubmitResult { Outcome = SubmitOutcome.NotMet };
-
-            // OPTED OUT, AND WE ALREADY KNOW IT. Checked here rather than only in the list builder,
-            // because the list is filtered from whatever the last lookup said and the lookup for a
-            // freshly met player lands a frame or two after the row is drawn - so there is a real
-            // window where the button exists for somebody who is out of this. The server refuses
-            // the vote either way; what this stops is the vote being cast at all, and with it the
-            // queue entry, the sealed evidence naming them, and the retry loop behind both.
-            //
-            // Deliberately not enqueued and not retried: an opt-out is not a transient failure.
-            if (Get(target) is { } known && (known.OptedOut || known.Hidden))
-                return new SubmitResult { Outcome = SubmitOutcome.OptedOut };
-
-            if (LocalCooldownUntil(target) is { } until)
-                return new SubmitResult { Outcome = SubmitOutcome.OnCooldown, NextEligibleAt = until };
-
-            // Taken into the queue first, always - but the queue is a retry buffer now, not a
-            // throttle. Every vote is sent the moment it is cast; the entry exists so that a vote
-            // survives a dropped connection or a restart, and it is removed as soon as the server
-            // has actually answered.
-            var queued = votes.Enqueue(target, vote, tags & RatingTags.KnownMask,
-                dutyRowId, socialLink, metAtUtc);
-
-            int score = vote == VoteDirection.Up ? 1 : -1;
-
-            // ── SEALED NOW, AT THE MOMENT OF THE VOTE, AND KEPT WITH IT ──────────────────────
-            //
-            // This used to be built further down, past the early return below - so a vote that went
-            // into the queue was stored with no evidence at all, and the flush loop tried to build
-            // it later from an encounter store that had already forgotten the duty. It sent an empty
-            // seal and the vote was held.
-            //
-            // Three windows are all one hour long and they defeat each other: the allowance is
-            // twenty-four votes an hour, so vote twenty-five is queued; the store keeps duties for
-            // an hour; and the server will not accept a duty older than an hour. A vote queued for
-            // being over the allowance therefore waits exactly long enough to lose the proof that
-            // would have justified it. Rating a full night of roulettes guaranteed it.
-            //
-            // Sealing here fixes that at the root, because the moment of the vote is the only moment
-            // the claim is actually true: the duty just ended and the party is still known. The seal
-            // is tamper-proof and its nonce is single-use, so keeping one for an hour costs nothing
-            // - and the server now dates the duty against when the vote was CAST rather than when it
-            // happened to arrive.
-            //
-            // A build without the sealing component leaves this empty, and the server holds the vote
-            // for a person to look at rather than refusing it. That is the rule: the client sends
-            // what it has and never decides.
-            string evidence = string.Empty;
-            BuildVoteEvidence(target, score, ref evidence);
-            votes.AttachEvidence(queued, evidence);
-
-            // NOTHING IS WITHHELD HERE ANY MORE. This used to stop and leave the vote for the flush
-            // loop whenever the client believed it was over its allowance, which is how votes came
-            // to sit in a queue long enough to lose their seal and then be deleted for the wait.
-            //
-            // The client cannot know where the line is - it only ever had a copy of the number, and
-            // the copy was wrong. So it sends, and the server, which can see everyone, decides
-            // whether the vote counts now, waits for a person, or is refused.
-            var request = new SubmitRatingRequest
-            {
-                VoteId = queued.VoteId,
-                Target = target,
-                Score = score,
-                Tags = tags & RatingTags.KnownMask,
-                DutyRowId = dutyRowId,
-                SocialLink = socialLink,
-                MetAt = metAtUtc,
-                Evidence = evidence,
-            };
-
-            var result = await api.SubmitAsync(request).ConfigureAwait(false);
-
-            switch (result.Status)
-            {
-                case ApiStatus.Ok:
-                    votes.Accepted(queued);
-                    RecordLocalCooldown(target);
-                    Invalidate(target);
-                    Enqueue(target);
-                    // A 200 whose body didn't parse still means the server took the vote, so this
-                    // stays an accept - only the weight and the next-eligible time are unknown,
-                    // and 1x is the assumption the queued-locally paths above already make.
-                    return new SubmitResult
-                    {
-                        Outcome = SubmitOutcome.Submitted,
-                        WeightApplied = result.Value?.WeightApplied ?? 1d,
-                        NextEligibleAt = result.Value?.NextEligibleAt,
-                    };
-
-                // Held, not failed. The vote is already in the queue and the flush loop will
-                // deliver it, so telling the player it was refused would be false - and an error
-                // for something the plugin has quietly taken care of is exactly what the queue
-                // exists to avoid. The local cooldown is recorded now so the button stops
-                // offering itself in the meantime.
-                case ApiStatus.RateLimited:
-                case ApiStatus.Offline:
-                case ApiStatus.NoSession:
-                case ApiStatus.ServerError:
-                    RecordLocalCooldown(target);
-                    Invalidate(target);
-                    return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
-
-                case ApiStatus.Cooldown:
-                    // The server knows about a rating this client had forgotten - another install,
-                    // or a lost config. Record it locally so the UI stops offering the button.
-                    votes.Failed(queued, permanent: true);
-                    RecordLocalCooldown(target);
-                    var serverUntil = result.RetryAfter.HasValue
-                        ? DateTime.UtcNow.Add(result.RetryAfter.Value)
-                        : (DateTime?)null;
-                    return new SubmitResult
-                    {
-                        Outcome = SubmitOutcome.OnCooldown,
-                        NextEligibleAt = serverUntil,
-                        ServerMessage = result.Message,
-                    };
-
-                case ApiStatus.Refused:
-                    votes.Failed(queued, permanent: true);
-                    Invalidate(target);
-                    return new SubmitResult
-                    {
-                        Outcome = SubmitOutcome.OptedOut,
-                        ServerMessage = result.Message,
-                    };
-
-                // KEPT, NOT REJECTED. BadRequest arrives here, and a malformed request is this
-                // plugin's fault rather than the vote's - the vote is fine, the envelope was not.
-                // Deleting it here is the precise move that lost 1,700 of them.
-                //
-                // Reported as taken, like every other case the queue is quietly handling: the
-                // click did what the player asked, and the flush loop owns it from here. The long
-                // hold keeps a genuine client bug from becoming thousands of identical requests.
-                default:
-                    log.Warning($"[Ratings] Unhandled submit status {result.Status}; keeping the vote for the queue.");
-                    votes.HoldUntil(queued, DateTime.UtcNow + TimeSpan.FromHours(6));
-                    RecordLocalCooldown(target);
-                    Invalidate(target);
-                    return new SubmitResult { Outcome = SubmitOutcome.Submitted, WeightApplied = 1d };
-            }
-        }
-
-        /// <summary>Community-wide totals for the analytics view, or null if unavailable. Cached
-        /// for the session - these are headline numbers, not something to re-fetch per frame.</summary>
-        public RatingStats? Stats { get; private set; }
-
-        public async Task RefreshStatsAsync()
-        {
-            try
-            {
-                var result = await api.GetStatsAsync().ConfigureAwait(false);
-                if (result.IsOk)
-                    Stats = result.Value;
-            }
-            catch (Exception)
-            {
-                // Headline numbers are decoration; failing to get them changes nothing.
-            }
-        }
-
-        /// <summary>
-        /// Sends whatever the hourly allowance permits, forever.
-        ///
-        /// Deliberately unhurried. Queued votes are not urgent - nobody is waiting on one - and a
-        /// tight loop would spend the allowance the instant it refreshes, which is the behaviour
-        /// the pacing exists to prevent. A permanent refusal drops the vote rather than retrying
-        /// it, because the queue is ordered and a stuck head starves everything behind it.
-        /// </summary>
-        private async Task FlushVotesAsync()
-        {
-            while (!cancel.IsCancellationRequested)
-            {
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(20), cancel.Token).ConfigureAwait(false);
-
-                    var next = votes.Next();
-                    if (next == null)
-                        continue;
-
-                    // THE SEAL THE VOTE WAS CAST WITH, not one built now.
-                    //
-                    // Rebuilding it here was the second half of the vote-loss bug. The first half
-                    // was sending no Evidence field at all; the fix for that built one at this
-                    // point, which is an hour or more after the duty ended - by which time the
-                    // encounter store has forgotten it and the builder honestly returns nothing.
-                    // Queued votes went out with an empty seal and were held instead of counted.
-                    //
-                    // It is sealed at the click now and travels with the vote, so this only has to
-                    // carry it. The fallback covers votes queued by an older build, which have no
-                    // seal saved: it will usually come back empty, and that is fine. Empty is sent
-                    // like anything else and the server holds it for a person to decide on.
-                    string evidence = next.Evidence;
-                    if (string.IsNullOrEmpty(evidence))
-                        BuildVoteEvidence(next.Target, next.Score, ref evidence);
-
-                    // SENT EVEN WHEN THERE IS NOTHING TO SEAL, and that is the rule now.
-                    //
-                    // The first version of this fix dropped the vote here when evidence could not
-                    // be built - which is the client deciding a vote is worthless, and the client
-                    // deciding is the whole reason a thousand seven hundred votes went into a bin
-                    // over two days. It is not the client's call. The client sends what it has; the
-                    // server holds anything it cannot verify and a person decides.
-                    var result = await api.SubmitAsync(new SubmitRatingRequest
-                    {
-                        VoteId = next.VoteId,
-                        Target = next.Target,
-                        Score = next.Score,
-                        Tags = next.Tags,
-                        DutyRowId = next.DutyRowId,
-                        SocialLink = next.SocialLink,
-                        MetAt = next.MetAtUtc,
-                        Evidence = evidence,
-                    }).ConfigureAwait(false);
-
-                    switch (result.Status)
-                    {
-                        case ApiStatus.Ok:
-                            votes.Accepted(next);
-                            Invalidate(next.Target);
-                            break;
-
-                        // Still over the line, or unreachable. Keep it - and, when the server said
-                        // how long, wait that long rather than asking again in twenty seconds. A
-                        // daily limit answered every twenty seconds is thousands of requests to be
-                        // told the same thing, and the plugin was doing it to its own server.
-                        case ApiStatus.RateLimited:
-                            votes.HoldUntil(next, DateTime.UtcNow
-                                + (result.RetryAfter ?? TimeSpan.FromMinutes(15)));
-                            break;
-
-                        case ApiStatus.Offline:
-                        case ApiStatus.NoSession:
-                        case ApiStatus.ServerError:
-                            // No Retry-After to go on, and these do pass on their own. A minute is
-                            // long enough that an outage is not hammered and short enough that
-                            // nobody notices the wait.
-                            votes.HoldUntil(next, DateTime.UtcNow + TimeSpan.FromMinutes(1));
-                            break;
-
-                        // Refused for a reason resending cannot change: rating yourself, a
-                        // banned character, a cooldown still running. These are decisions the
-                        // SERVER stated plainly, not guesses made here - anything it was merely
-                        // unsure about it has already kept, so there is nothing left to lose by
-                        // letting these go.
-                        //
-                        // NAMED, rather than left to `default`. They used to share the catch-all
-                        // with BadRequest and with every status a future server might invent, so
-                        // "the server told us this vote is void" and "this build did not
-                        // understand the answer" destroyed the vote identically.
-                        case ApiStatus.Cooldown:
-                        case ApiStatus.Refused:
-                            votes.Failed(next, permanent: true);
-                            break;
-
-                        // ANYTHING ELSE IS KEPT.
-                        //
-                        // BadRequest lands here, and it is the important one: a malformed request
-                        // is a bug in this plugin, not a verdict on the vote. That is exactly how
-                        // 1,700 votes were lost - the queue sent them with no evidence field, the
-                        // server answered 400, and the client read its own bug as a refusal and
-                        // deleted the evidence of it.
-                        //
-                        // A status this build does not recognise lands here too, which is the
-                        // other half: an old plugin must never delete votes because a newer server
-                        // said something it has not been taught yet.
-                        //
-                        // Six hours rather than a minute, because if this IS a client bug then
-                        // retrying hard just means writing the same bad request into the server's
-                        // logs four thousand times a day, which the plugin has done before.
-                        default:
-                            log.Warning($"[Ratings] Unhandled submit status {result.Status}; keeping the vote and retrying later.");
-                            votes.HoldUntil(next, DateTime.UtcNow + TimeSpan.FromHours(6));
-                            break;
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    log.Debug($"[Ratings] Vote flush failed: {ex.Message}");
-                }
-            }
-        }
-
         // ══════════════════════════════════════════════════════════
         //  CHARACTER DETAILS
         // ══════════════════════════════════════════════════════════
-
-        /// <summary>Votes that haven't reached the server yet. Owned here because every rating
-        /// path goes through SubmitAsync, so this is the one place that can guarantee a vote is
-        /// recorded before it is sent.</summary>
-        private readonly VoteQueue votes;
 
         private readonly ConcurrentDictionary<string, CharacterInfo> characters = new();
         private readonly ConcurrentDictionary<string, byte> characterPending = new();
@@ -2048,6 +1514,31 @@ namespace PfPresets
             // The status is carried back rather than flattened to a bool. It used to return
             // true/false, so a rate limit that lasts an hour was shown as "try again in a
             // moment" - which sent people straight back to the button to fail again.
+            return new ReportSendResult
+            {
+                Outcome = result.Status switch
+                {
+                    ApiStatus.Ok => ReportOutcome.Sent,
+                    ApiStatus.RateLimited => ReportOutcome.RateLimited,
+                    ApiStatus.Offline or ApiStatus.NoSession => ReportOutcome.Offline,
+                    _ => ReportOutcome.Failed,
+                },
+                RetryAfter = result.RetryAfter,
+            };
+        }
+
+        /// <summary>A message from the Feedback tab. The server holds the limits (ten an hour).</summary>
+        public async Task<ReportSendResult> SubmitFeedbackAsync(int kind, string message, string contact,
+            CharacterIdentity? from)
+        {
+            var result = await api.SubmitFeedbackAsync(new SubmitFeedbackRequest
+            {
+                Kind = kind,
+                Message = message.Length > 2000 ? message.Substring(0, 2000) : message,
+                Contact = contact.Length > 100 ? contact.Substring(0, 100) : contact,
+                From = from is { IsValid: true } ? from : null,
+            }).ConfigureAwait(false);
+
             return new ReportSendResult
             {
                 Outcome = result.Status switch

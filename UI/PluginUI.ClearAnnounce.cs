@@ -716,6 +716,15 @@ namespace PfPresets
 
                 if (open)
                 {
+                    // TOP OF THE STACK, EVERY FRAME. Painting on the foreground list puts the banner
+                    // over everything, but the mouse goes to whichever WINDOW is on top - and this one
+                    // takes no focus when it appears, so any window focused after it (ours, or any
+                    // other plugin's) sat above it and got every click, while the banner drew over
+                    // them looking clickable. Raising it in the display order each frame makes the
+                    // hit target match what is on screen. Display order only: keyboard focus stays
+                    // wherever the player left it, so nothing they are typing into is interrupted.
+                    ImGuiP.BringWindowToDisplayFront(ImGuiP.GetCurrentWindow());
+
                     // The window may have been clamped back onto the screen, so the rectangle that
                     // gets painted is the one ImGui actually settled on - never the one we asked
                     // for. Otherwise a banner nudged off the edge draws in one place and listens in
@@ -1127,25 +1136,18 @@ namespace PfPresets
                 + "because it cannot tell that you have. Worth it if you raid with the middle of "
                 + "your screen busy; otherwise leave it off and keep the heart.");
 
-            float width = SettingsContentWidth();
-
-            DrawSettingLabelRow("Position",
-                "Nudges the banner from where it sits by default, which is centred and a little "
-                + "above the middle of the screen. Drag left and right across a number to move it, "
-                + "or double-click to type one. A nudge rather than a position, so the default "
-                + "stays right on a screen of any size.", width);
-
+            // Position, as two rows you drag across - an offset is found by moving and looking.
             int offsetX = config.ClearAnnouncementOffsetX;
             int offsetY = config.ClearAnnouncementOffsetY;
             int seconds = Math.Clamp(config.ClearAnnouncementSeconds, 2, 30);
 
-            bool moved = DrawDragNumberRow(width,
-                new DragEntry("Across", -4000, 4000, "px",
-                    "Left and right from the middle of the screen. Negative moves it left."),
-                new DragEntry("Down", -4000, 4000, "px",
-                    "Up and down. Negative moves it towards the top of the screen."),
-                ref offsetX, ref offsetY);
-
+            bool moved = DrawDragRow("Across", ref offsetX, -4000, 4000, "px",
+                "Nudges the banner left and right from where it sits by default - centred, a little "
+                + "above the middle. Negative moves it left. Drag across the number, or double-click "
+                + "to type one.");
+            moved |= DrawDragRow("Down", ref offsetY, -4000, 4000, "px",
+                "Nudges the banner up and down. Negative moves it towards the top of the screen. A "
+                + "nudge rather than a position, so the default stays right on a screen of any size.");
             if (moved)
             {
                 config.ClearAnnouncementOffsetX = offsetX;
@@ -1153,14 +1155,10 @@ namespace PfPresets
                 announceSettingsDirty = true;
             }
 
-            DrawSettingLabelRow("How long it stays",
-                "Seconds at full before it fades out. The rise in and the drift out are on top of "
-                + "this. The countdown pauses while your cursor is on it, so it cannot disappear as "
-                + "you reach for it.", width);
-
-            if (DrawDragNumberRow(width,
-                    new DragEntry("Time", 2, 30, "s", "Seconds at full, before the fade begins."),
-                    ref seconds))
+            if (DrawStepperRow("How long it stays", ref seconds, 2, 30, 1, "s", null,
+                    "Seconds at full before it fades out. The rise in and the drift out are on top of "
+                    + "this. The countdown pauses while your cursor is on it, so it cannot disappear "
+                    + "as you reach for it."))
             {
                 config.ClearAnnouncementSeconds = seconds;
                 announceSettingsDirty = true;
@@ -1176,7 +1174,12 @@ namespace PfPresets
                 + "as boxes. Axis is the game's interface font and covers everything; the plugin's "
                 + "own is what the rest of this window is set in.");
 
-            DrawAnnouncePreviewRow();
+            // The preview: a row with a Play button, playing a sample where a real one would appear.
+            if (DrawButtonRow("Preview", "Plays a sample announcement where a real one would appear, "
+                    + "start to finish - how it arrives, how long it stays and how it leaves. Press "
+                    + "again to restart it.", "Play", FontAwesomeIcon.Play, last: true)
+                && WarmAnnounceFonts())
+                StartAnnouncement(AnnouncePreviewPost, sample: true);
 
             // ONE SAVE PER GESTURE. Dragging across forty pixels writes forty values, and the
             // config file is not something to rewrite forty times for one adjustment - the
@@ -1190,113 +1193,7 @@ namespace PfPresets
             EndSettingsSection();
         }
 
-        /// <summary>
-        /// The Preview button, and the one sentence explaining what it is for.
-        ///
-        /// A BUTTON RATHER THAN A PERMANENT SAMPLE. The sample used to sit on screen for as long as
-        /// this page was open, which answered "where will it be" and nothing else - and where it
-        /// will be is the least of what somebody wants to know before letting a plugin draw over
-        /// their game. What they want is to see the whole thing happen: how it arrives, how long it
-        /// is there, how it leaves. That is a performance, and a performance needs a start.
-        ///
-        /// Pressing it again while one is running restarts it, which is what anybody who missed the
-        /// entrance is going to do.
-        /// </summary>
-        private void DrawAnnouncePreviewRow()
-        {
-            ImGui.Dummy(new Vector2(0, Space.Tight));
 
-            // Gated on the same readiness the real ones are, so the sample cannot demonstrate a
-            // typeface swap that a real announcement would never show. In practice this is always
-            // true by the time anybody can reach the button: the faces have been warming since the
-            // plugin's first frame.
-            if (DrawAccentOutlineButton("Preview##announcepreview", new Vector2(120, ButtonHeight))
-                && WarmAnnounceFonts())
-                StartAnnouncement(AnnouncePreviewPost, sample: true);
-
-            ImGui.SameLine(0, Space.Gutter);
-            ImGui.AlignTextToFramePadding();
-
-            using (UiHelpFont.Push())
-                ImGui.TextColored(Faint,
-                    "Plays a sample where a real one would appear, start to finish.");
-        }
-
-        /// <summary>One entry on a drag row: what it is called, its bounds, its unit, and the
-        /// sentence behind its question mark.</summary>
-        private readonly record struct DragEntry(
-            string Label, int Min, int Max, string Suffix, string Help);
-
-        private bool DrawDragNumberRow(float width, DragEntry a, ref int valueA)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 rowMin = ImGui.GetCursorScreenPos();
-            float x = rowMin.X;
-
-            bool changed = DrawDragEntry(dl, a, ref valueA, rowMin, ref x);
-
-            EndDragRow(dl, rowMin, width);
-            return changed;
-        }
-
-        /// <summary>
-        /// Labelled numbers on one row, each of them draggable.
-        ///
-        /// The same shape as DrawInlinePairRow, which is where the stepper chips came from, with one
-        /// difference that is the whole point: these are dragged. A pixel offset is not a number
-        /// anybody knows in advance - it is a thing you find by moving it and looking - so the
-        /// gesture that finds it has to be continuous. Typing still works, on a double-click, for
-        /// the person who does know.
-        /// </summary>
-        private bool DrawDragNumberRow(float width, DragEntry a, DragEntry b,
-            ref int valueA, ref int valueB)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 rowMin = ImGui.GetCursorScreenPos();
-            float x = rowMin.X;
-
-            bool changed = DrawDragEntry(dl, a, ref valueA, rowMin, ref x);
-            changed |= DrawDragEntry(dl, b, ref valueB, rowMin, ref x);
-
-            EndDragRow(dl, rowMin, width);
-            return changed;
-        }
-
-        private const float DragChipWidth = 78f;
-        private const float DragChipHeight = 26f;
-
-        /// <summary>A label, its chip and its question mark, flowing from <paramref name="x"/> and
-        /// leaving it past the last of them.</summary>
-        private bool DrawDragEntry(ImDrawListPtr dl, DragEntry entry, ref int value,
-            Vector2 rowMin, ref float x)
-        {
-            float centreY = rowMin.Y + SettingRowHeight * 0.5f;
-
-            using (UiBodyFont.Push())
-            {
-                Vector2 ts = ImGui.CalcTextSize(entry.Label);
-                dl.AddText(new Vector2(x, centreY - ts.Y * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Dim), entry.Label);
-                x += ts.X + Space.Tight;
-            }
-
-            bool changed = DrawDragNumberChip($"drag{entry.Label}", ref value, entry.Suffix,
-                entry.Min, entry.Max,
-                new Vector2(x, centreY - DragChipHeight * 0.5f),
-                new Vector2(DragChipWidth, DragChipHeight));
-
-            x += DragChipWidth + Space.Tight;
-            DrawRowHelpMark($"drag{entry.Label}", entry.Help, new Vector2(x, centreY));
-            x += 18f + Space.Gutter;
-
-            return changed;
-        }
-
-        private static void EndDragRow(ImDrawListPtr dl, Vector2 rowMin, float width)
-        {
-            DrawRowSeparator(dl, rowMin, SettingRowHeight, 0f, rowMin.X + width);
-            ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMin.Y + SettingRowHeight));
-        }
 
         /// <summary>Which chip is mid-drag, and the sub-pixel remainder carried between frames.
         /// One at a time, because a mouse is one thing.</summary>
@@ -1385,20 +1282,24 @@ namespace PfPresets
             var dl = ImGui.GetWindowDrawList();
             var max2 = pos + size;
 
+            // The redesign's value pill: white/10, lighter while held, the value in white; a
+            // left-right chevron pair either side says it can be dragged.
             dl.AddRectFilled(pos, max2,
-                ImGui.ColorConvertFloat4ToU32(active ? BorderControl : hot ? Raised : BgCard),
-                Radius.Control);
-            dl.AddRect(pos, max2,
-                ImGui.ColorConvertFloat4ToU32(hot || active ? BorderHover : BorderDefault),
-                Radius.Control, ImDrawFlags.None, 1f);
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, active ? 0.2f : hot ? 0.14f : 0.1f)), 9f);
 
             string label = $"{value} {suffix}";
             using (UiBodyFont.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(label);
                 dl.AddText(pos + (size - ts) * 0.5f,
-                    ImGui.ColorConvertFloat4ToU32(AccentBlue), label);
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), label);
             }
+            uint arrow = ImGui.ColorConvertFloat4ToU32(hot || active ? new Vector4(1, 1, 1, 0.8f) : FbSlate500);
+            float my = pos.Y + size.Y * 0.5f;
+            dl.AddLine(new Vector2(pos.X + 11f, my - 3.5f), new Vector2(pos.X + 7.5f, my), arrow, 1.4f);
+            dl.AddLine(new Vector2(pos.X + 7.5f, my), new Vector2(pos.X + 11f, my + 3.5f), arrow, 1.4f);
+            dl.AddLine(new Vector2(max2.X - 11f, my - 3.5f), new Vector2(max2.X - 7.5f, my), arrow, 1.4f);
+            dl.AddLine(new Vector2(max2.X - 7.5f, my), new Vector2(max2.X - 11f, my + 3.5f), arrow, 1.4f);
 
             if (hot)
             {

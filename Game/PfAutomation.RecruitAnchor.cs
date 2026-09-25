@@ -29,7 +29,7 @@ namespace PfPresets
             position = default;
             size = default;
 
-            var addon = GetVisibleAddon("LookingForGroup");
+            var addon = IsReadingBoard ? null : GetVisibleAddon("LookingForGroup");
             if (addon == null || addon->RootNode == null)
                 return false;
 
@@ -52,7 +52,7 @@ namespace PfPresets
             position = default;
             size = default;
 
-            var addon = GetVisibleAddon("LookingForGroup");
+            var addon = IsReadingBoard ? null : GetVisibleAddon("LookingForGroup");
             if (addon == null)
                 return false;
 

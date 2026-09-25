@@ -128,6 +128,46 @@ namespace PfPresets
         /// the whole category - is the honest version of not knowing, and every id space is now
         /// known anyway.
         /// </summary>
+        /// <summary>
+        /// The name of what a Party Finder listing is for, from the listing's own numbers: its
+        /// category (the game's flag), its duty type (2 a duty, 1 a roulette, 0 a category that
+        /// numbers its own content) and its duty id. The inverse of <see cref="GameDutyId"/>, so a
+        /// FATE listing names its zone, a deep dungeon listing its dungeon, a treasure hunt its map
+        /// and a Gold Saucer listing its game. Null when there is nothing specific to name.
+        /// </summary>
+        public string? ListingDutyName(int category, int dutyType, uint dutyId)
+        {
+            if (dutyId == 0)
+                return null;
+
+            if (dutyType == 2)
+            {
+                string name = GetDutyName(dutyId);
+                return name.Length == 0 || name == "None" || name.StartsWith("Unknown", StringComparison.Ordinal) ? null : name;
+            }
+
+            if (dutyType == 1)
+            {
+                string roulette = GetRouletteName(dutyId);
+                return roulette.Length > 0 ? roulette : null;
+            }
+
+            EnsureLoaded();
+            Func<DutyEntry, bool>? inSpace = category switch
+            {
+                512 => d => IsFateZoneRowId(d.RowId),
+                8192 => d => IsDeepDungeonRowId(d.RowId),
+                1024 => d => IsTreasureMapRowId(d.RowId),
+                256 => d => IsGoldSaucerRowId(d.RowId),
+                _ => null,
+            };
+            if (inSpace == null || cachedDuties == null)
+                return null;
+
+            var match = cachedDuties.FirstOrDefault(d => inSpace(d) && GameDutyId(d) == dutyId);
+            return match?.Name;
+        }
+
         public static ushort GameDutyId(DutyEntry duty)
         {
             if (IsSyntheticRowId(duty.RowId))
@@ -218,6 +258,12 @@ namespace PfPresets
             "AAC Heavyweight M2 (Savage)",
             "AAC Heavyweight M1 (Savage)"
         };
+
+        /// <summary>An item's item level, or 0 for an item the sheet does not know.</summary>
+        public int ItemLevelOf(uint itemId)
+            => dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().TryGetRow(itemId, out var row)
+                ? (int)row.LevelItem.RowId
+                : 0;
 
         public DutyDataHelper(IDataManager dataManager, IPluginLog pluginLog)
         {

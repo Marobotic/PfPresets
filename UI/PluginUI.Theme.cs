@@ -160,22 +160,28 @@ namespace PfPresets
 
         /// <summary>Text drawn on top of an accent fill. Always the ground colour, never white: the
         /// accent is picked by the player and some of the offered ones are light.</summary>
-        private static readonly Vector4 OnAccent = ColorFromHex("#000000");
+        ///
+        /// WHITE NOW, with the accents in iOS tones: every accent choice is a saturated system
+        /// colour that carries white text the way the system's own buttons do, and the redesigned
+        /// screens all set it that way.
+        private static readonly Vector4 OnAccent = ColorFromHex("#ffffff");
 
         /// <summary>Ko-fi, and destructive actions. Nothing else may use it, so the donate button
         /// never competes with Apply preset.</summary>
-        private static readonly Vector4 KoFi = ColorFromHex("#e8503c");
+        ///
+        /// These and the colours below are iOS's dark-mode system tones, the same family as the
+        /// accent choices, so nothing on screen is a different shade of the same idea.
+        private static readonly Vector4 KoFi = ColorFromHex("#ff453a");
 
         // Vote and score colours. Data, not chrome.
-        private static readonly Vector4 Positive = ColorFromHex("#4ea36b");
-        private static readonly Vector4 Negative = ColorFromHex("#d6584a");
+        private static readonly Vector4 Positive = ColorFromHex("#30d158");
+        private static readonly Vector4 Negative = ColorFromHex("#ff453a");
 
         // ── Legacy aliases ────────────────────────────────────────
         // Same names the rest of the UI already uses, pointing at the new system.
         private static readonly Vector4 BgOuter = Ground;
         private static readonly Vector4 BgCard = Field;
         private static readonly Vector4 BgCardExpanded = Panel;
-        private static readonly Vector4 BgDropdown = Field;
         private static readonly Vector4 BorderDefault = BorderControl;
         private static readonly Vector4 BorderHover = Raised;
         private static readonly Vector4 TextPrimary = Ink;
@@ -183,20 +189,12 @@ namespace PfPresets
         private static readonly Vector4 TextMuted = Faint;
         private static readonly Vector4 AccentGreen = Positive;
         private static readonly Vector4 AccentRed = Negative;
-        private static readonly Vector4 AccentYellow = ColorFromHex("#e0a53c");
-        private static readonly Vector4 AccentPurple = ColorFromHex("#9b6dff");
+        private static readonly Vector4 AccentYellow = ColorFromHex("#ff9f0a");
 
-        private static readonly Vector4 StatusBorderRecruiting = RuleStrong;
-        private static readonly Vector4 StatusBorderParty = RuleHair;
 
-        private static readonly Vector4 JsBg = Ground;
-        private static readonly Vector4 JsTitle = Panel;
-        private static readonly Vector4 JsBorder = BorderControl;
         private static readonly Vector4 JsText = Ink;
         private static readonly Vector4 JsMuted = Dim;
         private static readonly Vector4 JsConnector = RuleStrong;
-        private static readonly Vector4 JsCancelBg = new(0f, 0f, 0f, 0f);
-        private static readonly Vector4 JsCancelHover = Raised;
 
         // ── Role colours ──────────────────────────────────────────
         // Data colours: they say what a slot is, so they stay put whatever the accent is set to.
@@ -221,18 +219,34 @@ namespace PfPresets
         /// The offered accents. Two colours are deliberately absent: red belongs to Ko-fi and to
         /// destructive actions, and amber is what the Apply button turns when the game is about to
         /// warn about party composition. An accent that also means "careful" is not an accent.
+        ///
+        /// iOS's own dark-mode system colours, so the accent is the same tone as the blue the
+        /// iPadOS-styled screens were designed around (#0A84FF) whichever one is picked.
         /// </summary>
         private static readonly (string Hex, string Name)[] AccentChoices =
         {
-            ("#9b6dff", "Purple"),
-            ("#6b7bff", "Indigo"),
-            ("#4a9be0", "Blue"),
-            ("#2fb3a6", "Teal"),
-            ("#4ea36b", "Green"),
-            ("#d264c0", "Magenta"),
+            ("#bf5af2", "Purple"),
+            ("#5e5ce6", "Indigo"),
+            ("#0a84ff", "Blue"),
+            ("#40c8e0", "Teal"),
+            ("#30d158", "Green"),
+            ("#da5bd6", "Magenta"),
         };
 
-        private const string DefaultAccentHex = "#9b6dff";
+        private const string DefaultAccentHex = "#bf5af2";
+
+        /// <summary>The accents as they were before the iOS tones, each to its new tone - so a
+        /// saved choice keeps its colour rather than falling off the list.</summary>
+        private static readonly System.Collections.Generic.Dictionary<string, string> RetiredAccents =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["#9b6dff"] = "#bf5af2",
+                ["#6b7bff"] = "#5e5ce6",
+                ["#4a9be0"] = "#0a84ff",
+                ["#2fb3a6"] = "#40c8e0",
+                ["#4ea36b"] = "#30d158",
+                ["#d264c0"] = "#da5bd6",
+            };
 
         // Held statically because the widget helpers below are static - they are pure drawing and
         // have no business holding a config reference. Refreshed once a frame from the config by
@@ -252,37 +266,8 @@ namespace PfPresets
         // The old name for "the interactive colour". Every window used it; it now means the
         // player's accent rather than a fixed blue.
         private static Vector4 AccentBlue => Accent;
-        private static Vector4 JsAccent => Accent;
-        private static Vector4 SliderFill => Accent;
-        private static Vector4 SliderKnob => Accent;
-        private static Vector4 SliderKnobHot => AccentHover;
-        private static Vector4 JsOkBg => Accent;
-        private static Vector4 JsOkHover => AccentHover;
         private static Vector4 JsOkText => OnAccent;
-        private static Vector4 BorderActiveAccent => AccentAlpha(0.33f);
 
-        /// <summary>
-        /// The seven accents as round swatches, the chosen one ringed in Ink.
-        ///
-        /// THE ONLY ACCENT PICKER IN THE PLUGIN, and it lives here rather than in the settings file
-        /// so that every build has it. The onboarding asks the same question on its third step, and
-        /// the first version of that step drew its own copy of this - which drifted immediately: it
-        /// put a one-pixel outline around every unselected swatch, a stroke centred on the fill's
-        /// own rounded edge with half of it inside the colour and half outside on black. Following
-        /// a rounded corner that reads as a chewed edge, and it was the one control in the run
-        /// people said looked pixelated while this one, four steps away, did not.
-        ///
-        /// Two implementations of one control is how that happens. There is one now, and both
-        /// surfaces call it.
-        ///
-        /// A ring rather than a tick: the swatch is the colour, and a mark drawn in the colour's own
-        /// contrast is the one thing guaranteed to be legible on all seven.
-        ///
-        /// A ROUNDED SQUARE, not a circle and not a square. It is the shape the system this
-        /// follows gives anything that is purely its own colour, and the mockup sets it at 28px
-        /// with an 8px corner - which is the app-icon proportion, about two-sevenths of the side.
-        /// </summary>
-        private const float AccentSwatchRadius = 8f;
 
         private void DrawAccentSwatches()
         {
@@ -313,32 +298,20 @@ namespace PfPresets
                     config.Save();
                 }
 
-                var max = new Vector2(p.X + swatch, p.Y + swatch);
-                dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex(hex)),
-                    AccentSwatchRadius);
-
-                // TWO RINGS, WITH THE GROUND BETWEEN THEM. The mockup selects a chip with a 2px
-                // halo in the background colour and a 2px ring in the ink outside that, so the mark
-                // never touches the colour it is marking - which matters most on the pale ones,
-                // where a ring drawn against the fill is the one thing you cannot see.
+                // The settings mockup's swatch: a circle of the colour; the chosen one ringed in
+                // white with a hair of the card between the ring and the colour.
+                var centre = p + new Vector2(swatch * 0.5f);
+                dl.AddCircleFilled(centre, swatch * 0.5f, ImGui.ColorConvertFloat4ToU32(ColorFromHex(hex)), 32);
                 if (chosen)
-                {
-                    dl.AddRect(new Vector2(p.X - 2f, p.Y - 2f), new Vector2(max.X + 2f, max.Y + 2f),
-                        ImGui.ColorConvertFloat4ToU32(Field), AccentSwatchRadius + 2f,
-                        ImDrawFlags.None, 2f);
-                    dl.AddRect(new Vector2(p.X - 4f, p.Y - 4f), new Vector2(max.X + 4f, max.Y + 4f),
-                        ImGui.ColorConvertFloat4ToU32(Ink), AccentSwatchRadius + 4f,
-                        ImDrawFlags.None, 2f);
-                }
+                    dl.AddCircle(centre, swatch * 0.5f + 3f, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), 32, 2f);
                 else if (hot)
-                {
-                    dl.AddRect(new Vector2(p.X - 3f, p.Y - 3f), new Vector2(max.X + 3f, max.Y + 3f),
-                        ImGui.ColorConvertFloat4ToU32(BorderControl), AccentSwatchRadius + 3f,
-                        ImDrawFlags.None, 1f);
-                }
+                    dl.AddCircle(centre, swatch * 0.5f + 3f, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.3f)), 32, 1.5f);
 
                 if (hot)
+                {
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                     PaddedTooltip(name);
+                }
             }
         }
 
@@ -354,6 +327,13 @@ namespace PfPresets
             string hex = string.IsNullOrWhiteSpace(config.AccentColorHex)
                 ? DefaultAccentHex
                 : config.AccentColorHex.Trim();
+
+            if (RetiredAccents.TryGetValue(hex, out string? retoned))
+            {
+                config.AccentColorHex = retoned;
+                config.Save();
+                hex = retoned;
+            }
 
             if (hex == accentSourceHex)
                 return;
@@ -519,13 +499,6 @@ namespace PfPresets
             uiPersonFont = uiCaptionFont = uiTitleFont = uiHeadingFont = null;
             uiNameFont = uiRowNameFont = null;
             uiBodyFont = uiLabelFont = uiHelpFont = null;
-        }
-
-        /// <summary>Text in one of the scale's faces, without the caller having to balance a push.</summary>
-        private void TextIn(IFontHandle font, Vector4 color, string text)
-        {
-            using (font.Push())
-                ImGui.TextColored(color, text);
         }
 
         // ── Role / Slot Icon IDs ──────────────────────────────────
@@ -721,14 +694,6 @@ namespace PfPresets
         /// </summary>
         private const float ButtonHeight = 36f;
         private const float ButtonPadX = 14f;
-
-        /// <summary>Width a label needs at <see cref="ButtonPadX"/> on both sides.</summary>
-        private static float ButtonWidthFor(string label)
-        {
-            int marker = label.IndexOf("##", StringComparison.Ordinal);
-            string shown = marker >= 0 ? label.Substring(0, marker) : label;
-            return ImGui.CalcTextSize(shown).X + ButtonPadX * 2f;
-        }
 
         /// <summary>The one filled button on a surface: accent fill, ground-coloured text, square.</summary>
         private static bool DrawPrimaryButton(string label, Vector2 size)
@@ -928,42 +893,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The small icon buttons that sit on a card - edit, share, the kebab on a preset row.
-        ///
-        /// A TONE OF THEIR OWN, and this is the whole reason the helper exists. They used to be
-        /// ordinary secondary buttons at #2c2c2e, which is exactly the colour a card turns when the
-        /// mouse is over it - so the moment you reached for one of them the three buttons dissolved
-        /// into the row and you were aiming at nothing. Sitting a step above the card's hover state
-        /// keeps them visible in both, which is the one thing a control on a hoverable surface has
-        /// to do.
-        /// </summary>
-        private static bool DrawRowActionButton(string label, Vector2 size)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, ColorFromHex("#38383a"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ColorFromHex("#48484a"));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ColorFromHex("#545456"));
-            ImGui.PushStyleColor(ImGuiCol.Text, Ink);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Small);
-            bool clicked = ImGui.Button(label, size);
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(4);
-            return clicked;
-        }
-
-        /// <summary>
-        /// Anything that destroys data. The same filled red as everywhere else it appears, so
-        /// "this removes something" looks identical wherever it is offered.
-        /// </summary>
-        private static bool DrawDestructiveButton(string label, Vector2 size)
-        {
-            // The hover state has to be known before the button is submitted, because it decides
-            // the text colour that goes with the fill - red text on the red hover fill is invisible.
-            // ImGui.IsItemHovered() at this point would answer for whatever was drawn last, so the
-            // rect is tested directly.
-            return DrawDangerFilledButton(label, size);
-        }
-
-        /// <summary>
         /// Outlined in the accent, for an action that is the point of the surface it sits on but
         /// not the one filled button on it.
         ///
@@ -1029,30 +958,6 @@ namespace PfPresets
                 new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
             bool clicked = ImGui.Button(label, size);
             ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor(4);
-            return clicked;
-        }
-
-        /// <summary>
-        /// Ko-fi: filled red, not outlined.
-        ///
-        /// It is the one button in the plugin that is a brand rather than an action, and the
-        /// outlined destructive style made it read as "delete" - the exact confusion the colour
-        /// rule was supposed to prevent. Destructive controls keep the outline; this one is solid,
-        /// so the two are told apart by weight as well as by wording.
-        /// </summary>
-        private static bool DrawKofiButton(string label, Vector2 size)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, KoFi);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Lighten(KoFi, 0.12f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, Darken(KoFi, 0.15f));
-            ImGui.PushStyleColor(ImGuiCol.Text, Ink);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
-                new Vector2(ButtonPadX, ImGui.GetStyle().FramePadding.Y));
-            bool clicked = ImGui.Button(label, size);
-            ImGui.PopStyleVar();
-            ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
             return clicked;
         }
@@ -1310,22 +1215,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The search field: one implementation, used by every surface that has a search.
-        ///
-        /// It existed twice - once in the Recruit toolbar and once above the player list - which is
-        /// how the two ended up different sizes with the magnifier inside one and outside the
-        /// other. Anything that is a component of the design lives here now, and the surfaces call
-        /// it rather than re-describing it.
-        ///
-        /// The glyph sits inside the field and the text is inset past its measured width, so the
-        /// two can never overlap however the font is sized.
-        /// </summary>
-        private bool DrawSearchField(string id, string hint, ref string value, float width,
-            float height = ButtonHeight)
-            => DrawSearchFieldCore(id, hint, ref value, width, height, ImGuiInputTextFlags.None,
-                out _);
-
-        /// <summary>
         /// The search field with a clear button on its right end, shown only while there is
         /// something to clear.
         /// </summary>
@@ -1335,6 +1224,10 @@ namespace PfPresets
             out bool cleared, float height = ButtonHeight)
             => DrawSearchFieldCore(id, hint, ref value, width, height, ImGuiInputTextFlags.None,
                 out cleared, allowClear: true);
+
+        /// <summary>Bumped when a search field's cross is pressed, so the field comes back as a
+        /// new widget - see DrawSearchFieldCore.</summary>
+        private readonly Dictionary<string, int> searchFieldGeneration = new();
 
         private bool DrawSearchFieldCore(string id, string hint, ref string value, float width,
             float height, ImGuiInputTextFlags flags, out bool cleared, bool allowClear = false)
@@ -1356,6 +1249,36 @@ namespace PfPresets
             // target would sit over the tail of a long query.
             float trailing = showClear ? inset : 0f;
 
+            // THE CROSS IS TESTED BEFORE THE FIELD IS SUBMITTED, BY HAND.
+            //
+            // It used to be an InvisibleButton laid over the field, and it could not be pressed
+            // while the field had focus - which is always, since you have just been typing in it.
+            // ImGui gives every click inside an active widget to that widget, so the press moved
+            // the caret instead. Reading the mouse against the rect directly does not ask ImGui who
+            // owns the hover.
+            var clearMin = new Vector2(origin.X + width - trailing, origin.Y);
+            var clearMax = new Vector2(origin.X + width, origin.Y + height);
+            bool clearHot = showClear
+                && ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem)
+                && ImGui.IsMouseHoveringRect(clearMin, clearMax);
+
+            if (clearHot && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                value = string.Empty;
+                cleared = true;
+
+                // An active field keeps its own copy of the text and writes it back, so emptying
+                // the string alone changes nothing on screen. A new id is a new, inactive field
+                // that reads the empty value - the old one is simply never submitted again.
+                searchFieldGeneration[id] = searchFieldGeneration.GetValueOrDefault(id) + 1;
+
+                showClear = false;
+                trailing = 0f;
+                clearHot = false;
+            }
+
+            int generation = searchFieldGeneration.GetValueOrDefault(id);
+
             // PUSHED AFTER THE FRAME STYLE, NOT BEFORE IT.
             //
             // PushFramedInput sets a frame padding of its own so that plain fields and dropdowns
@@ -1366,10 +1289,26 @@ namespace PfPresets
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(inset, (height - ImGui.GetTextLineHeight()) * 0.5f));
 
-            ImGui.SetNextItemWidth(width);
-            bool changed = ImGui.InputTextWithHint($"##{id}", hint, ref value,
-                128, flags);
+            // The dashboard mockup's search: rgba(118,118,128,0.22), border white/5, rounded-xl.
+            var searchFill = new Vector4(0.463f, 0.463f, 0.502f, 0.22f);
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, searchFill);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, searchFill with { W = 0.28f });
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, searchFill with { W = 0.28f });
+            ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(1, 1, 1, 0.05f));
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, FbSlate500);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
 
+            ImGui.SetNextItemWidth(width);
+            bool changed = ImGui.InputTextWithHint($"##{id}_{generation}", hint, ref value,
+                128, flags) || cleared;
+
+            // focus:ring-2 ring-ios-blue - the accent, while you are typing in it.
+            if (ImGui.IsItemActive())
+                dl.AddRect(origin - new Vector2(1f), origin + new Vector2(width, height) + new Vector2(1f),
+                    ImGui.ColorConvertFloat4ToU32(Accent), Radius.Control + 1f, ImDrawFlags.None, 2f);
+
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor(5);
             ImGui.PopStyleVar();
             PopFramedInput();
 
@@ -1384,26 +1323,15 @@ namespace PfPresets
                 // not fill its em, so halving the line height leaves it sitting low - which is the
                 // other half of why this looked off.
                 DrawTextCentredOnInk(glyph,
-                    new Vector2(origin.X + 12f + gs.X * 0.5f, origin.Y + height * 0.5f), Faint);
+                    new Vector2(origin.X + 12f + gs.X * 0.5f, origin.Y + height * 0.5f), FbSlate400);
             }
 
             if (!showClear)
                 return changed;
 
-            // Submitted AFTER the input, which is what makes it clickable at all: ImGui tests the
-            // most recently submitted item in a window first, so a button laid over a text field
-            // has to come second or the field swallows the press.
-            var clearMin = new Vector2(origin.X + width - trailing, origin.Y);
-            ImGui.SetCursorScreenPos(clearMin);
-            ImGui.InvisibleButton($"##{id}clear", new Vector2(trailing, height));
-            bool hot = ImGui.IsItemHovered();
-
-            if (ImGui.IsItemClicked())
-            {
-                value = string.Empty;
-                cleared = true;
-                changed = true;
-            }
+            bool hot = clearHot;
+            if (hot)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
             using (UiIconSmall.Push())
             {
@@ -1476,9 +1404,6 @@ namespace PfPresets
             if (padBelow > 0f) ImGui.Dummy(new Vector2(0, padBelow));
         }
 
-        private static void DrawRuleStrong(float padAbove = 0f, float padBelow = 0f)
-            => DrawRule(2f, RuleStrong, padAbove, padBelow);
-
         private static void DrawRuleHair(float padAbove = 0f, float padBelow = 0f)
             => DrawRule(1f, RuleHair, padAbove, padBelow);
 
@@ -1520,9 +1445,16 @@ namespace PfPresets
         /// </summary>
         private void BeginSettingsSection(string label)
         {
-            // THE ACCENT, at label size in tracked caps - the mockup sets every settings heading
-            // that way, and it is what divides one group of rows from the next.
-            DrawSectionLabel(label);
+            // The settings mockup's section heading: 11px, heavy, uppercase, widely tracked, in the
+            // system grey, a few pixels in from the card's edge and ten above it.
+            using (UiCaptionFont.Push())
+            {
+                Vector2 hp = ImGui.GetCursorScreenPos();
+                float used = DrawTrackedCaps(ImGui.GetWindowDrawList(), hp + new Vector2(4f, 0f), label,
+                    ColorFromHex("#8e8e93"), tracking: 0.12f);
+                ImGui.Dummy(new Vector2(used, ImGui.GetTextLineHeight()));
+            }
+            ImGui.Dummy(new Vector2(0, MathF.Max(0f, 10f - ImGui.GetStyle().ItemSpacing.Y)));
 
             settingsCardDl = ImGui.GetWindowDrawList();
             settingsCardDl.ChannelsSplit(2);
@@ -1550,7 +1482,7 @@ namespace PfPresets
         }
 
         /// <summary>Room above the first row and below the last, inside the card.</summary>
-        private const float SettingsCardPadY = 8f;
+        private const float SettingsCardPadY = 2f;
 
         /// <summary>The page's own margin: how far a card stops short of the panel edge.</summary>
         private const float SettingsPageMargin = 18f;
@@ -1567,46 +1499,15 @@ namespace PfPresets
             settingsCardDl.ChannelsSetCurrent(0);
             var cardMax = new Vector2(settingsCardMin.X + settingsCardWidth,
                                       settingsCardMin.Y + cardHeight);
+            // rounded-2xl, a hairline border - the settings mockup's grouped card.
             settingsCardDl.AddRectFilled(settingsCardMin, cardMax,
-                ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.11f, 0.11f, 0.125f, 0.85f)), 16f);
             settingsCardDl.AddRect(settingsCardMin, cardMax,
-                ImGui.ColorConvertFloat4ToU32(CardBorder), Radius.Card, ImDrawFlags.None, 1f);
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)), 16f, ImDrawFlags.None, 1f);
             settingsCardDl.ChannelsMerge();
 
-            ImGui.Dummy(new Vector2(0, Space.Gutter + 6f));
-        }
-
-        /// <summary>
-        /// The help mark at the end of a settings row: an 18px square with a hairline, a 5px
-        /// corner and a question mark in it, from the mockup.
-        ///
-        /// Placed from its left edge, immediately after the words it belongs to. Out at the end of
-        /// the row it read as a third column of its own, sitting a long way from the sentence it
-        /// was marking.
-        /// </summary>
-        private void DrawRowHelpMark(string id, string explanation, Vector2 centreLeft)
-        {
-            const float side = 18f;
-            var min = new Vector2(centreLeft.X, centreLeft.Y - side * 0.5f);
-            var max = new Vector2(min.X + side, min.Y + side);
-
-            ImGui.SetCursorScreenPos(min);
-            ImGui.InvisibleButton($"##help{id}", new Vector2(side, side));
-            bool hot = ImGui.IsItemHovered();
-
-            var dl = ImGui.GetWindowDrawList();
-            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(hot ? Dim : BorderControl),
-                5f, ImDrawFlags.None, 1f);
-
-            using (UiLabelFont.Push())
-            {
-                Vector2 ts = ImGui.CalcTextSize("?");
-                dl.AddText(new Vector2(min.X + (side - ts.X) * 0.5f, min.Y + (side - ts.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(hot ? Ink : Dim), "?");
-            }
-
-            if (hot)
-                WrappedTooltip(explanation);
+            // space-y-8 between sections, at the plugin's scale.
+            ImGui.Dummy(new Vector2(0, 22f));
         }
 
         /// <summary>Gap between whatever a help marker explains and the marker itself.</summary>
@@ -1768,82 +1669,6 @@ namespace PfPresets
         /// </summary>
         private const float ListRowHeight = 44f;
 
-        /// <summary>
-        /// One row of a grouped list: a full-width hit target with a hover wash, laid out by the
-        /// caller from the rect it hands back.
-        ///
-        /// The cursor is left exactly where it started, so everything inside the row is placed in
-        /// screen space against <paramref name="min"/>. A row that flowed its contents would put
-        /// the control wherever the label happened to end, and a list whose switches do not line up
-        /// is the single clearest sign that a layout was not designed as a list.
-        /// </summary>
-        private bool BeginListRow(string id, float width, out Vector2 min, float? height = null)
-        {
-            float rowH = height ?? ListRowHeight;
-            min = ImGui.GetCursorScreenPos();
-
-            ImGui.InvisibleButton($"##row{id}", new Vector2(width, rowH));
-            bool clicked = ImGui.IsItemClicked();
-
-            if (ImGui.IsItemHovered())
-                ImGui.GetWindowDrawList().AddRectFilled(min,
-                    new Vector2(min.X + width, min.Y + rowH),
-                    ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
-
-            ImGui.SetCursorScreenPos(min);
-            return clicked;
-        }
-
-        /// <summary>Moves the cursor past a row drawn with <see cref="BeginListRow"/>.</summary>
-        private static void EndListRow(Vector2 min)
-            => ImGui.SetCursorScreenPos(new Vector2(min.X, min.Y + ListRowHeight));
-
-        /// <summary>
-        /// The hairline between two rows.
-        ///
-        /// IT STARTS AT THE TEXT, NOT AT THE EDGE. A separator that spans the whole card cuts the
-        /// group into slices; one that begins where the label begins reads as the rows being a list
-        /// rather than the card being divided. It runs out to the card's trailing edge, which is
-        /// the other half of the same idea - the line leads the eye along the row and off it.
-        /// </summary>
-        private static void DrawRowSeparator(ImDrawListPtr dl, Vector2 rowMin, float rowHeight,
-            float textInset, float rightEdge)
-        {
-            float y = rowMin.Y + rowHeight;
-            dl.AddRectFilled(new Vector2(rowMin.X + textInset, y), new Vector2(rightEdge, y + 1f),
-                ImGui.ColorConvertFloat4ToU32(RuleHair));
-        }
-
-        /// <summary>Room a leading selection mark takes, so a row's label knows where to start.
-        /// </summary>
-        private const float RowCheckColumn = 26f;
-
-        /// <summary>
-        /// The mark on the chosen row of a single-choice list: a tick in the accent, LEADING the
-        /// label.
-        ///
-        /// It sat at the trailing edge, which is where the system this follows puts it - and at the
-        /// width these cards run to, the mark ended up a hand's breadth from the words it belongs
-        /// to and read as a column of its own. Ahead of the label it is next to what it marks.
-        ///
-        /// A tick, not a filled circle: a radio asks you to read a control, a tick states a fact
-        /// about the row it is on, and it needs no second unchecked shape on every other option.
-        /// </summary>
-        private void DrawRowCheck(Vector2 rowMin, bool chosen)
-        {
-            if (!chosen)
-                return;
-
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
-            {
-                string glyph = FontAwesomeIcon.Check.ToIconString();
-                Vector2 gs = ImGui.CalcTextSize(glyph);
-                ImGui.GetWindowDrawList().AddText(
-                    new Vector2(rowMin.X + (RowCheckColumn - gs.X) * 0.5f,
-                                rowMin.Y + (ListRowHeight - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Accent), glyph);
-            }
-        }
 
         /// <summary>
         /// Puts a <see cref="DrawHelpMark"/> after whatever was just drawn, centred against it.
@@ -1877,40 +1702,48 @@ namespace PfPresets
         /// Taken here rather than left to the caller: the heading ends with a spacer of its own, so
         /// a caller reaching for SameLineHelpDot afterwards would hang the marker off *that* and
         /// land it under the heading rather than beside it.</param>
-        private void DrawListHeading(string label, string? helpId = null, string? help = null)
+        private void DrawListHeading(string label, string? helpId = null, string? help = null,
+            string? note = null, Vector4? noteColour = null, bool notePulse = false)
         {
-            // NO RULE ABOVE IT. A heading over a list now sits on the ground with a card under it,
-            // and a full-width line above that reads as the top edge of something the section has
-            // been pushed inside - which is exactly what it looked like on the profile tab. The
-            // gap above the heading is the separation.
-            //
-            // AND THE GAP ABOVE IS THE BIGGER OF THE TWO. A heading belongs to what is under it,
-            // so it has to sit nearer to that than to whatever it is being separated from - the
-            // profile tab had it the other way round, with the two headings tucked up against the
-            // search field and floating well clear of the cards they name.
+            // NO RULE ABOVE IT, and the gap above is the bigger of the two: a heading belongs to
+            // what is under it.
             ImGui.Dummy(new Vector2(0, Space.Gutter));
 
             var dl = ImGui.GetWindowDrawList();
             Vector2 p = ImGui.GetCursorScreenPos();
+            float width = ImGui.GetContentRegionAvail().X;
 
-            // Body size, a step below the tab's own name in the header above it - see
-            // DrawHeaderStrip. A section heading is a label for the block under it, not a title
-            // competing with the page's.
-            using (UiBodyFont.Push())
+            // The dashboard mockup's section heading: text-xs, bold, uppercase, tracked, slate -
+            // a label over the block, a step below the page title in the header strip.
+            using (UiCaptionFont.Push())
             {
                 float lineH = ImGui.GetTextLineHeight();
+                float used = DrawTrackedCaps(dl, p + new Vector2(4f, 0f), label, FbSlate400);
 
-                // Reserved at the width of the words, not of the row: a full-width spacer leaves
-                // nothing to sit beside, which is the other half of why the marker ended up below.
-                float used = DrawTrackedCaps(dl, p, label, Dim);
-                ImGui.Dummy(new Vector2(used, lineH));
+                // A note on the right - "● Active listing", "4 presets saved".
+                if (note != null)
+                {
+                    using (UiHelpFont.Push())
+                    {
+                        Vector2 ns = ImGui.CalcTextSize(note);
+                        float x = p.X + width - 4f - ns.X;
+                        var colour = noteColour ?? FbSlate400;
+                        dl.AddText(new Vector2(x, p.Y + (lineH - ns.Y) * 0.5f), ImGui.ColorConvertFloat4ToU32(colour), note);
+                        if (notePulse)
+                        {
+                            float a = 0.55f + 0.45f * MathF.Sin((float)ImGui.GetTime() * 3f);
+                            dl.AddCircleFilled(new Vector2(x - 8f, p.Y + lineH * 0.5f), 3.5f,
+                                ImGui.ColorConvertFloat4ToU32(colour with { W = a }), 12);
+                        }
+                    }
+                }
+
+                ImGui.Dummy(new Vector2(used + 4f, lineH));
             }
 
             if (helpId != null && help != null)
                 SameLineHelpDot(helpId, help);
 
-            // Half the gap above it, so the heading reads as attached to the card below rather
-            // than floating between the two.
             ImGui.Dummy(new Vector2(0, Space.Tight - 2f));
         }
 

@@ -452,7 +452,7 @@ namespace PfPresets
         /// TimesMet starts at 1 because neither old store counted meetings, and a made-up number
         /// would be worse than an honest floor.
         /// </summary>
-        public void SeedFrom(IEnumerable<Contact>? contacts, IEnumerable<RatingGiven>? rated)
+        public void SeedFrom(IEnumerable<Contact>? contacts)
         {
             lock (gate)
             {
@@ -479,27 +479,6 @@ namespace PfPresets
                     };
                 }
 
-                foreach (var entry in rated ?? Enumerable.Empty<RatingGiven>())
-                {
-                    if (entry == null || !entry.IsValid)
-                        continue;
-
-                    string key = entry.Identity.Key;
-                    if (players.ContainsKey(key))
-                        continue;
-
-                    // No duty name to recover - the rating history never stored one - and an
-                    // invented one would be a lie about where you know them from.
-                    players[key] = new PlayerSeen
-                    {
-                        Name = entry.Name,
-                        World = entry.World,
-                        JobId = entry.JobId,
-                        FirstSeenUtc = entry.RatedUtc,
-                        LastSeenUtc = entry.RatedUtc,
-                        TimesMet = 1,
-                    };
-                }
 
                 if (players.Count == 0)
                     return;

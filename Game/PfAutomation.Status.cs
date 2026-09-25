@@ -64,6 +64,10 @@ namespace PfPresets
     /// frame for the status box. Everything here is derived from live game memory, so nothing is
     /// cached beyond the frame.
     /// </summary>
+    /// <summary>A leader's listing as the board read it: the duty, the seat count and each seat's
+    /// game job mask, the comment, and what is left of its hour.</summary>
+    public sealed record LeaderListing(uint DutyRowId, int SlotsTotal, ulong[] GameMasks, string Comment, TimeSpan? TimeLeft);
+
     public sealed class RecruitmentSnapshot
     {
         public PfActivity Activity { get; init; } = PfActivity.Idle;
@@ -131,6 +135,10 @@ namespace PfPresets
         public int SlotsTotal { get; init; }
         public int SlotsFilled => Filled.Count;
 
+        /// <summary>Each seat's accepted-jobs mask in the game's bit order, eight of them, from
+        /// whichever copy of the listing this snapshot was read from. Empty when none was.</summary>
+        public IReadOnlyList<ulong> SeatMasks { get; init; } = Array.Empty<ulong>();
+
         /// <summary>Time until the listing expires, or null when we have no idea.</summary>
         public TimeSpan? TimeLeft { get; init; }
 
@@ -187,6 +195,13 @@ namespace PfPresets
         /// Builds (or returns this frame's cached) picture of the current situation. Reads native
         /// party and agent memory, so the UI must not call it per-widget.
         /// </summary>
+        /// <summary>
+        /// The party leader's listing as the Party Finder board has it, for a member whose game no
+        /// longer holds a copy. Given the leader's name and home world id. Set by the plugin in a
+        /// build with the board; null otherwise, and then nothing changes.
+        /// </summary>
+        public Func<string, uint, LeaderListing?>? LeaderListingFallback { get; set; }
+
         public unsafe RecruitmentSnapshot GetSnapshot(int frameCount)
         {
             if (snapshotThisFrame != null && snapshotFrame == frameCount)
@@ -299,6 +314,7 @@ namespace PfPresets
                     Filled = filled,
                     Open = BuildOpenSeatsFromMasks(SlotMasksOf(info), total, filled.Count),
                     SlotsTotal = total,
+                    SeatMasks = SlotMasksOf(info),
                     TimeLeft = ComputeTimeLeft(out bool exactOwn),
                     TimeLeftIsExact = exactOwn,
                     BlockedReason = common.Blocked,
@@ -331,6 +347,40 @@ namespace PfPresets
                 //
                 // Only what was remembered, never a guess: if nothing was ever captured for this
                 // party there is genuinely nothing to say, and the empty name still stands.
+                // THE BOARD'S COPY BEFORE NOTHING. The game keeps one listing at a time, and it
+                // drops the leader's the moment another is looked at - or never had it, for somebody
+                // who joined through a link or an invite. The Party Finder board holds every listing
+                // this client or anybody else has read, by leader, so the duty, the seats and the
+                // comment come from there. Without this a member saw no duty, and with no duty no
+                // progress column at all.
+                if (havePartyLeader && common.IsRecruiting
+                    && LeaderListingFallback?.Invoke(partyLeaderName, partyLeaderWorldId) is { } board
+                    && board.DutyRowId is > 0 and <= ushort.MaxValue)
+                {
+                    string boardDutyName = ResolveListedDutyName((ushort)board.DutyRowId);
+                    RememberRecruitedDuty((ushort)board.DutyRowId, boardDutyName);
+                    int boardTotal = board.SlotsTotal is > 0 and <= 8 ? board.SlotsTotal : 8;
+
+                    return new RecruitmentSnapshot
+                    {
+                        Activity = common.Activity,
+                        IsRecruiting = common.IsRecruiting,
+                        IsLeader = false,
+                        LeaderName = partyLeaderName,
+                        LeaderWorldId = partyLeaderWorldId,
+                        DutyName = boardDutyName,
+                        DutyRowId = board.DutyRowId,
+                        Comment = board.Comment,
+                        Filled = filled,
+                        Open = BuildOpenSeatsFromMasks(board.GameMasks, boardTotal, filled.Count),
+                        SlotsTotal = boardTotal,
+                        SeatMasks = board.GameMasks,
+                        TimeLeft = board.TimeLeft,
+                        TimeLeftIsExact = board.TimeLeft.HasValue,
+                        BlockedReason = common.Blocked,
+                    };
+                }
+
                 var (rememberedName, rememberedRow) = ResolveIdleContextDuty();
 
                 return new RecruitmentSnapshot
@@ -380,6 +430,7 @@ namespace PfPresets
                 Filled = filled,
                 Open = BuildOpenSeatsFromMasks(viewedMasks, viewedTotal, viewed.SlotsFilled),
                 SlotsTotal = viewedTotal,
+                SeatMasks = viewedMasks,
 
                 // The listing carried a real countdown when it was read, but the stored value is
                 // frozen at that moment and never moves again - so it is aged against the clock
@@ -451,6 +502,15 @@ namespace PfPresets
 
         /// <summary>ClassJob-independent online status row for "Recruiting Party Members".</summary>
         private const uint OnlineStatusRecruiting = 26;
+
+        /// <summary>
+        /// Displayed statuses that Recruiting Party Members would have been shown over, from the
+        /// OnlineStatus sheet's priorities: the mentor badges, Returner, New Adventurer, the party
+        /// and alliance roles, Another World, Online and none. Seeing one of these means Recruiting
+        /// is not set; anything else may simply be hiding it.
+        /// </summary>
+        private static bool OutrankedByRecruiting(uint status)
+            => status == 0 || (status >= 27 && status <= 40) || status == 44 || status == 47;
 
         /// <summary>What the player is doing when not recruiting, for the box's heading.</summary>
         private PfActivity ClassifyIdleActivity()
@@ -884,6 +944,7 @@ namespace PfPresets
         {
             recruitingSince = null;
             capturedTimeLeft = null;
+            knownOwnListingId = 0;
         }
 
         /// <summary>
@@ -899,6 +960,9 @@ namespace PfPresets
             var listing = agent->LastViewedListing;
             if (listing.LeaderContentId != playerState.ContentId)
                 return; // someone else's listing - not ours to measure
+
+            if (listing.ListingId != 0)
+                knownOwnListingId = listing.ListingId;
 
             uint seconds = listing.TimeLeft;
             if (seconds == 0 || seconds > ListingLifetime.TotalSeconds)

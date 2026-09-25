@@ -123,7 +123,7 @@ namespace PfPresets
         /// when something else is already driving the listing, so the caller retries later.</returns>
         private bool ScoutAndAdjust()
         {
-            if (isRefreshExecuting || disposed)
+            if (isRefreshExecuting || disposed || IsCoordinationBusy)
                 return false;
 
             var plan = ScoutListingSlots();
@@ -143,22 +143,23 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Every seat from 2 to 8 that is locked to exactly one job, and what it should become.
+        /// The vacant seats that are not what they should be, and what they go back to.
         ///
-        /// The three cases a seat can be in, and why only one of them is an edit:
+        /// VACANT, FROM THE GAME'S OWN SEATING. The recruitment records which member sits in which
+        /// seat, so a seat whose member is still in the party is never touched - the old version
+        /// widened every single-job seat on any leave, including ones whose people had not gone.
         ///
-        ///   * MASK OF ZERO - the seat is closed. An omitted seat looks like this, and so does a
-        ///     seat past the end of a light-party listing. Both are seats the listing is not
-        ///     recruiting for, and neither is distinguishable from the other from here, so neither
-        ///     is written to. That is the whole of the omit fix: there is no code path in this file
-        ///     that can put a job mask into a seat that currently holds zero.
-        ///   * MORE THAN ONE BIT - the seat already asks for a role, a sub-category or a hand-picked
-        ///     set of jobs. That is either what the preset said or what a previous run of this made
-        ///     it, and in both cases it is already right.
-        ///   * EXACTLY ONE BIT - the seat is pinned to a single job. This is what the game leaves
-        ///     behind when the person standing in it goes, and it is the only thing here worth
-        ///     fixing: a listing asking for one specific White Mage fills far more slowly than one
-        ///     asking for a healer.
+        /// RESTORED, NOT GUESSED. A vacated seat goes back to what this plugin posted it as (see
+        /// intendedSeats) - the healer seat is a healer seat again, however a Black Mage came to be
+        /// sitting in it. Guessing the role from the last occupant is how a listing lost its healer
+        /// and gained a fifth DPS, three separate times.
+        ///
+        /// OMITTED STAYS OMITTED. A seat posted as omitted is zero in the intended layout and is
+        /// never given a mask; a seat that is zero now is never written to either. Only
+        /// coordination ever opens an omitted seat.
+        ///
+        /// With no posted layout on record (a listing posted by hand, or a plugin reload since),
+        /// a vacant seat left locked to one job is widened to that job's sub-category, as before.
         /// </summary>
         private unsafe List<SlotEdit> ScoutListingSlots()
         {
@@ -169,15 +170,65 @@ namespace PfPresets
                 return plan;
 
             ulong* pSlotFlags = (ulong*)((byte*)&agent->StoredRecruitmentInfo + OffsetSlotFlags);
+            var seated = agent->StoredRecruitmentInfo.MemberContentIds;
+
+            // Who is still here, and - for when the seating is not recorded - which jobs.
+            var present = new HashSet<ulong> { playerState.ContentId };
+            var jobsHere = new Dictionary<uint, int>();
+            foreach (var m in GetOtherPartyMemberDetails())
+            {
+                if (m.ContentId != 0)
+                    present.Add(m.ContentId);
+                uint job = JoinedJob(m.ContentId, m.JobId);
+                jobsHere[job] = jobsHere.GetValueOrDefault(job) + 1;
+            }
+
+            bool seatingKnown = false;
+            for (int i = 0; i < 8 && i < seated.Length; i++)
+                seatingKnown |= seated[i] != 0;
+
+            var intended = intendedSeats;
 
             for (int i = FirstAdjustableSlot; i < 8; i++)
             {
                 ulong mask = pSlotFlags[i];
-
                 if (mask == 0)
-                    continue;                            // closed or omitted - never touched
+                    continue;                                     // closed or omitted - never touched
+
+                // Occupied: the member recorded in it is still in the party. Without a recorded
+                // seating, a seat locked to a job somebody here still holds counts as theirs.
+                bool occupied;
+                if (seatingKnown)
+                {
+                    occupied = i < seated.Length && seated[i] != 0 && present.Contains(seated[i]);
+                }
+                else
+                {
+                    occupied = false;
+                    if ((mask & (mask - 1)) == 0)
+                    {
+                        uint job = JobMasks.GetJobIdFromGameBit(BitOperations.TrailingZeroCount(mask));
+                        if (jobsHere.TryGetValue(job, out int left) && left > 0)
+                        {
+                            jobsHere[job] = left - 1;
+                            occupied = true;
+                        }
+                    }
+                }
+                if (occupied)
+                    continue;
+
+                if (intended != null)
+                {
+                    ulong want = intended[i];
+                    if (want == 0 || want == mask)
+                        continue;                                 // omitted as posted, or already right
+                    plan.Add(new SlotEdit(i, want, "back to the seat as posted"));
+                    continue;
+                }
+
                 if ((mask & (mask - 1)) != 0)
-                    continue;                            // already broader than one job
+                    continue;                                     // already broader than one job
 
                 ulong widened = WidenSingleJobMask(mask, out string reason);
                 if (widened == 0 || widened == mask)
@@ -191,7 +242,7 @@ namespace PfPresets
                 var seats = new List<string>(plan.Count);
                 foreach (var edit in plan)
                     seats.Add($"slot {edit.Index + 1} ({edit.Reason})");
-                pluginLog.Information($"[SlotAdjuster] Scouted {plan.Count} seat(s) to widen: {string.Join(", ", seats)}.");
+                pluginLog.Information($"[SlotAdjuster] Scouted {plan.Count} vacant seat(s) to restore: {string.Join(", ", seats)}.");
             }
 
             return plan;
@@ -301,6 +352,7 @@ namespace PfPresets
                         // or leave in the meantime - so the plan is rebuilt against the listing
                         // as it is right now rather than against the one that triggered the run.
                         int changed = ApplyScoutedEdits();
+                        intendedWritePending = intendedSeats != null;
                         pluginLog.Information($"[SlotAdjuster] Applied {changed} slot change(s); re-posting.");
                         return AtkHelpers.ClickAddonButton(addon, btn);
                     }

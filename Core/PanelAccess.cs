@@ -73,9 +73,7 @@ namespace PfPresets
             public bool Partial { get; set; }
         }
 
-        private const string KeyFileName = "pfa.dat";
 
-        private const string StateFileName = "pfa.ui";
 
         private readonly IDalamudPluginInterface pluginInterface;
 
@@ -282,7 +280,7 @@ namespace PfPresets
             {
                 if (File.Exists(StatePath))
                 {
-                    Dictionary<string, bool> st = JsonConvert.DeserializeObject<Dictionary<string, bool>>(File.ReadAllText(StatePath));
+                    Dictionary<string, bool>? st = JsonConvert.DeserializeObject<Dictionary<string, bool>>(File.ReadAllText(StatePath));
                     if (st != null && st.TryGetValue("enabled", out var on))
                     {
                         Enabled = on;
@@ -294,7 +292,7 @@ namespace PfPresets
                 }
                 if (File.Exists(KeyPath))
                 {
-                    StoredKey stored = JsonConvert.DeserializeObject<StoredKey>(File.ReadAllText(KeyPath));
+                    StoredKey? stored = JsonConvert.DeserializeObject<StoredKey>(File.ReadAllText(KeyPath));
                     if (stored != null && !string.IsNullOrEmpty(stored.K))
                     {
                         key = new Ed25519PrivateKeyParameters(Convert.FromBase64String(stored.K), 0);
@@ -318,7 +316,7 @@ namespace PfPresets
                 AsymmetricCipherKeyPair pair = ed25519KeyPairGenerator.GenerateKeyPair();
                 Ed25519PrivateKeyParameters fresh = (Ed25519PrivateKeyParameters)pair.Private;
                 string spki = Convert.ToBase64String(SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo((Ed25519PublicKeyParameters)pair.Public).GetDerEncoded());
-                RegisterResponse result = await PostAsync<RegisterResponse>("panels/join", new
+                RegisterResponse? result = await PostAsync<RegisterResponse>("panels/join", new
                 {
                     token = token.Trim(),
                     publicKey = spki,
@@ -456,12 +454,12 @@ namespace PfPresets
             {
                 return true;
             }
-            string nonce = await ChallengeAsync().ConfigureAwait(false);
+            string? nonce = await ChallengeAsync().ConfigureAwait(false);
             if (nonce == null)
             {
                 return false;
             }
-            SessionResponse res = await PostAsync<SessionResponse>("panels/open", new
+            SessionResponse? res = await PostAsync<SessionResponse>("panels/open", new
             {
                 label = label,
                 nonce = nonce,
@@ -606,8 +604,8 @@ namespace PfPresets
                 };
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; PfAnalysis)");
                 string haystack = await http.GetStringAsync(uri).ConfigureAwait(false);
-                string name = Between(haystack, "frame__chara__name\">", "<");
-                string world = Between(haystack, "frame__chara__world\">", "<");
+                string? name = Between(haystack, "frame__chara__name\">", "<");
+                string? world = Between(haystack, "frame__chara__world\">", "<");
                 if (world != null)
                 {
                     int bracket = world.IndexOf('[');

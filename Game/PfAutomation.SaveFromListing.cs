@@ -155,6 +155,50 @@ namespace PfPresets
             }
         }
 
+        private PfPresetData? ownListingPreset;
+        private ulong ownListingPresetId;
+        private ulong[]? ownListingSlots;
+
+        /// <summary>
+        /// This character's own listing's seats - the accepted-jobs mask of each, zero for an
+        /// omitted one - as the game holds the posted listing, read from its detail window.
+        ///
+        /// NOT THE RECRUITMENT WINDOW'S MEMORY. That is the last recruitment set up on this client,
+        /// and after a relog it no longer describes the live listing at all: it read as eight
+        /// seats of any job, and a repost built from it replaced a listing's real seats with that.
+        /// </summary>
+        public ulong[]? OwnListingSlotMasks
+            => ownListingPresetId != 0 && ownListingPresetId == knownOwnListingId ? ownListingSlots : null;
+
+        /// <summary>
+        /// This character's own listing as a preset, read the last time its detail window was up -
+        /// which is how a listing posted from the game's own Recruitment window (no preset behind
+        /// it) can still be reposted. Seats are not in it; the caller supplies those.
+        /// </summary>
+        public PfPresetData? OwnListingAsPreset
+            => ownListingPresetId != 0 && ownListingPresetId == knownOwnListingId ? ownListingPreset : null;
+
+        private void CaptureOwnListingPreset(AgentLookingForGroup.Detailed listing)
+        {
+            if (listing.ListingId == 0 || listing.ListingId == ownListingPresetId)
+                return;
+
+            try
+            {
+                ownListingPreset = BuildPresetFromListing(listing);
+                var slots = new ulong[8];
+                var flags = listing.SlotFlags;
+                for (int i = 0; i < slots.Length && i < flags.Length; i++)
+                    slots[i] = flags[i];
+                ownListingSlots = slots;
+                ownListingPresetId = listing.ListingId;
+            }
+            catch (Exception ex)
+            {
+                pluginLog.Debug($"[PF Coordination] Could not read our own listing's settings: {ex.Message}");
+            }
+        }
+
         /// <summary>Maps a viewed listing onto a preset, clamping every field as it goes.</summary>
         private unsafe PfPresetData BuildPresetFromListing(AgentLookingForGroup.Detailed listing)
         {

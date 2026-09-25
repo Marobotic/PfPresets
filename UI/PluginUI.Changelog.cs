@@ -27,6 +27,26 @@ namespace PfPresets
 
         private static readonly ChangeEntry[] Changelog =
         {
+            new("4.0.0", "September 2026", new[]
+            {
+                "Ratings are retired. Nobody can vote on anybody, scores are no longer shown anywhere, and the window after a duty is gone. The Players tab keeps search, profiles, clears and everyone you have met.",
+                "A new Party Finder tab: every recruitment listing on a data centre you choose, in cards or a compact list, with search, paging, and a watch that floats any listing into its own window.",
+                "Join any party on your own data centre straight from the board. It opens the listing and checks it as it stands this second - seats, your job, one player per job, item level, completion requirement, level and unlock - and says why in a sentence if it can't let you in.",
+                "Alliance raids get a Join for each party separately, and private listings are marked with a lock and ask for their password.",
+                "Plugin parties also take applications from other data centres: press Apply, stay free until the listing is full, then accept and PF Analysis travels to the host's data centre and joins you in. Or press Join party now to go straight in without waiting.",
+                "Your own listing reaches the board the moment you post it, rather than the next time somebody happens to browse that data centre.",
+                "Refresh on your own data centre reads the Party Finder there and then, every page, so the board matches the game exactly instead of whatever it was a minute ago.",
+                "The plugin reads the Party Finder itself while you are away from the machine, so a data centre nobody is browsing still fills up.",
+                "Auto Refresh now runs off your listing's own clock instead of a timer of its own. The footer says whether it is checking, refreshing, or holding a refresh up and why. The setting is Refresh at N min left, and every refresh is checked 30 seconds later and tried again if it did not take.",
+                "A new look throughout, settings included: line icons, iOS rows, switches, steppers and dropdowns, and a sidebar instead of a list of settings pages.",
+                "A Feedback tab for bug reports, feature requests and questions, which reaches the author without the Discord address ever being in the plugin.",
+                "Clears are announced to everybody in the same second instead of up to two minutes apart.",
+                "Progress is shown in a pill, and a reading from over a day ago says so rather than passing for current.",
+                "While a listing is up your party list shows every seat, including the empty ones and the ones you omitted.",
+                "Dancing Mad party members show which mechanic their progress most likely means, with a switch under the list.",
+                "Fixed a listing losing its healer and gaining a fifth DPS, a full party staying on the board as 8/8, stepping away from the keyboard looking like you had stopped recruiting, a page-forward arrow that stopped working on page two, a clear banner that drew over other windows but was behind them for clicks, a search box whose cross could not be pressed, and a settings button that did nothing.",
+            }),
+
             new("3.5.1.1", "August 2026", new[]
             {
                 "Everyone's vote on you counts once. Rating the same person again used to stack another vote on top of the last one, so a group who play together every week piled up hundreds between them - a score of +300 could be eight people rather than three hundred.",

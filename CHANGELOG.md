@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.0
+
+- Ratings are gone. There is no more voting up or down on anyone.
+- Clears now have Ultimate, First clears and Savage.
+- Clear notifications in the middle of the screen are clickable even when another plugin is behind them.
+- New: Party Finder listings. A crowdsourced Party Finder for every data centre - browse listings from other data centres and your own, and join them.
+- New: Party Finder applying. Available only when the party leader is a plugin user. Your spot is omitted from the listing, you can track the party as it fills, and once it is full the plugin teleports you to the data centre and joins the listing for you.
+- General UI improvements across the plugin.
+
 ## 3.5.4.0
 
 ### Updates

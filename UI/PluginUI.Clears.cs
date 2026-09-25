@@ -124,7 +124,7 @@ namespace PfPresets
             using (UiCaptionFont.Push())
             {
                 float lineH = ImGui.GetTextLineHeight();
-                DrawTrackedCaps(dl, headingPos, section.Label, Dim);
+                DrawTrackedCaps(dl, headingPos, section.Label, FbSlate400);
 
                 string tally = $"{section.Cleared} / {section.Total}";
                 float tallyW = ImGui.CalcTextSize(tally).X;
@@ -473,13 +473,11 @@ namespace PfPresets
 
             var tint = disabled ? Faint with { W = 0.45f } : hovered ? Accent : Dim;
 
+            // Centred on the glyph's ink, not its line box: a FontAwesome glyph does not fill its
+            // em, so centring the box leaves the mark visibly low and to one side.
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
-            {
-                string glyph = icon.ToIconString();
-                Vector2 gs = ImGui.CalcTextSize(glyph);
-                dl.AddText(new Vector2(pos.X + (size - gs.X) * 0.5f, pos.Y + (size - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(tint), glyph);
-            }
+                DrawTextCentredOnInk(icon.ToIconString(),
+                    new Vector2(pos.X + size * 0.5f, pos.Y + size * 0.5f), tint);
 
             return clicked;
         }

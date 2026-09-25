@@ -1,4 +1,3 @@
-#if PFP_RATINGS
 using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
@@ -20,6 +19,8 @@ namespace PfPresets
         private readonly IPluginLog log;
 
         private Dictionary<uint, string>? idToName;
+        private Dictionary<string, uint>? nameToId;
+        private Dictionary<string, string>? nameToDataCentre;
         private Dictionary<string, uint>? nameToRegion;
 
         public WorldHelper(IDataManager dataManager, IPluginLog log)
@@ -34,6 +35,26 @@ namespace PfPresets
         {
             EnsureLoaded();
             return idToName != null && idToName.TryGetValue(worldId, out var name) ? name : string.Empty;
+        }
+
+        public uint GetWorldId(string worldName)
+        {
+            EnsureLoaded();
+            return nameToId != null
+                && !string.IsNullOrWhiteSpace(worldName)
+                && nameToId.TryGetValue(worldName.Trim(), out uint worldId)
+                ? worldId
+                : 0;
+        }
+
+        public string GetDataCentre(string worldName)
+        {
+            EnsureLoaded();
+            return nameToDataCentre != null
+                && !string.IsNullOrWhiteSpace(worldName)
+                && nameToDataCentre.TryGetValue(worldName.Trim(), out string? dataCentre)
+                ? dataCentre
+                : string.Empty;
         }
 
         /// <summary>
@@ -74,6 +95,30 @@ namespace PfPresets
             };
         }
 
+        /// <summary>
+        /// Whether a character from one world can stand on another's data centre. Every region can
+        /// travel within itself and to Oceania; Oceania cannot travel out. So North America reaches
+        /// NA and OC, and never EU or JP. Must agree with the server's canTravel.
+        /// </summary>
+        public bool CanTravel(string fromWorld, string toWorld)
+        {
+            string? from = GetFfLogsRegion(fromWorld);
+            string? to = GetFfLogsRegion(toWorld);
+            if (from == null || to == null)
+                return false;
+            return from == to || (to == "oc" && from != "oc");
+        }
+
+        /// <summary>The region's name as players say it.</summary>
+        public static string RegionLabel(string? region) => region?.ToLowerInvariant() switch
+        {
+            "na" => "North America",
+            "eu" => "Europe",
+            "jp" => "Japan",
+            "oc" => "Oceania",
+            _ => "another region",
+        };
+
         /// <summary>True when a name matches a real public world, used to reject typos in the
         /// search box before they turn into a pointless request.</summary>
         public bool IsKnownWorld(string worldName)
@@ -97,6 +142,8 @@ namespace PfPresets
                 return;
 
             idToName = new Dictionary<uint, string>();
+            nameToId = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            nameToDataCentre = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             nameToRegion = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
 
             try
@@ -119,6 +166,8 @@ namespace PfPresets
                         continue;
 
                     idToName[row.RowId] = name;
+                    nameToId[name] = row.RowId;
+                    nameToDataCentre[name] = row.DataCenter.ValueNullable?.Name.ToString() ?? string.Empty;
 
                     // The data centre's region, not row.Region - see GetFfLogsRegion. Worlds whose
                     // data centre reference doesn't resolve keep 0, which maps to "no FFLogs".
@@ -133,4 +182,3 @@ namespace PfPresets
         }
     }
 }
-#endif

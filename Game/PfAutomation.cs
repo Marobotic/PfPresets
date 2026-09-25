@@ -227,6 +227,29 @@ namespace PfPresets
         //  PRECONDITIONS
         // ══════════════════════════════════════════════════════════
 
+        /// <summary>
+        /// Whether this character may join somebody else's party right now, and why not - the same
+        /// limits as applying a preset, turned round: not while recruiting, in a duty, in the Duty
+        /// Finder queue, in combat, or already in a party.
+        /// </summary>
+        public bool CanJoinParty(out string reason)
+        {
+            reason = string.Empty;
+            if (!clientState.IsLoggedIn)
+                reason = "You are not logged in.";
+            else if (RecruitingStatusSet() || IsRecruiting())
+                reason = "You are recruiting on the Party Finder. End your listing to join another party.";
+            else if (IsInDuty())
+                reason = "You are in a duty.";
+            else if (IsInDutyQueue())
+                reason = "You are in the Duty Finder queue.";
+            else if (IsInCombat())
+                reason = "You are in combat.";
+            else if (GetOtherPartyMemberDetails().Count > 0)
+                reason = "Leave your current party to join another.";
+            return reason.Length == 0;
+        }
+
         public unsafe bool CanRecruit(out string reason)
         {
             reason = string.Empty;
@@ -237,7 +260,7 @@ namespace PfPresets
             }
 
             // Check if player's online status is "Recruiting Party Members" (ID 26)
-            if (objectTable.LocalPlayer != null && objectTable.LocalPlayer.OnlineStatus.RowId == 26)
+            if (RecruitingStatusSet())
             {
                 reason = "You are already recruiting on the Party Finder.";
                 return false;
@@ -1241,13 +1264,14 @@ namespace PfPresets
             // away the very slots they were written with.
             if (preset.UsesAutoAdjust)
             {
-                var autoSlots = GetAutoAdjustedSlots();
+                var autoSlots = GetAutoAdjustedSlots(preset);
                 for (int i = 0; i < 8; i++)
                     pSlotFlags[i] = i < autoSlots.Count ? GetAutoSlotGameMask(autoSlots[i]) : 0;
 
                 if (preset.AllowDoubleCaster)
                     ApplyDoubleCasterSlot(pSlotFlags, autoSlots);
 
+                RememberIntendedSeats(pSlotFlags);
                 return;
             }
 
@@ -1270,8 +1294,7 @@ namespace PfPresets
             // Doing the same move here first means what we write is already what the game will
             // settle on. The preset itself is untouched - the editor still shows the slots where
             // they were put, because that is where the user put them.
-            int next = 1;
-
+            var open = new List<ulong>();
             for (int i = 1; i < preset.Slots.Count && i < 8; i++)
             {
                 var slot = preset.Slots[i];
@@ -1281,15 +1304,69 @@ namespace PfPresets
                 if (slot.Role == RoleType.Omit)
                     continue;
 
-                pSlotFlags[next++] = slot.AcceptedJobFlags != 0
+                open.Add(slot.AcceptedJobFlags != 0
                     ? JobMasks.ToGameMask(slot.AcceptedJobFlags)
-                    : JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role));
+                    : JobMasks.ToGameMask(JobMasks.GetRoleMask(slot.Role)));
+            }
+
+            // PARTY MEMBERS' SEATS FIRST, CHOSEN BY JOB.
+            //
+            // A listing posted with people already in the party seats them BY POSITION: the first
+            // other member takes seat 2, the next seat 3, and each seat is then locked to whoever
+            // sits in it. Written in the preset's own order, a Black Mage already in the party took
+            // the pure-healer seat - the listing lost a healer and gained a fifth DPS, and every
+            // refresh after kept it that way. So each member, in the order the game seats them, is
+            // given the seat that takes their job, and those go first; the rest follow; omitted
+            // seats stay closed at the end. A member no seat takes gets the next free one, which
+            // is what the game would have done anyway.
+            int next = 1;
+            foreach (var member in GetOtherPartyMembers())
+            {
+                if (open.Count == 0 || next >= 8)
+                    break;
+
+                int bit = JobMasks.GetGameJobBitIndex(member.JobId);
+                int seat = bit > 0 ? open.FindIndex(m => (m & (1UL << bit)) != 0) : -1;
+                if (seat < 0)
+                    seat = 0;
+
+                pSlotFlags[next++] = open[seat];
+                open.RemoveAt(seat);
+            }
+
+            foreach (ulong mask in open)
+            {
+                if (next >= 8)
+                    break;
+                pSlotFlags[next++] = mask;
             }
 
             // The tail: every seat past the last real one, whether it was omitted or was never in
             // this preset to begin with. Both are closed, and the game reads them the same way.
             for (int i = next; i < 8; i++)
                 pSlotFlags[i] = 0;
+
+            RememberIntendedSeats(pSlotFlags);
+        }
+
+        /// <summary>
+        /// The seats as this plugin last posted them: what each seat was MEANT to take, before
+        /// anybody sat in it, zero for an omitted one. The locked-slot adjuster puts a vacated seat
+        /// back to this, rather than guessing its role from whoever happened to be sitting in it.
+        /// </summary>
+        private ulong[]? intendedSeats;
+
+        /// <summary>Set when this plugin has just written the seats, so the post that follows is
+        /// known to be ours.</summary>
+        private bool intendedWritePending;
+
+        private unsafe void RememberIntendedSeats(ulong* pSlotFlags)
+        {
+            var seats = new ulong[8];
+            for (int i = 0; i < 8; i++)
+                seats[i] = pSlotFlags[i];
+            intendedSeats = seats;
+            intendedWritePending = true;
         }
 
         /// <summary>Game mask for one auto-adjusted slot: the locked job when known, else the
@@ -1413,8 +1490,22 @@ namespace PfPresets
         /// 2T/2H/4D composition. Cached briefly to avoid per-frame native reads.
         /// </summary>
         public unsafe List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)> GetAutoAdjustedSlots()
+            => GetAutoAdjustedSlots(null);
+
+        /// <summary>
+        /// The auto-adjusted seats, honouring a preset's omitted seats.
+        ///
+        /// OMITTED MEANS OMITTED, AUTO-ADJUST OR NOT. The standard layout used to fill all eight
+        /// seats whatever the preset closed, so a preset omitting its second tank seat still sought
+        /// two tanks the moment auto-adjust was on. Each omitted seat now takes the standard
+        /// layout's seat at the same position out of the search (the preset editor lays seats out
+        /// in that same order, so position two is the second tank), and the listing has that many
+        /// fewer seats. Only coordination ever opens an omitted seat.
+        /// </summary>
+        public unsafe List<(RoleType Role, uint? JobId, string Tooltip, JobCategory? Category)> GetAutoAdjustedSlots(PfPresetData? preset)
         {
-            if (cachedAutoAdjustedSlots != null &&
+            int omittedCount = preset?.Slots.Skip(1).Count(s => s.Role == RoleType.Omit) ?? 0;
+            if (omittedCount == 0 && cachedAutoAdjustedSlots != null &&
                 DateTime.Now - lastAutoAdjustUpdate < AutoAdjustCacheDuration)
             {
                 return cachedAutoAdjustedSlots;
@@ -1458,6 +1549,21 @@ namespace PfPresets
                 JobCategory.MagicRangedDPS,
             };
 
+            // The seats the preset closed, by their place in the standard layout.
+            var template = remainingCategories.ToList();
+            int seats = 8;
+            if (preset != null)
+            {
+                for (int i = 1; i < preset.Slots.Count && i < template.Count; i++)
+                {
+                    if (preset.Slots[i].Role == RoleType.Omit)
+                    {
+                        remainingCategories.Remove(template[i]);
+                        seats--;
+                    }
+                }
+            }
+
             var localCategory = JobData.FindById(localJobId)?.Category;
             remainingCategories.Remove(localCategory ?? JobCategory.MeleeDPS);
 
@@ -1468,8 +1574,8 @@ namespace PfPresets
                     remainingCategories.Remove(memberCategory.Value);
             }
 
-            // Fill the remaining empty slots (from partySize up to 8).
-            for (int i = partySize; i < 8; i++)
+            // Fill the remaining empty slots (from partySize up to the seats the listing has).
+            for (int i = partySize; i < seats; i++)
             {
                 int catIdx = i - partySize;
                 JobCategory category = catIdx < remainingCategories.Count ? remainingCategories[catIdx] : JobCategory.MeleeDPS;
@@ -1487,8 +1593,11 @@ namespace PfPresets
                     category));
             }
 
-            cachedAutoAdjustedSlots = result;
-            lastAutoAdjustUpdate = DateTime.Now;
+            if (omittedCount == 0)
+            {
+                cachedAutoAdjustedSlots = result;
+                lastAutoAdjustUpdate = DateTime.Now;
+            }
             return result;
         }
 

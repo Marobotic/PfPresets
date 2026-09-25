@@ -47,21 +47,6 @@ namespace PfPresets
     }
 
     /// <summary>
-    /// Which way a vote went. There is no middle value on purpose: after one duty with a stranger
-    /// you know whether you'd happily play with them again or not, and little else. Two options
-    /// also give a brigade far less room to nudge a score without it being obvious.
-    /// </summary>
-    public enum VoteDirection
-    {
-        /// <summary>Only for history entries recovered from the cooldown list, where the fact of
-        /// the rating survived but its direction didn't.</summary>
-        Unknown = 0,
-
-        Down = -1,
-        Up = 1,
-    }
-
-    /// <summary>
     /// The voter's relationship to the person being rated, which decides the collusion discount.
     /// Asserted by the client because the server cannot see anyone's friend list; the server
     /// still applies the weight itself rather than trusting a number off the wire.
@@ -104,40 +89,6 @@ namespace PfPresets
         public List<LookupRequest> Players { get; set; } = new();
     }
 
-    internal sealed class SubmitRatingRequest
-    {
-        /// <summary>
-        /// This vote's id, minted by the client and reused on every attempt.
-        ///
-        /// The server remembers ids it has processed, so a vote whose reply was lost is recognised
-        /// on the retry rather than counted twice. It is not a proof of anything - the client
-        /// generates it, and anything the client can compute an attacker can compute too - it just
-        /// has to be unique.
-        /// </summary>
-        public string VoteId { get; set; } = string.Empty;
-
-        public CharacterIdentity Target { get; set; } = new();
-
-        /// <summary>+1 or -1. Serialised as a number because that is what the column stores.</summary>
-        public int Score { get; set; }
-        public int Tags { get; set; }
-        public int DutyRowId { get; set; }
-        public SocialLink SocialLink { get; set; }
-
-        /// <summary>When the duty that prompted this rating finished. Context for abuse review;
-        /// the server stores only the day, never this precise value.</summary>
-        public DateTime MetAt { get; set; }
-
-        /// <summary>
-        /// Sealed proof that this vote came out of a duty both players were in.
-        ///
-        /// The server refuses a vote without it. Built by a component that is not in this
-        /// repository, so a vote cannot be mimicked by reading the source - though the checks that
-        /// actually stop abuse are the server's, and hold whether or not the format is known.
-        /// </summary>
-        public string Evidence { get; set; } = string.Empty;
-    }
-
     // ══════════════════════════════════════════════════════════════
     //  REPORTS
     // ══════════════════════════════════════════════════════════════
@@ -161,7 +112,6 @@ namespace PfPresets
         public static readonly (ReportReason Reason, string Label)[] All =
         {
             (ReportReason.Harassment, "Harassment"),
-            (ReportReason.RatingAbuse, "Rating abuse"),
             (ReportReason.Griefing, "Griefing"),
             (ReportReason.Impersonation, "Impersonation"),
             (ReportReason.Other, "Other"),
@@ -202,6 +152,24 @@ namespace PfPresets
         public string Note { get; set; } = string.Empty;
 
         public int DutyRowId { get; set; }
+    }
+
+    /// <summary>A message from the Feedback tab. Goes to the plugin author's Discord through the
+    /// server, never straight to a webhook - see <see cref="PfApiClient.SubmitReportAsync"/>.</summary>
+    internal sealed class SubmitFeedbackRequest
+    {
+        /// <summary>0 bug, 1 suggestion, 2 help, 3 thoughts - the order of FeedbackKinds.</summary>
+        public int Kind { get; set; }
+
+        public string Message { get; set; } = string.Empty;
+
+        /// <summary>Where the author can answer, if the sender wants an answer. Optional.</summary>
+        public string Contact { get; set; } = string.Empty;
+
+        /// <summary>Null when the sender left their name off; omitted from the body then.</summary>
+        public CharacterIdentity? From { get; set; }
+
+        public string PluginVersion { get; set; } = string.Empty;
     }
 
     internal sealed class SubmitReportResponse
@@ -251,6 +219,12 @@ namespace PfPresets
         public string Region { get; set; } = string.Empty;
     }
 
+    internal sealed class EncounterRef
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
     internal sealed class ProgressResponse
     {
         /// <summary>Null when the duty isn't an FFLogs encounter at all, which is most content
@@ -290,12 +264,6 @@ namespace PfPresets
 
         /// <summary>How long the server suggests waiting before reading again.</summary>
         public int PollAfterSec { get; set; }
-    }
-
-    internal sealed class EncounterRef
-    {
-        public int Id { get; set; }
-        public string Name { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -353,27 +321,16 @@ namespace PfPresets
         [JsonIgnore]
         public DateTime AppliedAt { get; set; } = DateTime.UtcNow;
 
+        /// <summary>When the server fetched this from the provider: the moment it reached the client,
+        /// less how old the server's copy already was.</summary>
+        [JsonIgnore]
+        public DateTime FetchedAt => AppliedAt - TimeSpan.FromSeconds(Math.Max(0, AgeSec));
+
         /// <summary>"P3 59%", or "59%" when the fight has no phases worth naming.</summary>
         [JsonIgnore]
         public string ProgLabel => Phase > 0
             ? $"P{Phase} {Percent:0.#}%"
             : $"{Percent:0.#}%";
-    }
-
-    /// <summary>Community-wide totals, for the analytics view.</summary>
-    public sealed class RatingStats
-    {
-        /// <summary>How many distinct characters have received at least one rating.</summary>
-        public int PlayersRated { get; set; }
-
-        /// <summary>How many ratings have been submitted in total.</summary>
-        public int RatingsSubmitted { get; set; }
-
-        /// <summary>Community-wide positive and negative totals.</summary>
-        public int Upvotes { get; set; }
-        public int Downvotes { get; set; }
-
-        public DateTime? UpdatedAt { get; set; }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -545,62 +502,9 @@ namespace PfPresets
         public List<PlayerRating> Players { get; set; } = new();
     }
 
-    internal sealed class SubmitRatingResponse
-    {
-        /// <summary>The weight the server actually applied, after its own social and repeat
-        /// discounts. Shown back to the voter so the weighting is never a black box.</summary>
-        public double WeightApplied { get; set; }
-
-        public DateTime? NextEligibleAt { get; set; }
-    }
-
-    /// <summary>
-    /// Server-owned tunables, fetched once per session. Keeping these on the server means the
-    /// weights and the display gate can be retuned without shipping a plugin update, and the
-    /// client's copy is only ever used to explain the rules in the UI - never to enforce them.
-    /// </summary>
-    public sealed class RatingPolicy
-    {
-        public double BaseWeight { get; set; } = 1.0;
-        public double SocialLinkWeight { get; set; } = 0.5;
-        public double RepeatVoteWeight { get; set; } = 0.1;
-        public int MinVotesToDisplay { get; set; } = 3;
-        public int CooldownHours { get; set; } = 24;
-        public int BatchMax { get; set; } = 32;
-
-        public static RatingPolicy Default => new();
-    }
-
     // ══════════════════════════════════════════════════════════════
     //  FEEDBACK TAGS
     // ══════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// The structured feedback options offered alongside the score. Deliberately all positive:
-    /// a fixed list of compliments cannot be turned into a harassment vector the way free text
-    /// or negative labels can, and it keeps the plugin out of the business of hosting insults.
-    /// </summary>
-    public static class RatingTags
-    {
-        public const int Communication = 1 << 0;
-        public const int Punctual = 1 << 1;
-        public const int Patient = 1 << 2;
-        public const int GoodMechanics = 1 << 3;
-        public const int Helpful = 1 << 4;
-        public const int Friendly = 1 << 5;
-
-        public static readonly (int Bit, string Label)[] All =
-        {
-            (Communication, "Good communication"),
-            (Punctual, "Punctual"),
-            (Patient, "Patient"),
-            (GoodMechanics, "Solid mechanics"),
-            (Helpful, "Helpful"),
-            (Friendly, "Friendly"),
-        };
-
-        /// <summary>Every bit we know about, used to drop unknown bits from a server response.</summary>
-        public const int KnownMask = Communication | Punctual | Patient | GoodMechanics | Helpful | Friendly;
-    }
 }
 #endif

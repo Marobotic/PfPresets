@@ -225,17 +225,6 @@ namespace PfPresets
         //  ENDPOINTS
         // ══════════════════════════════════════════════════════════
 
-        public async Task<ApiResult<PlayerRating>> LookupAsync(CharacterIdentity who)
-        {
-            if (!who.IsValid)
-                return ApiResult<PlayerRating>.Fail(ApiStatus.BadRequest);
-
-            return await SendAsync<PlayerRating>(
-                HttpMethod.Post,
-                "players/lookup",
-                new LookupRequest { Name = who.Name, World = who.World }).ConfigureAwait(false);
-        }
-
         /// <summary>Looks up many players in one request. The party panel and the Contacts tab
         /// each need a rating for everyone on screen at once; doing that as individual calls would
         /// put a burst of dozens of requests on the server every time either is drawn.</summary>
@@ -255,16 +244,6 @@ namespace PfPresets
                 HttpMethod.Post, "players/batch", request).ConfigureAwait(false);
         }
 
-        public async Task<ApiResult<SubmitRatingResponse>> SubmitAsync(SubmitRatingRequest submission)
-        {
-            // Score is +1 (upvote) or -1 (downvote); anything else is a bug on our side.
-            if (!submission.Target.IsValid || submission.Score is not (1 or -1))
-                return ApiResult<SubmitRatingResponse>.Fail(ApiStatus.BadRequest);
-
-            return await SendAsync<SubmitRatingResponse>(
-                HttpMethod.Post, "ratings", submission).ConfigureAwait(false);
-        }
-
         /// <summary>Reports a player to the plugin author. Deliberately routed through the API
         /// rather than posting straight to a chat webhook: a webhook URL shipped inside the plugin
         /// could be extracted and used to flood the channel by anyone who unzipped the DLL.</summary>
@@ -275,6 +254,18 @@ namespace PfPresets
 
             return await SendAsync<SubmitReportResponse>(
                 HttpMethod.Post, "reports", report).ConfigureAwait(false);
+        }
+
+        /// <summary>Sends a Feedback-tab message to the plugin author, through the API for the same
+        /// reason reports are.</summary>
+        public async Task<ApiResult<SubmitReportResponse>> SubmitFeedbackAsync(SubmitFeedbackRequest feedback)
+        {
+            if (string.IsNullOrWhiteSpace(feedback.Message))
+                return ApiResult<SubmitReportResponse>.Fail(ApiStatus.BadRequest);
+
+            feedback.PluginVersion = version;
+            return await SendAsync<SubmitReportResponse>(
+                HttpMethod.Post, "feedback", feedback).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -377,6 +368,68 @@ namespace PfPresets
             => await SendAsync<AchievementUnseenResponse>(
                 HttpMethod.Post, "achievements/unseen",
                 new AchievementUnseenRequest { Since = since, Scope = scope }).ConfigureAwait(false);
+
+        /// <summary>
+        /// Opens the clear stream: one held connection down which the server pushes each new clear
+        /// as it is posted. Null when it cannot be opened, with how long to wait before asking again
+        /// if the server said. The caller owns the response and reads it until it ends.
+        ///
+        /// ITS OWN CLIENT, because the shared one gives up on any request after thirty-five seconds
+        /// and this one is meant to stay open for hours. Idle connections are the server's cost to
+        /// carry, and it pings every twenty-five seconds so a dead one is noticed.
+        /// </summary>
+        public async Task<(HttpResponseMessage? Response, TimeSpan? RetryAfter)> OpenClearStreamAsync(
+            CancellationToken stop)
+        {
+            if (cancel.IsCancellationRequested || IsCircuitOpen())
+                return (null, null);
+
+            string? token = await EnsureSessionAsync().ConfigureAwait(false);
+            if (token == null)
+                return (null, null);
+
+            streamHttp ??= NewStreamClient();
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop, cancel.Token);
+            var request = BuildRequest(HttpMethod.Get, "achievements/stream", null, token);
+            request.Headers.Accept.ParseAdd("text/event-stream");
+
+            try
+            {
+                var response = await streamHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token)
+                    .ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                    return (response, null);
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                    InvalidateSession();
+
+                var wait = ReadRetryAfter(response);
+                response.Dispose();
+                return (null, wait);
+            }
+            catch (Exception) when (!cancel.IsCancellationRequested)
+            {
+                return (null, null);
+            }
+            finally
+            {
+                request.Dispose();
+            }
+        }
+
+        private HttpClient? streamHttp;
+
+        private HttpClient NewStreamClient()
+        {
+            var client = new HttpClient
+            {
+                BaseAddress = http.BaseAddress,
+                Timeout = Timeout.InfiniteTimeSpan,
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd($"PfPresets/{version}");
+            return client;
+        }
 
         /// <summary>
         /// One cached image - a character's portrait, or a fight's art - as bytes.
@@ -492,6 +545,59 @@ namespace PfPresets
                 new PfLookupRequest { LeaderName = leaderName, LeaderWorld = leaderWorld })
                 .ConfigureAwait(false);
 
+        /// <summary>Uploads listings this client's Party Finder window just received.</summary>
+        /// <summary>After a Party Finder read: what the data centre really has, so the gone come off.</summary>
+        public async Task<ApiResult<PfBoardSweepResponse>> SweepPfBoardAsync(PfBoardSweepRequest request)
+            => await SendAsync<PfBoardSweepResponse>(
+                HttpMethod.Post, "pf/board/sweep", request).ConfigureAwait(false);
+
+        public async Task<ApiResult<PfBoardUploadResponse>> ReportPfBoardAsync(
+            PfBoardUploadRequest request)
+            => await SendAsync<PfBoardUploadResponse>(
+                HttpMethod.Post, "pf/board/report", request).ConfigureAwait(false);
+
+        /// <summary>The Party Finder tab's board for one data centre.</summary>
+        public async Task<ApiResult<PfBoardResponse>> GetPfBoardAsync(PfBoardRequest request)
+            => await SendAsync<PfBoardResponse>(
+                HttpMethod.Post, "pf/board", request).ConfigureAwait(false);
+
+        /// <summary>The listings being watched, found by leader on any data centre.</summary>
+        public async Task<ApiResult<PfBoardWatchResponse>> WatchPfBoardAsync(PfBoardWatchRequest request)
+            => await SendAsync<PfBoardWatchResponse>(
+                HttpMethod.Post, "pf/board/watch", request).ConfigureAwait(false);
+
+        /// <summary>The recruiter's own listing, or its withdrawal.</summary>
+        public async Task<ApiResult<PfBoardUploadResponse>> ReportOwnPfListingAsync(PfBoardOwnRequest request)
+            => await SendAsync<PfBoardUploadResponse>(
+                HttpMethod.Post, "pf/board/own", request).ConfigureAwait(false);
+
+        public async Task<ApiResult<PfCoordinationHostResponse>> HostPfCoordinationAsync(
+            PfCoordinationHostRequest request)
+            => await SendAsync<PfCoordinationHostResponse>(
+                HttpMethod.Post, "pf/coord/host", request).ConfigureAwait(false);
+
+        public async Task<ApiResult<PfCoordinationInterestResponse>> ShowPfCoordinationInterestAsync(
+            PfCoordinationInterestRequest request)
+            => await SendAsync<PfCoordinationInterestResponse>(
+                HttpMethod.Post, "pf/coord/interest", request).ConfigureAwait(false);
+
+        public async Task<ApiResult<PfCoordinationPollResponse>> PollPfCoordinationAsync(
+            string coordinationId)
+            => await SendAsync<PfCoordinationPollResponse>(
+                HttpMethod.Post, "pf/coord/poll",
+                new PfCoordinationPollRequest { CoordinationId = coordinationId }).ConfigureAwait(false);
+
+        /// <summary>Returns the moment the other side of a coordination changes something, or after
+        /// about 25 seconds with nothing.</summary>
+        public async Task<ApiResult<PfCoordinationWaitResponse>> WaitPfCoordinationAsync(PfCoordinationWaitRequest request)
+            => await SendAsync<PfCoordinationWaitResponse>(
+                HttpMethod.Post, "pf/coord/wait", request).ConfigureAwait(false);
+
+        public async Task<ApiResult<PfReportResponse>> CancelPfCoordinationAsync(string coordinationId)
+            => await SendAsync<PfReportResponse>(
+                HttpMethod.Post, "pf/coord/cancel",
+                new PfCoordinationCancelRequest { CoordinationId = coordinationId }).ConfigureAwait(false);
+
         /// <summary>Turns broadcasting on or off for the character this session belongs to. The
         /// server checks it against the session's own character, so this cannot be pointed at
         /// anybody else's.</summary>
@@ -557,14 +663,6 @@ namespace PfPresets
                 .ConfigureAwait(false);
         }
 
-        /// <summary>Community-wide rating totals. Unauthenticated: they are aggregate counts with
-        /// nothing identifying in them.</summary>
-        public async Task<ApiResult<RatingStats>> GetStatsAsync()
-            => await SendAsync<RatingStats>(HttpMethod.Get, "stats", null, requireAuth: false).ConfigureAwait(false);
-
-        public async Task<ApiResult<RatingPolicy>> GetPolicyAsync()
-            => await SendAsync<RatingPolicy>(HttpMethod.Get, "policy", null, requireAuth: false).ConfigureAwait(false);
-
         // DeleteMyLedgerAsync is gone, with the route behind it. The cooldown ledger is the
         // anti-abuse record - erasing it on request let anybody rate the same person over and over
         // at full weight, and because the caller's identity was a claimed name it could be pointed
@@ -595,43 +693,6 @@ namespace PfPresets
                     Slug = slug, Option = option, Token = token, FromPlugin = identified,
                 },
                 requireAuth: identified).ConfigureAwait(false);
-
-        /// <summary>
-        /// Files a finished duty and asks who this character may vote on out of it.
-        ///
-        /// The same sealed payload the achievement post carries - one duty, described once, read by
-        /// two routes. The achievement post is about the feed and only some duties qualify; this is
-        /// about the vote window and every duty does.
-        ///
-        /// A SERVER THAT DOES NOT KNOW THIS ROUTE IS NOT AN ERROR. It answers 404, which arrives
-        /// here as NotFound, and the caller reads that as "this server predates the allowance" and
-        /// falls back to the old behaviour. That is the whole of the backwards compatibility on
-        /// this side: nothing is withheld from somebody whose server cannot answer.
-        /// </summary>
-        public async Task<ApiResult<DutyAllowanceResponse>> ReportDutyAsync(DutyReportRequest request)
-        {
-            if (string.IsNullOrEmpty(request.Evidence))
-                return ApiResult<DutyAllowanceResponse>.Fail(ApiStatus.BadRequest);
-
-            return await SendAsync<DutyAllowanceResponse>(
-                HttpMethod.Post, "duty/report", request).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Asks again about a duty already filed, while anybody in it is still to be heard from.
-        ///
-        /// Polled on a backoff rather than a timer: what it is waiting for is other people's clients
-        /// filing as each of them leaves the instance, and nothing at either end can hurry that.
-        /// </summary>
-        public async Task<ApiResult<DutyAllowanceResponse>> GetDutyAllowanceAsync(
-            DutyAllowanceRequest request)
-        {
-            if (request.Duty <= 0 || request.Party.Count < 2)
-                return ApiResult<DutyAllowanceResponse>.Fail(ApiStatus.BadRequest);
-
-            return await SendAsync<DutyAllowanceResponse>(
-                HttpMethod.Post, "duty/allowance", request).ConfigureAwait(false);
-        }
 
         private async Task<ApiResult<TRes>> SendAsync<TRes>(
             HttpMethod method,
@@ -847,6 +908,16 @@ namespace PfPresets
         /// here: every other call carries the opaque token instead, so a character name isn't
         /// repeated on the wire for every lookup.
         /// </summary>
+        /// <summary>
+        /// No new session is asked for before this. Set when the server refuses one.
+        ///
+        /// Every call needs a session, so without this a refused session was asked for again by
+        /// every caller on every attempt - the board, its reads, the coordination waits - which
+        /// against a rate limit is fifty requests a minute that can only be refused, and which
+        /// keep the limit hit. One refusal now quiets them all until the server says to try again.
+        /// </summary>
+        private DateTime sessionBlockedUntil = DateTime.MinValue;
+
         private async Task<string?> EnsureSessionAsync()
         {
             var identity = SafeIdentity();
@@ -855,6 +926,9 @@ namespace PfPresets
 
             if (IsSessionUsable(identity))
                 return sessionToken;
+
+            if (DateTime.UtcNow < sessionBlockedUntil)
+                return null;
 
             try
             {
@@ -868,9 +942,11 @@ namespace PfPresets
 
             try
             {
-                // Another caller may have refreshed it while we waited.
+                // Another caller may have refreshed it - or been refused - while we waited.
                 if (IsSessionUsable(identity))
                     return sessionToken;
+                if (DateTime.UtcNow < sessionBlockedUntil)
+                    return null;
 
                 string installId = EnsureInstallId();
                 var request = new SessionRequest
@@ -887,7 +963,11 @@ namespace PfPresets
                 {
                     if ((int)response.StatusCode >= 500)
                         OnFailure();
-                    LogOnce($"[Ratings] Session request rejected: {(int)response.StatusCode}.");
+
+                    // Wait as long as the server asks, or a minute - never straight back.
+                    var wait = ReadRetryAfter(response) ?? TimeSpan.FromMinutes(1);
+                    sessionBlockedUntil = DateTime.UtcNow + (wait < TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : wait);
+                    LogOnce($"[Ratings] Session request rejected: {(int)response.StatusCode}; not asking again for {wait.TotalSeconds:F0}s.");
                     return null;
                 }
 
@@ -1015,6 +1095,7 @@ namespace PfPresets
                 // block after unload, and SemaphoreSlim only needs disposal once its
                 // AvailableWaitHandle has been allocated, which this class never does.
                 http.Dispose();
+                streamHttp?.Dispose();
             }
             catch (Exception)
             {

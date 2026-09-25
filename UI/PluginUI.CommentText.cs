@@ -150,16 +150,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Draws a comment at the ImGui cursor, wrapped to a width and capped at a line count, and
-        /// advances the cursor past it. For the flow-layout sites that used ImGui.TextColored.
-        /// </summary>
-        private void DrawWrappedComment(string text, float width, int maxLines, Vector4 baseColor)
-        {
-            using (CommentFont.Push())
-                DrawCommentLines(WrapCommentToLines(text, width, maxLines), baseColor, width);
-        }
-
-        /// <summary>
         /// Draws already-wrapped comment lines at the ImGui cursor and advances past them, for
         /// callers that wrap by their own rule (the editor's preview mimics the game's listing
         /// width in characters, not pixels).

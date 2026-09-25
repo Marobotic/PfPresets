@@ -94,6 +94,11 @@ namespace PfPresets
                 tabs.Add(("My Profile", FontAwesomeIcon.Star, MainTab.Ratings));
                 tabs.Add(("Clears", FontAwesomeIcon.Trophy, MainTab.Achievements));
 
+                // Every listing plugin users have seen, and every party they are in. Community
+                // like the two above: it is built out of what other installs share.
+                if (Board != null)
+                    tabs.Add(("Party Finder", FontAwesomeIcon.Binoculars, MainTab.PartyFinder));
+
                 TickUnreadBadge();
             }
 
@@ -104,6 +109,10 @@ namespace PfPresets
             EnsurePollLoaded();
             if (PollAvailable)
                 tabs.Add(("Vote", FontAwesomeIcon.CheckSquare, MainTab.Vote));
+
+            // Always there, community or not: a bug report or a question is not a community feature.
+            if (Ratings != null)
+                tabs.Add(("Feedback", FontAwesomeIcon.CommentDots, MainTab.Feedback));
 
             tabs.Add(("Settings", FontAwesomeIcon.Cog, MainTab.Settings));
 
@@ -116,7 +125,8 @@ namespace PfPresets
             // that is no longer in the list. The same applies to any extra that has just been
             // switched off: land on something that exists rather than on a blank body.
             if (!config.CommunityEnabled
-                && (activeTab == MainTab.Ratings || activeTab == MainTab.Achievements))
+                && (activeTab == MainTab.Ratings || activeTab == MainTab.Achievements
+                    || activeTab == MainTab.PartyFinder))
                 activeTab = MainTab.Presets;
 
             if (!tabs.Exists(t => t.Item3 == activeTab))
@@ -193,15 +203,16 @@ namespace PfPresets
             ImGui.SetCursorScreenPos(new Vector2(p.X + 16f, p.Y + (PortraitHeaderHeight - 28f) * 0.5f));
             DrawBrand();
 
-            const float btn = 30f;
+            const float btn = 28f;
             float ctrlY = p.Y + (PortraitHeaderHeight - btn) * 0.5f;
-
-            ImGui.SetCursorScreenPos(new Vector2(p.X + width - btn - 14f, ctrlY));
-            DrawWindowGlyphButton(FontAwesomeIcon.Times, "PhoneClose", "Close", btn,
-                () => isMainWindowVisible = false);
+            DrawRoundCloseButton("##PhoneClose", new Vector2(p.X + width - btn - 16f, ctrlY), btn);
 
             DrawPortraitKofiButton(p, width, btn);
 
+            // The mockup's hairline under the bar, drawn rather than laid out.
+            dl.AddRectFilled(new Vector2(p.X, p.Y + PortraitHeaderHeight),
+                new Vector2(p.X + width, p.Y + PortraitHeaderHeight + 1f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
             ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + PortraitHeaderHeight));
             DrawRuleHair();
         }
@@ -229,7 +240,7 @@ namespace PfPresets
                 iconW = ImGui.CalcTextSize(FontAwesomeIcon.Heart.ToIconString()).X;
 
             float kofiW = padX + iconW + 8f + ImGui.CalcTextSize(KofiLabel).X + padX;
-            float right = headerMin.X + width - closeSize - 14f - Space.Tight;
+            float right = headerMin.X + width - closeSize - 16f - Space.Tight;
 
             // The mark and the name on the left keep their room; the button is what gives way,
             // because the header without it still says what the window is. Measured rather than
@@ -239,22 +250,13 @@ namespace PfPresets
 
             if (!fits)
             {
-                ImGui.SetCursorScreenPos(new Vector2(right - closeSize,
-                    headerMin.Y + (PortraitHeaderHeight - closeSize) * 0.5f));
-                DrawWindowGlyphButton(FontAwesomeIcon.Heart, "PhoneKofi", KofiLabel, closeSize,
-                    () => Dalamud.Utility.Util.OpenLink(KofiUrl),
-                    tint: KoFi, hotTint: Lighten(KoFi, 0.2f));
+                DrawKofiPill("##PhoneKofi", new Vector2(right - closeSize,
+                    headerMin.Y + (PortraitHeaderHeight - closeSize) * 0.5f), new Vector2(closeSize), labelled: false);
                 return;
             }
 
-            var pos = new Vector2(right - kofiW, headerMin.Y + (PortraitHeaderHeight - kofiH) * 0.5f);
-            var size = new Vector2(kofiW, kofiH);
-
-            ImGui.SetCursorScreenPos(pos);
-            if (DrawKofiButton("##PhoneKofi", size))
-                Dalamud.Utility.Util.OpenLink(KofiUrl);
-
-            DrawIconLabelLeft(FontAwesomeIcon.Heart, KofiLabel, pos, size, Ink, padX);
+            DrawKofiPill("##PhoneKofi", new Vector2(right - kofiW, headerMin.Y + (PortraitHeaderHeight - kofiH) * 0.5f),
+                new Vector2(kofiW, kofiH), labelled: true);
         }
 
         /// <summary>
@@ -276,20 +278,29 @@ namespace PfPresets
             dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + total),
                 ImGui.ColorConvertFloat4ToU32(Panel),
                 Radius.Screen, ImDrawFlags.RoundCornersBottom);
-            dl.AddLine(p, new Vector2(p.X + width, p.Y),
-                ImGui.ColorConvertFloat4ToU32(RuleHair), 1f);
+            dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + 1f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
 
             if (tabs.Count == 0)
                 return;
 
-            float cell = width / tabs.Count;
+            if (activeTab == MainTab.Settings)
+            {
+                // Settings' own bar: back, then its pages - the phone's version of the sidebar
+                // swapping its tabs for them.
+                DrawPortraitSettingsBar(dl, p, width);
+            }
+            else
+            {
+                float cell = width / tabs.Count;
 
-            if (ChromeDiagnosticRequested)
-                ReportChromeDiagnostic($"tab bar: {tabs.Count} tabs at {cell:F0}px each");
+                if (ChromeDiagnosticRequested)
+                    ReportChromeDiagnostic($"tab bar: {tabs.Count} tabs at {cell:F0}px each");
 
-            for (int i = 0; i < tabs.Count; i++)
-                DrawPortraitTab(dl, tabs[i].Label, tabs[i].Icon, tabs[i].Tab,
-                    new Vector2(p.X + cell * i, p.Y), new Vector2(cell, TabBarHeight));
+                for (int i = 0; i < tabs.Count; i++)
+                    DrawPortraitTab(dl, tabs[i].Label, tabs[i].Icon, tabs[i].Tab,
+                        new Vector2(p.X + cell * i, p.Y), new Vector2(cell, TabBarHeight));
+            }
 
             // The home indicator. Nothing happens if you press it - there is no home to go to - so
             // it is drawn rather than built as a control, and it is Faint rather than Ink so it
@@ -298,7 +309,7 @@ namespace PfPresets
             var indPos = new Vector2(p.X + (width - indW) * 0.5f,
                 p.Y + TabBarHeight + (HomeIndicatorHeight - indH) * 0.5f);
             dl.AddRectFilled(indPos, new Vector2(indPos.X + indW, indPos.Y + indH),
-                ImGui.ColorConvertFloat4ToU32(BorderControl), Radius.Pill);
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.3f)), Radius.Pill);
 
             ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + total));
         }
@@ -336,12 +347,7 @@ namespace PfPresets
             bool active = activeTab == tab;
 
             ImGui.SetCursorScreenPos(pos);
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.04f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.07f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Small);
-
-            if (ImGui.Button($"##tabbar{tab}", size))
+            if (ImGui.InvisibleButton($"##tabbar{tab}", size))
             {
                 // Choosing a tab by hand is its own navigation: whatever Back was remembering is
                 // no longer where you came from.
@@ -350,10 +356,20 @@ namespace PfPresets
             }
 
             bool hovered = ImGui.IsItemHovered();
-            ImGui.PopStyleVar();
-            ImGui.PopStyleColor(3);
+            if (hovered && !active)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
-            Vector4 colour = active ? Accent : hovered ? Dim : Faint;
+            // The sidebar's language in a bar: the page you are on sits on a soft accent pill and
+            // takes the accent; the rest are slate, going lighter under the cursor.
+            if (active || hovered)
+            {
+                var pillMin = pos + new Vector2(6f, 6f);
+                var pillMax = pos + size - new Vector2(6f, 6f);
+                dl.AddRectFilled(pillMin, pillMax, ImGui.ColorConvertFloat4ToU32(
+                    active ? Accent with { W = 0.14f } : new Vector4(1, 1, 1, 0.04f)), Radius.Card);
+            }
+
+            Vector4 colour = active ? new Vector4(1, 1, 1, 1) : hovered ? PfSlate300 : FbSlate500;
             uint col = ImGui.ColorConvertFloat4ToU32(colour);
 
             // Laid out from the group's own height rather than from the cell's: the icon face and
@@ -380,8 +396,12 @@ namespace PfPresets
             float top = pos.Y + (size.Y - (iconH + gap + labelH)) * 0.5f;
             float iconX = pos.X + (size.X - iconW) * 0.5f;
 
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
-                dl.AddText(new Vector2(iconX, top), col, glyph);
+            if (LucideFor(tab) is not { } lucideName
+                || !DrawLucide(dl, lucideName, new Vector2(pos.X + (size.X - iconH) * 0.5f, top), iconH, new Vector4(1, 1, 1, 1)))
+            {
+                using (pluginInterface.UiBuilder.IconFontHandle.Push())
+                    dl.AddText(new Vector2(iconX, top), col, glyph);
+            }
 
             using (UiLabelFont.Push())
                 dl.AddText(new Vector2(pos.X + (size.X - labelW) * 0.5f, top + iconH + gap),
@@ -393,12 +413,70 @@ namespace PfPresets
                 PaddedTooltip(TabTooltip(label, tab));
         }
 
+        /// <summary>The phone's bar while Settings is open: Back, and a cell per page with its glyph
+        /// in the page's own colour, the page on screen on the accent pill.</summary>
+        private void DrawPortraitSettingsBar(ImDrawListPtr dl, Vector2 p, float width)
+        {
+            var pages = SettingsPages();
+            int cells = pages.Count + 1;
+            float cell = width / cells;
+
+            for (int i = 0; i < cells; i++)
+            {
+                var pos = new Vector2(p.X + cell * i, p.Y);
+                var size = new Vector2(cell, TabBarHeight);
+                bool back = i == 0;
+                bool active = !back && settingsPage == i - 1;
+
+                ImGui.SetCursorScreenPos(pos);
+                if (ImGui.InvisibleButton($"##settingsbar{i}", size))
+                {
+                    if (back)
+                    {
+                        activeTab = settingsReturnTab == MainTab.Settings ? MainTab.Presets : settingsReturnTab;
+                        profileReturnTab = null;
+                    }
+                    else
+                    {
+                        settingsPage = i - 1;
+                    }
+                }
+                bool hot = ImGui.IsItemHovered();
+                if (hot && !active)
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+                if (active || hot)
+                    dl.AddRectFilled(pos + new Vector2(6f), pos + size - new Vector2(6f), ImGui.ColorConvertFloat4ToU32(
+                        active ? Accent with { W = 0.14f } : new Vector4(1, 1, 1, 0.04f)), Radius.Card);
+
+                FontAwesomeIcon icon = back ? FontAwesomeIcon.ChevronLeft : pages[i - 1].Icon;
+                string lucideName = back ? "chevron-left" : pages[i - 1].Lucide;
+                string label = back ? "Back" : pages[i - 1].Label.Split(' ')[0];
+                Vector4 colour = active || hot ? new Vector4(1, 1, 1, 1) : FbSlate400;
+
+                const float glyph = 18f, gap = 4f;
+                float labelH;
+                using (UiLabelFont.Push())
+                    labelH = ImGui.GetTextLineHeight();
+                float top = pos.Y + (size.Y - (glyph + gap + labelH)) * 0.5f;
+                var gMin = new Vector2(pos.X + (cell - glyph) * 0.5f, top);
+                if (!DrawLucide(dl, lucideName, gMin, glyph, new Vector4(1, 1, 1, 1)))
+                    DrawGlyphAtOn(dl, icon, gMin, glyph, new Vector4(1, 1, 1, 1), UiIconRow);
+                using (UiLabelFont.Push())
+                {
+                    Vector2 ts = ImGui.CalcTextSize(label);
+                    dl.AddText(new Vector2(pos.X + (cell - ts.X) * 0.5f, top + glyph + gap),
+                        ImGui.ColorConvertFloat4ToU32(colour), label);
+                }
+            }
+        }
+
         /// <summary>What a hovered tab says. The beta note lives here rather than in the label -
         /// there is no room for a chip beside a word in a 92px cell, and the word is the part that
         /// has to be readable.</summary>
         private string TabTooltip(string label, MainTab tab)
         {
-            string tip = tab == MainTab.Achievements ? $"{label} (beta)" : label;
+            string tip = StatusChipFor(tab) is { } status ? $"{label} ({status.ToLowerInvariant()})" : label;
 
             var badge = TabBadgeFor(tab);
             if (badge.Kind == TabBadge.Count)
@@ -485,6 +563,11 @@ namespace PfPresets
                 ImGui.ColorConvertFloat4ToU32(Panel),
                 Radius.ScreenWide, ImDrawFlags.RoundCornersLeft);
 
+            // border-r: the hairline between the sidebar and the page.
+            ImGui.GetWindowDrawList().AddRectFilled(new Vector2(railMin.X + RailWidth - 1f, railMin.Y),
+                new Vector2(railMin.X + RailWidth, railMin.Y + railFullHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
+
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
 
             // Nothing in this column may scroll, and the wheel may not move it.
@@ -537,8 +620,11 @@ namespace PfPresets
                 // its parent inset, not anything the rows do for themselves. Indented rather than
                 // baked into the row so the two controls are the same control.
                 ImGui.Indent(Space.Gutter);
-                foreach (var (label, icon, tab) in tabs)
-                    DrawRailNavItem(label, icon, tab);
+                if (activeTab == MainTab.Settings)
+                    DrawSettingsRail();
+                else
+                    foreach (var (label, icon, tab) in tabs)
+                        DrawRailNavItem(label, icon, tab);
                 ImGui.Unindent(Space.Gutter);
 #endif
 
@@ -613,16 +699,22 @@ namespace PfPresets
             var dl = ImGui.GetWindowDrawList();
             Vector2 p = ImGui.GetCursorScreenPos();
 
+            // The dashboard mockup's mark: the accent, rounded-xl, lit a little toward the top
+            // (its gradient, which a rounded rect cannot take directly), and a soft shadow.
             const float mark = 28f;
-            dl.AddRectFilled(p, new Vector2(p.X + mark, p.Y + mark),
-                ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
+            var markMax = new Vector2(p.X + mark, p.Y + mark);
+            dl.AddRectFilled(p + new Vector2(0, 2f), markMax + new Vector2(0, 2f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0.35f)), Radius.Control);
+            dl.AddRectFilled(p, markMax, ImGui.ColorConvertFloat4ToU32(Darken(Accent, 0.12f)), Radius.Control);
+            dl.AddRectFilled(p, new Vector2(markMax.X, p.Y + mark * 0.55f),
+                ImGui.ColorConvertFloat4ToU32(Accent), Radius.Control, ImDrawFlags.RoundCornersTop);
 
             string glyph = LogoIcon.ToIconString();
             using (pluginInterface.UiBuilder.IconFontHandle.Push())
             {
                 Vector2 gs = ImGui.CalcTextSize(glyph);
                 dl.AddText(new Vector2(p.X + (mark - gs.X) * 0.5f, p.Y + (mark - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(OnAccent), glyph);
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), glyph);
             }
 
             ImGui.SetCursorScreenPos(new Vector2(p.X + mark + 11f, p.Y - 1f));
@@ -635,9 +727,17 @@ namespace PfPresets
             string version = VersionLabel.ToUpperInvariant();
             DecorateVersionLabel(ref version);
 
-            ImGui.SetCursorScreenPos(new Vector2(p.X + mark + 11f, p.Y + 16f));
+            // In a small chip, as the mockup sets it: white/5 fill and border, grey text.
+            ImGui.SetCursorScreenPos(new Vector2(p.X + mark + 15f, p.Y + 17f));
             using (UiLabelFont.Push())
-                ImGui.TextColored(Faint, version);
+            {
+                Vector2 vs = ImGui.CalcTextSize(version);
+                var vMin = new Vector2(p.X + mark + 11f, p.Y + 16f);
+                var vMax = vMin + new Vector2(vs.X + 8f, vs.Y + 2f);
+                dl.AddRectFilled(vMin, vMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f);
+                dl.AddRect(vMin, vMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f, ImDrawFlags.None, 1f);
+                ImGui.TextColored(FbSlate400, version);
+            }
 
                 // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
                 if (ImGui.IsItemClicked())
@@ -664,7 +764,7 @@ namespace PfPresets
             if (ChromeDiagnosticRequested)
                 ReportChromeDiagnostic($"  row {label}: w={width:F0} localY={ImGui.GetCursorPosY():F0}");
 
-            if (DrawNavRow($"rail{tab}", icon, label, active, width, out Vector2 rowMin))
+            if (DrawRailRow($"rail{tab}", icon, label, active, width, out Vector2 rowMin, LucideFor(tab)))
             {
                 activeTab = tab;
                 profileReturnTab = null;
@@ -684,15 +784,159 @@ namespace PfPresets
 
             DrawTabBadge(dl, badge, new Vector2(labelEnd, rowMin.Y), NavRowHeight);
 
-            if (tab != MainTab.Achievements)
+            if (StatusChipFor(tab) is not { } status)
                 return;
 
-            float betaX = rowMin.X + width - 8f - BetaChipWidth();
+            float betaX = rowMin.X + width - 8f - StatusChipWidth(status);
 
             if (betaX >= labelEnd + badgeWidth + 6f)
-                DrawBetaChip(dl, new Vector2(betaX, rowMin.Y), NavRowHeight, active ? 1f : 0.7f);
+                DrawStatusChip(dl, status, new Vector2(betaX, rowMin.Y), NavRowHeight, active ? 1f : 0.7f, onAccent: active);
         }
 #endif
+
+#if PFP_RATINGS
+        /// <summary>
+        /// The sidebar while Settings is open: a way back to where you were, and the settings
+        /// pages in place of the tabs - each on a tinted tile, the one on screen filled with the
+        /// accent, as the iPadOS settings mockup lays them out.
+        /// </summary>
+        private void DrawSettingsRail()
+        {
+            float width = ImGui.GetContentRegionAvail().X - Space.Gutter;
+
+            // Back: returns to whichever tab was open before Settings.
+            if (DrawRailRow("settingsback", FontAwesomeIcon.ChevronLeft, "Back", false, width, out _, "chevron-left"))
+            {
+                activeTab = settingsReturnTab == MainTab.Settings ? MainTab.Presets : settingsReturnTab;
+                profileReturnTab = null;
+            }
+
+            ImGui.Dummy(new Vector2(0, 6f));
+            var pages = SettingsPages();
+            for (int i = 0; i < pages.Count; i++)
+            {
+                if (DrawRailRow($"settingsnav{i}", pages[i].Icon, pages[i].Label, settingsPage == i, width, out _, pages[i].Lucide))
+                    settingsPage = i;
+            }
+        }
+#endif
+
+        /// <summary>
+        /// One sidebar row, as the dashboard mockup draws it: rounded-2xl; the page you are on
+        /// filled with the accent, white and lit with a soft glow; the rest grey, going white on a
+        /// faint wash when hovered.
+        /// </summary>
+        private bool DrawRailRow(string id, FontAwesomeIcon icon, string label, bool active,
+            float width, out Vector2 rowMin, string? lucide = null)
+        {
+            Vector2 p = ImGui.GetCursorScreenPos();
+            rowMin = p;
+            var dl = ImGui.GetWindowDrawList();
+            var max = new Vector2(p.X + width, p.Y + NavRowHeight);
+
+            bool clicked = ImGui.InvisibleButton($"##nav{id}", new Vector2(width, NavRowHeight));
+            bool hovered = ImGui.IsItemHovered();
+            if (hovered && !active)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+            if (active)
+            {
+                for (int i = 1; i <= 3; i++) // shadow-button
+                    dl.AddRectFilled(p + new Vector2(-i, 3f - i * 0.5f), max + new Vector2(i, 2f + i),
+                        ImGui.ColorConvertFloat4ToU32(Accent with { W = 0.07f }), Radius.Card + i);
+                dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(Accent), Radius.Card);
+            }
+            else if (hovered)
+            {
+                dl.AddRectFilled(p, max, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Card);
+            }
+
+            Vector4 colour = active || hovered ? new Vector4(1, 1, 1, 1) : FbSlate400;
+
+            // The icons stay white whatever the row's state; only the words dim.
+            const float iconSize = 17f;
+            var iconColour = new Vector4(1, 1, 1, 1);
+            if (lucide == null || !DrawLucide(dl, lucide, new Vector2(p.X + 11f, p.Y + (NavRowHeight - iconSize) * 0.5f), iconSize, iconColour))
+            {
+                using (UiIconRow.Push())
+                {
+                    string glyph = icon.ToIconString();
+                    Vector2 gs = ImGui.CalcTextSize(glyph);
+                    dl.AddText(new Vector2(p.X + 12f, p.Y + (NavRowHeight - gs.Y) * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(iconColour), glyph);
+                }
+            }
+
+            using ((active ? UiSegmentFont : UiBodyFont).Push())
+            {
+                Vector2 ts = ImGui.CalcTextSize(label);
+                dl.AddText(new Vector2(p.X + 36f, p.Y + (NavRowHeight - ts.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(colour), Fit(label, width - 44f));
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + NavRowHeight + NavRowGap));
+            return clicked;
+        }
+
+        /// <summary>
+        /// The Ko-fi button: one red, a full capsule, the heart - and the words, when labelled -
+        /// in white. One
+        /// drawing for the sidebar and the phone header, so it is the same button in both.
+        /// </summary>
+        private void DrawKofiPill(string id, Vector2 pos, Vector2 size, bool labelled)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            ImGui.SetCursorScreenPos(pos);
+            bool clicked = ImGui.InvisibleButton(id, size);
+            bool hot = ImGui.IsItemHovered();
+            bool held = ImGui.IsItemActive();
+            if (hot)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (!labelled)
+                    PaddedTooltip(KofiLabel);
+            }
+
+            Vector2 bMin = pos, bMax = pos + size;
+            if (held)
+            {
+                bMin += size * 0.025f;
+                bMax -= size * 0.025f;
+            }
+
+            // One colour, fully rounded - a capsule.
+            float radius = (bMax.Y - bMin.Y) * 0.5f;
+            dl.AddRectFilled(bMin, bMax, ImGui.ColorConvertFloat4ToU32(hot ? Lighten(KoFi, 0.08f) : KoFi), radius);
+
+            if (labelled)
+                DrawIconLabelCentered(FontAwesomeIcon.Heart, KofiLabel, bMin, bMax - bMin, new Vector4(1, 1, 1, 1),
+                    1f, UiIconSmall);
+            else
+                DrawGlyphAtOn(dl, FontAwesomeIcon.Heart, bMin, bMax.X - bMin.X, new Vector4(1, 1, 1, 1), UiIconSmall);
+
+            if (clicked)
+                Dalamud.Utility.Util.OpenLink(KofiUrl);
+        }
+
+        /// <summary>The window's round close control, as the dashboard mockup draws it: a circle in
+        /// neutral-800, the cross grey going white, the circle lifting on hover.</summary>
+        private void DrawRoundCloseButton(string id, Vector2 pos, float size)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            ImGui.SetCursorScreenPos(pos);
+            bool clicked = ImGui.InvisibleButton(id, new Vector2(size));
+            bool hot = ImGui.IsItemHovered();
+            dl.AddCircleFilled(pos + new Vector2(size * 0.5f), size * 0.5f,
+                ImGui.ColorConvertFloat4ToU32((hot ? FbNeutral700 : FbNeutral800) with { W = 0.8f }), 32);
+            DrawGlyphAtOn(dl, FontAwesomeIcon.Times, pos, size, hot ? new Vector4(1, 1, 1, 1) : FbSlate400, UiIconSmall);
+            if (hot)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                PaddedTooltip("Close");
+            }
+            if (clicked)
+                isMainWindowVisible = false;
+        }
 
         /// <summary>The one ask: a solid red button with the heart and the words, and a line saying
         /// what the money is actually for.</summary>
@@ -701,23 +945,30 @@ namespace PfPresets
             Vector2 p = ImGui.GetCursorScreenPos();
             var size = new Vector2(width, 34f);
 
-            if (DrawKofiButton("##RailKofi", size))
-                Dalamud.Utility.Util.OpenLink(KofiUrl);
+            DrawKofiPill("##RailKofi", p, size, labelled: true);
 
-            DrawIconLabelLeft(FontAwesomeIcon.Heart, KofiLabel, p, size, Ink);
-
+            // Centred under it, two short lines - the second ending in the heart from the icon
+            // font, since a literal U+2665 is not in the text face and would render as a box.
             ImGui.Dummy(new Vector2(0, 8));
             using (UiHelpFont.Push())
-                ImGui.TextColored(Faint, "Passion project,");
+            {
+                const string one = "Passion project,";
+                const string two = "support appreciated";
+                float heartW;
+                using (UiIconSmall.Push())
+                    heartW = ImGui.CalcTextSize(FontAwesomeIcon.Heart.ToIconString()).X;
+                float oneW = ImGui.CalcTextSize(one).X;
+                float twoW = ImGui.CalcTextSize(two).X + 5f + heartW;
+                float x0 = ImGui.GetCursorScreenPos().X;
 
-            // The heart comes from the icon font rather than from the sentence. A literal U+2665 is
-            // not in the text face's glyph range and would render as a box on the one line that is
-            // supposed to be warm.
-            using (UiHelpFont.Push())
-                ImGui.TextColored(Faint, "support appreciated");
-            ImGui.SameLine(0, 5);
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
-                ImGui.TextColored(KoFi, FontAwesomeIcon.Heart.ToIconString());
+                ImGui.SetCursorScreenPos(new Vector2(x0 + (width - oneW) * 0.5f, ImGui.GetCursorScreenPos().Y));
+                ImGui.TextColored(FbSlate500, one);
+                ImGui.SetCursorScreenPos(new Vector2(x0 + (width - twoW) * 0.5f, ImGui.GetCursorScreenPos().Y));
+                ImGui.TextColored(FbSlate500, two);
+                ImGui.SameLine(0, 5);
+                using (UiIconSmall.Push())
+                    ImGui.TextColored(KoFi, FontAwesomeIcon.Heart.ToIconString());
+            }
         }
 
         /// <summary>
@@ -756,15 +1007,12 @@ namespace PfPresets
             {
                 float lineH = ImGui.GetTextLineHeight();
                 DrawTrackedCaps(dl, new Vector2(p.X + 18f, p.Y + (HeaderStripHeight - lineH) * 0.5f),
-                    ActiveTabName, Ink, tracking: 0.14f);
+                    ActiveTabName, new Vector4(1, 1, 1, 1), tracking: 0.14f);
             }
 
-            const float btn = 30f;
+            const float btn = 28f;
             float y = p.Y + (HeaderStripHeight - btn) * 0.5f;
-
-            ImGui.SetCursorScreenPos(new Vector2(p.X + width - btn - 14f, y));
-            DrawWindowGlyphButton(FontAwesomeIcon.Times, "HeaderClose", "Close", btn,
-                () => isMainWindowVisible = false);
+            DrawRoundCloseButton("##HeaderClose", new Vector2(p.X + width - btn - 16f, y), btn);
 
             // THE RULE IS DRAWN, NOT LAID OUT, and the cursor is placed rather than advanced.
             //
@@ -775,42 +1023,9 @@ namespace PfPresets
             // spacing the other was not.
             dl.AddRectFilled(new Vector2(p.X, p.Y + HeaderStripHeight),
                 new Vector2(p.X + width, p.Y + HeaderStripHeight + 1f),
-                ImGui.ColorConvertFloat4ToU32(RuleHair));
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
 
             ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + HeaderStripHeight + 1f));
-        }
-
-        /// <summary>Close, and anything else that acts on the window itself: a rounded square, and
-        /// the only centred glyphs in the chrome. A tint overrides the resting and hovered colours
-        /// for the one control that is a brand rather than an action.</summary>
-        private void DrawWindowGlyphButton(FontAwesomeIcon icon, string id, string tooltip,
-            float size, System.Action onClick, Vector4? tint = null, Vector4? hotTint = null)
-        {
-            Vector2 p = ImGui.GetCursorScreenPos();
-            ImGui.InvisibleButton($"##{id}", new Vector2(size, size));
-            bool hot = ImGui.IsItemHovered();
-
-            if (ImGui.IsItemClicked())
-                onClick();
-
-            var dl = ImGui.GetWindowDrawList();
-            if (hot)
-                dl.AddRectFilled(p, new Vector2(p.X + size, p.Y + size),
-                    ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
-
-            string glyph = icon.ToIconString();
-            using (pluginInterface.UiBuilder.IconFontHandle.Push())
-            {
-                Vector2 gs = ImGui.CalcTextSize(glyph);
-                Vector4 colour = hot
-                    ? hotTint ?? tint ?? Ink
-                    : tint ?? Dim;
-                dl.AddText(new Vector2(p.X + (size - gs.X) * 0.5f, p.Y + (size - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(colour), glyph);
-            }
-
-            if (hot)
-                PaddedTooltip(tooltip);
         }
 
         /// <summary>The name of the tab currently on screen, for the header strip.</summary>
@@ -822,7 +1037,11 @@ namespace PfPresets
                 MainTab.Ratings => "My Profile",
                 MainTab.Achievements => "Clears",
                 MainTab.Vote => "Vote",
-                MainTab.Settings => "Settings",
+                MainTab.PartyFinder => "Party Finder",
+                MainTab.Feedback => "Feedback",
+                MainTab.Settings => SettingsPages() is { Count: > 0 } sp
+                    ? sp[Math.Clamp(settingsPage, 0, sp.Count - 1)].Label
+                    : "Settings",
                 _ => "Recruit",
             };
 #else

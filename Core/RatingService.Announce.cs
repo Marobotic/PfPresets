@@ -254,12 +254,11 @@ namespace PfPresets
             bool justLoggedIn = loggedIn && !announceWasLoggedIn;
             announceWasLoggedIn = loggedIn;
 
-            if (!config.CommunityEnabled || !config.ClearAnnouncementsEnabled)
-                return;
-
             // Nobody logged in: no character to skip posts of, nothing on screen to draw over, and
             // no reason to be talking to the server from the title screen.
-            if (!loggedIn)
+            bool wanted = config.CommunityEnabled && config.ClearAnnouncementsEnabled && loggedIn;
+            KeepClearStream(wanted);
+            if (!wanted)
                 return;
 
             if (justLoggedIn)
@@ -267,6 +266,16 @@ namespace PfPresets
                 // What they missed, now rather than at the next grid instant.
                 announceCatchUp = true;
                 announceSlot = -1;
+            }
+
+            // THE STREAM IS UP, SO THE POLL STANDS DOWN. Clears arrive the moment they are posted;
+            // reading the feed on top of that would be asking a question already answered. A login
+            // still gets its catch-up read, because that is about what happened while logged out.
+            if (clearStreamLive)
+            {
+                if (justLoggedIn)
+                    RefreshForAnnounce();
+                return;
             }
 
             // The grid slot this moment falls in. A read happens when the slot changes, which is
@@ -323,7 +332,10 @@ namespace PfPresets
         /// <param name="serverNowMs">The server's clock as of this read, from the feed response.
         /// Every comparison below is between two of the server's own numbers, so a player whose PC
         /// is an hour out neither misses announcements nor gets shown history.</param>
-        private void ObserveForAnnounce(IReadOnlyList<AchievementPost> posts, long serverNowMs)
+        /// <param name="pushed">The post came down the clear stream rather than from a feed read.
+        /// Pushes from two posts written a moment apart can arrive in either order, so a pushed post
+        /// is not judged against the mark - the id guard alone keeps it from being shown twice.</param>
+        private void ObserveForAnnounce(IReadOnlyList<AchievementPost> posts, long serverNowMs, bool pushed = false)
         {
             if (!config.ClearAnnouncementsEnabled || posts.Count == 0)
                 return;
@@ -389,7 +401,7 @@ namespace PfPresets
 
                 // Already accounted for. In the feed's own order, so nothing published after this
                 // read can land beneath it.
-                if (rank <= mark)
+                if (rank <= mark && !pushed)
                     continue;
 
                 // Too old to interrupt anybody for. A share re-ranks an old post to the top of the

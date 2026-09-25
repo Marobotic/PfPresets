@@ -570,7 +570,11 @@ namespace PfPresets
             // player is in combat, and the sealed payload is built here because this is the moment
             // the encounter is whole.
             lock (pendingDutyGate)
+            {
                 pendingDuties.Enqueue(evidence);
+                while (pendingDuties.Count > MaxPendingDuties)
+                    pendingDuties.Dequeue();
+            }
         }
 
         // ── Filing a duty, out of combat ──────────────────────────
@@ -594,6 +598,14 @@ namespace PfPresets
         private DateTime nextDutyPostUtc = DateTime.MinValue;
 
         private static readonly TimeSpan DutyPostRetryDelay = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan DutyPostMaxDelay = TimeSpan.FromMinutes(15);
+
+        /// <summary>Failures in a row, for the backoff. Reset by any answer that is not a failure.</summary>
+        private int dutyPostFailures;
+
+        /// <summary>More than this waiting and the oldest goes: a week offline should not end in a
+        /// burst the server's hourly limit refuses most of anyway.</summary>
+        private const int MaxPendingDuties = 30;
 
         /// <summary>
         /// Sends one filed duty, if there is one waiting and the player is not fighting.
@@ -646,6 +658,9 @@ namespace PfPresets
                     var result = await api.PostAchievementAsync(
                         new AchievementPostRequest { Evidence = evidence }).ConfigureAwait(false);
 
+                    if (result.IsOk)
+                        dutyPostFailures = 0;
+
                     if (result.IsOk && result.Value?.Posted == true)
                     {
                         log.Debug($"[Ratings] Achievement posted: {result.Value.Fight} ({result.Value.Kind})");
@@ -658,19 +673,26 @@ namespace PfPresets
                         // until somebody is - see EnsureMyClearsLoaded.
                         mineReadAt = DateTime.MinValue;
                     }
+                    else if (result.Status is ApiStatus.BadRequest or ApiStatus.Refused)
+                    {
+                        // DROPPED. The server read it and said no - an old build, a payload it will
+                        // not accept - and it will say no again every time. Retrying those is what
+                        // had clients asking every twenty seconds for hours.
+                        log.Debug($"[Ratings] Achievement refused ({result.Status}), not retrying");
+                    }
                     else if (!result.IsOk)
                     {
                         // PUT BACK, NOT DROPPED. A duty that fails to file is a duty no vote out of
                         // it can ever be checked against, which is the failure this whole path
                         // exists to prevent - and the usual reason to fail is the network being
                         // briefly unavailable, which is exactly the case worth retrying.
-                        Requeue(evidence);
+                        Requeue(evidence, result.Status == ApiStatus.RateLimited ? result.RetryAfter : null);
                     }
                 }
                 catch (Exception ex)
                 {
                     log.Debug($"[Ratings] Achievement post failed: {ex.Message}");
-                    Requeue(evidence);
+                    Requeue(evidence, null);
                 }
                 finally
                 {
@@ -679,12 +701,28 @@ namespace PfPresets
             });
         }
 
-        private void Requeue(string evidence)
+        /// <summary>
+        /// Puts a duty back and waits before the next try: as long as the server said when it
+        /// said, otherwise twenty seconds doubling with each failure in a row, up to fifteen
+        /// minutes. A limit that resets hourly is not helped by asking three times a minute.
+        /// </summary>
+        private void Requeue(string evidence, TimeSpan? serverSaid)
         {
             lock (pendingDutyGate)
+            {
                 pendingDuties.Enqueue(evidence);
+                while (pendingDuties.Count > MaxPendingDuties)
+                    pendingDuties.Dequeue();
+            }
 
-            nextDutyPostUtc = DateTime.UtcNow + DutyPostRetryDelay;
+            dutyPostFailures = Math.Min(dutyPostFailures + 1, 10);
+            var backoff = TimeSpan.FromTicks(DutyPostRetryDelay.Ticks << (dutyPostFailures - 1));
+            if (backoff > DutyPostMaxDelay)
+                backoff = DutyPostMaxDelay;
+            if (serverSaid is { } said && said > backoff)
+                backoff = said > TimeSpan.FromHours(2) ? TimeSpan.FromHours(2) : said;
+
+            nextDutyPostUtc = DateTime.UtcNow + backoff;
         }
 
         /// <summary>

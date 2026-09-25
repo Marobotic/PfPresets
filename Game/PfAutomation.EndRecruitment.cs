@@ -348,16 +348,63 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// Queues for the duty the current listing was created for.
-        ///
-        /// PLACEHOLDER. Selecting a duty in the Duty Finder means driving its category tree and
-        /// list by index, which is the same fragile addon work the preset-apply flow already does
-        /// and needs establishing separately. Until then this says so rather than pretending.
+        /// Queues for the duty the current listing was created for: the recruitment's own duty while
+        /// it is up, else the one last recruited for, else the listing last looked at.
         /// </summary>
-        public void QueueToListedDuty()
+        public unsafe void QueueToListedDuty()
         {
-            chatGui.Print("[PF Analysis] Queueing from a listing isn't wired up yet.");
-            pluginLog.Information("[Queue] Placeholder invoked; duty selection not implemented.");
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.Instance();
+            uint dutyId = 0;
+            if (agent != null)
+            {
+                dutyId = IsRecruiting()
+                    ? agent->StoredRecruitmentInfo.SelectedDutyId
+                    : agent->LastViewedListing.DutyId;
+            }
+
+            if (lastRecruitedDuty is { } recruited && !IsRecruiting())
+                dutyId = recruited.RowId;
+
+            QueueForDuty(dutyId);
+        }
+
+        /// <summary>
+        /// Registers the party for one ContentFinderCondition duty through the Duty Finder's own
+        /// queue call - the same thing pressing Join in the Duty Finder does, so the game applies
+        /// all of its usual checks (party size, item level, unlocks) and refuses with its own
+        /// message where they fail.
+        ///
+        /// Refuses a duty id the sheet has no name for: a Party Finder "duty" can also be a
+        /// category-numbered row (deep dungeons, FATEs), which is not something the Duty Finder can
+        /// be asked for.
+        /// </summary>
+        public unsafe void QueueForDuty(uint dutyId)
+        {
+            if (disposed || IsInDuty() || IsInDutyQueue())
+            {
+                chatGui.Print("[PF Analysis] The Duty Finder cannot be started right now.");
+                return;
+            }
+
+            string name = dutyId == 0 ? string.Empty : dutyDataHelper.GetDutyName(dutyId);
+            if (dutyId == 0 || name.Length == 0 || name == "None" || name.StartsWith("Unknown", StringComparison.Ordinal))
+            {
+                chatGui.Print("[PF Analysis] PF Analysis could not work out which duty to queue for.");
+                return;
+            }
+
+            var finder = FFXIVClientStructs.FFXIV.Client.Game.UI.ContentsFinder.Instance();
+            var queue = finder == null ? null : finder->GetQueueInfo();
+            if (queue == null)
+            {
+                chatGui.Print("[PF Analysis] Duty Finder is not available right now.");
+                return;
+            }
+
+            uint entry = dutyId;
+            queue->QueueDuties(&entry, 1, 0);
+            chatGui.Print($"[PF Analysis] Queueing for {name}.");
+            pluginLog.Information($"[Queue] Requested ContentFinderCondition {dutyId}.");
         }
     }
 }

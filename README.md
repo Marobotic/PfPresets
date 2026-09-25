@@ -1,23 +1,48 @@
 # PF Analysis
 
-Know who you are playing with, and stop fighting the Party Finder. Upvote or downvote the people
-you run with, check how far anybody has got before you join them, and put your Ultimate clears
-somewhere they count for something — then post a recruitment preset in one click and let the
-plugin keep the listing alive while you play. Formerly, and still internally, PF Presets.
+Know who you are playing with, and stop fighting the Party Finder. Browse the recruitment board
+for your data centre and join a party from it, check how far anybody has got before you join
+them, and put your Ultimate clears somewhere they count for something — then post a recruitment
+preset in one click and let the plugin keep the listing alive while you play. Formerly, and still
+internally, PF Presets.
+
+**Ratings are gone as of 4.0.0.** Voting, scores and the post-duty rating window have been
+removed. Progression, clears, the feed and the Party Finder board are unaffected.
 
 This is a plugin for [Dalamud](https://github.com/goatcorp/Dalamud) (the FFXIV plugin
 framework used with XIVLauncher).
 
 ## Features
 
+### The Party Finder board
+
+- **A board of every recruitment listing on a data centre you choose.** A new tab lists whatever
+  plugin users' Party Finder windows have been handed — your own data centre or any other. Cards
+  or one line per listing, search across duty, leader, comment, data centre and member names,
+  fifty a page. It is recruitment notices only: what the game's own window shows anybody on that
+  data centre, and nothing about who is in a party unless somebody in it is running the plugin.
+  Reading it needs no setting.
+- **Join any party on your own data centre from the board.** Press Join and the plugin opens the
+  listing, which makes the game fetch it afresh, checks it — seats, your job, one player per job,
+  item level, completion requirement, level and unlock — and only then presses Join Party. A
+  refusal is one sentence on the card and the same sentence in chat. Alliance raids get a Join per
+  party. Anywhere else is a data centre travel, which is what Apply is for.
+- **Apply to a plugin party from another data centre.** Press Apply and you are registered and
+  nothing else: you stay free until the listing is full, and every open seat has an applicant. Then
+  the host's plugin takes the public listing down, reposts it privately with a four-digit password
+  and asks you to accept. Nothing moves your character before you accept. Once you do, the plugin
+  travels to the host's data centre if it has to and joins you in — or press *Join party now* to go
+  straight in. *Coordinated joining*, under Settings → Party Finder.
+- **The board fills in even when nobody is browsing.** The plugin opens the Party Finder itself on
+  a schedule, reads every page with the window kept off-screen, and puts it back. It only starts
+  after fifteen seconds with no input and stops the instant you touch anything, and never in a
+  duty, in combat, or over any other Party Finder action. Off by default — turn on *Share my party
+  finder data actively* to read every ten minutes regardless.
+- **Refresh reads the game.** On your own data centre, the board's refresh button reads the Party
+  Finder there and then and makes the board exactly what it shows.
+
 ### Know who you're playing with
 
-- **Upvote and downvote the people you play with.** One click, up or down, after a duty you
-  actually shared. **Everybody's vote on you counts once**: pressing the same arrow again
-  changes nothing, and pressing the other one moves your single vote across rather than adding
-  to it — so a score is a number of people, not a number of button presses. You can change your
-  mind at any time; the last thing you said is what counts. Every vote weighs the same, from
-  anybody. See `docs/ratings.md`.
 - **Progression at a glance, from Tomestone.** Look up how far anybody has got in the current
   tier — for your party, for a listing you are about to join, or for any character by name and
   world. Answers are shared, so once anyone has looked a player up everybody sees the same one
@@ -31,9 +56,11 @@ framework used with XIVLauncher).
 - **See a listing before you join it.** The panel beside a party finder listing shows who is
   already in that party, with their progression. One person in the party running the plugin is
   enough to fill it in for everybody looking at the listing, and it comes down when the listing
-  does. Turn it off under Settings → PF Radar.
+  does. Turn it off under Settings → Party Finder.
+- **Report a bug or ask for something.** The Feedback tab reaches the author through the server,
+  so the Discord address never ships in the plugin and the message is stored before it is sent.
 
-The community half — ratings, progression, clears, the feed — is only in the third-party repo
+The community half — progression, clears, the feed, the board — is only in the third-party repo
 build. The official-repo build is compiled without any of it (see `docs/ratings.md`).
 
 ### Automation
@@ -43,10 +70,12 @@ build. The official-repo build is compiled without any of it (see `docs/ratings.
   level, loot rules, languages and private-party password, then posts the listing for you. There
   is a button for it beside the game's own *Recruit Members*, and a *Save as Preset* button under
   any listing you open.
-- **Keep your party alive with Auto Refresh.** Re-posts your listing on a timer (Edit → Recruit,
-  exactly like doing it by hand) so it never falls off the board, with a live countdown in the
-  main window. Double-click the interval to set anything from 1 to 55 minutes, and optionally have
-  it stop on its own after a set number of hours. Disabled automatically if you already run the
+- **Keep your party alive with Auto Refresh.** Re-posts your listing (Edit → Recruit, exactly
+  like doing it by hand) once its time left drops to the number you choose, 30 minutes by default.
+  The wait is worked out from the listing's own clock rather than from a fixed timer, and every
+  refresh is checked 30 seconds later: if the listing didn't renew, it is tried again before the
+  plugin goes back to waiting. Double-click the number to set anything from 3 to 55 minutes left,
+  and optionally have it stop on its own after a set number of hours. Disabled automatically if you already run the
   standalone RecruitmentRefresher plugin.
 - **Fixes the party finder's one-job slot trap.** Lock a slot to a single job in the game's own
   window and it stays locked to that job — so when that player leaves, the seat can only ever be
@@ -100,7 +129,7 @@ rather than guessing.
    you can load it in-game via *Dev Plugins*.
 
 `--no-ratings` (`-p:EnableRatings=false`) builds the official-repo variant, which contains
-none of the ratings code. Read `docs/building.md` first — it covers which output the in-game
+none of the community code. Read `docs/building.md` first — it covers which output the in-game
 dev plugin actually loads.
 
 ### Project layout
@@ -108,17 +137,18 @@ dev plugin actually loads.
 ```
 Plugin.cs            Entry point: service wiring, chat commands
 Configuration.cs     Saved settings, preset CRUD, and config migrations
-Core/                Duty tracking, and the rating / clears / feed HTTP clients
+Core/                The HTTP clients (progression, clears, feed, board, coordination, feedback),
+                     duty tracking, and the moderator panel's key handling
 Data/                Preset model, job/duty static data, bitmask conversions, share codec
-Game/                Native Party Finder automation (memory writes, UI clicks, refresher)
+Game/                Native Party Finder automation (memory writes, UI clicks, refresher, join)
 UI/                  ImGui windows (one partial class file per window) and the theme
-docs/                Build notes, the ratings design, and the structured release history
+docs/                Build notes, the retired ratings design, and the structured release history
 repo/                The Dalamud plugin repository served from GitHub (repo.json + zips)
 ```
 
 `Core/` and `UI/` are both split by concern rather than by size — `RatingService.*.cs` and
-`PluginUI.*.cs` are partial classes, one file per thing they do, so the ratings service and the
-main window are each readable a piece at a time.
+`PluginUI.*.cs` are partial classes, one file per thing they do, so the progression/clears
+service and the main window are each readable a piece at a time.
 
 Presets reference their duty by `ContentFinderCondition` row id (`PfPresetData.DutyRowId`),
 with the display name kept only as a fallback for presets saved before 3.0.0.1 and for the

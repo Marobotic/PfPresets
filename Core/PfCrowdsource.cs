@@ -51,6 +51,7 @@ namespace PfPresets
         private readonly PfAutomation pfAutomation;
         private readonly WorldHelper worlds;
         private readonly Func<CharacterIdentity?> localIdentity;
+        private readonly Func<string> currentWorld;
         private readonly Func<bool> suppressed;
 
         private DateTime lastTick = DateTime.MinValue;
@@ -91,7 +92,7 @@ namespace PfPresets
 
         public PfCrowdsource(PfApiClient api, Configuration config, IPluginLog log,
             PfAutomation pfAutomation, WorldHelper worlds,
-            Func<CharacterIdentity?> localIdentity, Func<bool> suppressed)
+            Func<CharacterIdentity?> localIdentity, Func<string> currentWorld, Func<bool> suppressed)
         {
             this.api = api;
             this.config = config;
@@ -99,6 +100,7 @@ namespace PfPresets
             this.pfAutomation = pfAutomation;
             this.worlds = worlds;
             this.localIdentity = localIdentity;
+            this.currentWorld = currentWorld;
             this.suppressed = suppressed;
         }
 
@@ -141,6 +143,14 @@ namespace PfPresets
         /// different mechanisms, and polling a cheap flag is more honest than trying to hook them
         /// all and missing one.
         /// </summary>
+        /// <summary>The most a party holds; at this many it is full and no longer recruiting.</summary>
+        private const int FullParty = 8;
+
+        /// <summary>Seats the listing we are in offers, as the last snapshot read them: fewer than
+        /// eight for a light party or one with seats omitted. Zero when the listing's details were
+        /// not readable, which leaves only <see cref="FullParty"/> to go on.</summary>
+        private int listingSeats;
+
         public void Tick()
         {
             if (DateTime.UtcNow - lastTick < TickEvery)
@@ -182,12 +192,24 @@ namespace PfPresets
 
                 var (jobId, _) = pfAutomation.GetLocalJobAndLevel();
                 var members = CollectParty(me, jobId);
+                string standingOn = currentWorld();
 
                 // Nothing worth publishing. Not a withdrawal - the listing is still up and we are
                 // still in it, so this is a party read that came back empty for a beat rather than
                 // a party that has gone.
                 if (members.Count == 0)
                     return;
+
+                // A party of eight is full, and a full party is not recruiting - the game takes the
+                // listing down when the last seat fills, but this client can go on believing it is
+                // in one, and a full party stayed on the board as "8/8". Taken down instead. The
+                // same goes for a light party at four, or a listing with seats omitted once the
+                // rest are taken.
+                if (members.Count >= FullParty || (listingSeats > 0 && members.Count >= listingSeats))
+                {
+                    Withdraw();
+                    return;
+                }
 
                 string roster = RosterSignature(members);
 
@@ -214,6 +236,7 @@ namespace PfPresets
                             World = me.World,
                             Job = (int)jobId,
                             DutyId = (int)CurrentDutyId(frameCount),
+                            CurrentWorld = standingOn,
                             Members = members,
                         }).ConfigureAwait(false);
                     }
@@ -268,7 +291,8 @@ namespace PfPresets
         {
             var members = new List<PfMember>(8)
             {
-                new() { Name = me.Name, World = me.World, Job = (int)localJobId },
+                // The job joined as, not the one worn now - the listing still says the former.
+                new() { Name = me.Name, World = me.World, Job = (int)pfAutomation.LocalJoinedJob() },
             };
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -295,7 +319,7 @@ namespace PfPresets
                 {
                     Name = member.Name,
                     World = world,
-                    Job = (int)member.JobId,
+                    Job = (int)pfAutomation.JoinedJob(member.ContentId, member.JobId),
                 });
             }
 
@@ -348,6 +372,9 @@ namespace PfPresets
             leaderWorld = string.Empty;
 
             var snapshot = pfAutomation.GetSnapshot(frameCount);
+            listingSeats = !snapshot.DetailsUnavailable && snapshot.SlotsTotal is > 0 and < FullParty
+                ? snapshot.SlotsTotal
+                : 0;
 
             // THE RECRUIT TAB'S OWN ANSWER, AND NOTHING BESIDE IT. Whatever that tab is willing to
             // show - your listing, or the listing of the party you are sitting in - is exactly what

@@ -54,7 +54,7 @@ namespace PfPresets
         /// are data, and a tank staying blue matters more than a consistent palette. Red is not on
         /// offer - it belongs to Ko-fi and to destructive actions.
         /// </summary>
-        public string AccentColorHex { get; set; } = "#9b6dff";
+        public string AccentColorHex { get; set; } = "#bf5af2";
 
         /// <summary>
         /// Whether the plugin puts an "Apply a recruitment preset" button beside the game's
@@ -116,6 +116,7 @@ namespace PfPresets
         /// about somebody you have not met: the party rows describe people you are already with,
         /// and this one is read while deciding whether to join at all.
         /// </summary>
+        // RETIRED with ratings (2026-09-25): read by nothing, kept so saved configs still load.
         public bool ShowListingLeaderRating { get; set; } = true;
 
         /// <summary>
@@ -130,10 +131,17 @@ namespace PfPresets
         // ── Auto Refresher ────────────────────────────────────────
         public bool AutoRefresherEnabled { get; set; } = false;
 
-        /// <summary>How often the Auto Refresher re-posts the listing, in minutes. Free-form since
-        /// 3.0.0.1 (was 15 or 30); clamped to <see cref="PfAutomation.MinRefreshMinutes"/>..
-        /// <see cref="PfAutomation.MaxRefreshMinutes"/> when read.</summary>
+        /// <summary>The old fixed interval, in minutes. No longer drives anything: kept only so an
+        /// install that set it gets the equivalent <see cref="AutoRefreshAtMinutesLeft"/> - see
+        /// <see cref="PfAutomation.RefreshAtMinutesLeft"/>.</summary>
         public int AutoRefresherIntervalMinutes { get; set; } = 30;
+
+        /// <summary>
+        /// Re-post the listing once this many minutes or fewer are left on it. Null until the
+        /// person sets it, and read as 60 minus the old interval until then - "every 20 minutes"
+        /// and "at 40 minutes left" are the same schedule on a fresh listing.
+        /// </summary>
+        public int? AutoRefreshAtMinutesLeft { get; set; }
 
         /// <summary>How many hours the Auto Refresher keeps re-posting before it stops on its own.
         /// 0 means no limit. The listing is never cancelled - it just stops being renewed and
@@ -361,6 +369,7 @@ namespace PfPresets
         public bool VotePromptSilenced { get; set; }
 
         /// <summary>Whether to offer the rating prompt after a duty finishes.</summary>
+        // RETIRED with ratings (2026-09-25): read by nothing, kept so saved configs still load.
         public bool PostDutyPromptEnabled { get; set; } = true;
 
         /// <summary>
@@ -506,18 +515,6 @@ namespace PfPresets
         /// on having actually played with the person. Lookup still works.</summary>
         public bool TrackEncounters { get; set; } = true;
 
-        /// <summary>
-        /// Whether to show the extra detail the game already has about a listing you open.
-        ///
-        /// Reads the structure the client fills in to draw the listing window - the jobs sitting in
-        /// each slot, the leader, the comment - and shows the parts the window leaves out. Nothing
-        /// is fetched and nobody is asked; it is on this machine already.
-        ///
-        /// Turns itself off while PFRadar is running. Both hook the same game function, and the
-        /// second hook onto one function is how unload order starts to matter.
-        /// </summary>
-        public bool ListingDetailsEnabled { get; set; } = true;
-
         // ListingDetailsAutoLookup WAS DECLARED HERE AND IS GONE (2026-08-17).
         //
         // It was added for an auto-lookup that was then deliberately not built - the progression
@@ -540,6 +537,37 @@ namespace PfPresets
         public bool PfCrowdsourceEnabled { get; set; } = true;
 
         /// <summary>
+        /// Coordinated joining: applying to other plugin users' omitted-slot listings from the
+        /// board, and taking applicants on your own. Both halves, because a Join button that
+        /// leads to a host who never answers is worse than no button.
+        ///
+        /// NOTHING ABOUT A COORDINATION IS STORED HERE. The coordination id, the private password
+        /// and the listing being followed all live in memory: two game clients can share this file,
+        /// and a shared coordination id makes the second client impersonate the first.
+        /// </summary>
+        public bool PfCoordinationEnabled { get; set; } = true;
+
+        /// <summary>Dancing Mad (Ultimate): name the mechanic a party member's progress most likely
+        /// means, from their phase and boss HP, in a roomier party list. On by default.</summary>
+        public bool DmuProgressMechanicsEnabled { get; set; } = true;
+
+        /// <summary>Keep the board fresh in the background (every 30 seconds, or every 15 minutes
+        /// after an hour without input) rather than only while the tab is on screen.</summary>
+        public bool PfBoardBackgroundPollingEnabled { get; set; } = true;
+
+        /// <summary>
+        /// "Share my party finder data actively". On: PF Analysis reads the Party Finder every 10
+        /// minutes and shares it, whether or not the player is at the keyboard. Off (the default):
+        /// only after an hour with no input, then every 10 minutes until the player is back. Never
+        /// in an instance or in combat. See PfBoardFetch.
+        /// </summary>
+        public bool PfActiveShareEnabled { get; set; }
+
+        /// <summary>The Party Finder board as one line per listing rather than a card each. Kept
+        /// until changed.</summary>
+        public bool PfBoardCompact { get; set; }
+
+        /// <summary>
         /// Override for the rating server, for development and for anyone self-hosting. Empty
         /// means the built-in endpoint.
         ///
@@ -554,6 +582,7 @@ namespace PfPresets
         /// Drives the instant client-side half of the 24h cooldown; the server enforces the real
         /// one. Entries are pruned once expired, so this stays small.
         /// </summary>
+        // RETIRED with ratings (2026-09-25): read by nothing, kept so saved configs still load.
         public Dictionary<string, DateTime> LocalCooldowns { get; set; } = new();
 
         /// <summary>
@@ -566,6 +595,22 @@ namespace PfPresets
         /// </summary>
         public Dictionary<string, DateTime> ReportCooldowns { get; set; } = new();
 #endif
+
+        /// <summary>
+        /// Whether to show the extra detail the game already has about a listing you open.
+        ///
+        /// Reads the structure the client fills in to draw the listing window - the jobs sitting in
+        /// each slot, the leader, the comment - and shows the parts the window leaves out. Nothing
+        /// is fetched and nobody is asked; it is on this machine already.
+        ///
+        /// Turns itself off while PFRadar is running. Both hook the same game function, and the
+        /// second hook onto one function is how unload order starts to matter.
+        /// </summary>
+        public bool ListingDetailsEnabled { get; set; } = true;
+
+        /// <summary>The Party Finder's category-tab value for "All", learned when a read presses it,
+        /// so the player's own browsing can count as a read from then on. -1 until learned.</summary>
+        public int PfAllCategoryTab { get; set; } = -1;
 
         [NonSerialized]
         private IDalamudPluginInterface? pluginInterface;

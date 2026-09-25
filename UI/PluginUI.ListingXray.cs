@@ -310,6 +310,7 @@ namespace PfPresets
         {
             float width = ImGui.GetContentRegionAvail().X;
 
+#if PFP_RATINGS
             var who = new CharacterIdentity(person.Name, person.World);
             var cell = who.IsValid ? ProgressCellFor(who, dutyName, dutyRowId) : null;
 
@@ -319,6 +320,13 @@ namespace PfPresets
             // which is worse than saying nothing. Reduced to the same dash as "nothing known".
             string progress = cell is { IsButton: false } ? cell.Value.Text : "—";
             var colour = cell is { IsButton: false } ? cell.Value.Colour : Faint;
+            string tip = cell?.Tip ?? string.Empty;
+#else
+            // No progress lookups in this build: the panel is the names alone.
+            string progress = "—";
+            var colour = Faint;
+            string tip = string.Empty;
+#endif
 
             using (UiBodyFont.Push())
             {
@@ -327,13 +335,13 @@ namespace PfPresets
 
                 // The name is what gets cut when the panel is too narrow, never the number - a
                 // truncated name is still recognisable and a truncated percentage is a lie.
-                string label = Fit($"{person.Name} @ {person.World}",
+                string label = Fit($"{DisplayName(person.Name)} @ {person.World}",
                     width - progressWidth - 10f);
 
                 ImGui.TextColored(Ink, label);
 
-                if (ImGui.IsItemHovered() && cell is { Tip.Length: > 0 })
-                    PaddedTooltip(cell.Value.Tip);
+                if (ImGui.IsItemHovered() && tip.Length > 0)
+                    PaddedTooltip(tip);
 
                 if (progress.Length > 0)
                 {

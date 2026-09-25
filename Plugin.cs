@@ -29,10 +29,7 @@ namespace PfPresets
         private readonly AnalyticsClient analytics;
 
 #if PFP_RATINGS
-        private readonly WorldHelper worldHelper;
         private readonly EncounterStore encounterStore;
-        private VoteQueue voteQueue = null!;
-        private readonly RatingHistory ratingHistory;
         private readonly PlayerHistory playerHistory;
         private readonly PfApiClient ratingApi;
         private readonly RatingService ratingService;
@@ -41,11 +38,24 @@ namespace PfPresets
         /// <summary>Publishes this character's own presence in a party finder listing, and reads
         /// back who else has published theirs.</summary>
         private readonly PfCrowdsource pfCrowdsource;
+        private readonly PfBoard pfBoard;
+        private readonly PfCoordination pfCoordination;
+        private readonly PfOwnListing pfOwnListing;
+        private readonly PfBoardFetch pfBoardFetch;
+        private readonly InputActivity inputActivity;
 #endif
 
         /// <summary>Reads the listing window's own data. Outside the ratings guard: it asks the
         /// server nothing and stores nothing about anybody, so it is not part of that system.</summary>
         private readonly ListingXray listingXray;
+
+#if PFP_RATINGS
+        private readonly PfDirectJoin pfDirectJoin;
+#endif
+
+        /// <summary>World names and data centres from the game's sheet. Shared: the listing panel
+        /// needs it in every build.</summary>
+        private readonly WorldHelper worldHelper;
 
         /// <summary>Puts the real duty name on a locked Party Finder listing, when the player has
         /// asked for it. Outside the ratings guard for the same reason: it reads what this client
@@ -62,6 +72,8 @@ namespace PfPresets
             ITextureProvider textureProvider,
             IClientState clientState,
             IPlayerState playerState,
+            IKeyState keyState,
+            IAddonLifecycle addonLifecycle,
             IFramework framework,
             IObjectTable objectTable,
             ITargetManager targetManager,
@@ -105,19 +117,21 @@ namespace PfPresets
                 condition,
                 sigScanner);
 
+            // Keeps the Party Finder hidden while the board reads it - see PfAutomation.BoardFetch.
+            this.pfAutomation.AttachAddonLifecycle(addonLifecycle);
+
+            this.worldHelper = new WorldHelper(dataManager, pluginLog);
+
 #if PFP_RATINGS
             // Community ratings. Every piece is constructed regardless of whether the feature is
             // switched on, because the services are inert until config.RatingsEnabled is true: the
             // tracker records nothing, and the lookup pump has nothing queued to send.
-            this.worldHelper = new WorldHelper(dataManager, pluginLog);
             this.encounterStore = new EncounterStore(this.pluginInterface, pluginLog);
-            this.ratingHistory = new RatingHistory(this.pluginInterface, pluginLog);
             this.playerHistory = new PlayerHistory(this.pluginInterface, pluginLog);
 
             // Carries an upgrading install's known names into the permanent list, which would
             // otherwise start empty and read as having forgotten everybody. No-op once it has run.
-            this.playerHistory.SeedFrom(
-                this.encounterStore.RecentContacts(), this.ratingHistory.Recent());
+            this.playerHistory.SeedFrom(this.encounterStore.RecentContacts());
 
             this.ratingApi = new PfApiClient(
                 this.config,
@@ -125,8 +139,7 @@ namespace PfPresets
                 pluginInterface.Manifest.AssemblyVersion?.ToString() ?? "unknown",
                 () => GetLocalIdentity(clientState, playerState));
 
-            this.voteQueue = new VoteQueue(this.pluginInterface, pluginLog);
-            this.ratingService = new RatingService(this.ratingApi, this.config, pluginLog, this.encounterStore, this.ratingHistory, this.voteQueue, this.playerHistory);
+            this.ratingService = new RatingService(this.ratingApi, this.config, pluginLog, this.encounterStore, this.playerHistory);
 
             this.dutyTracker = new DutyTracker(
                 dutyState,
@@ -161,7 +174,51 @@ namespace PfPresets
             this.pfCrowdsource = new PfCrowdsource(
                 this.ratingApi, this.config, pluginLog, this.pfAutomation, this.worldHelper,
                 () => GetLocalIdentity(clientState, playerState),
+                () => GetCurrentWorld(clientState, playerState),
                 () => this.listingXray.SuppressedByPfRadar);
+
+            // The Party Finder tab. Needs no hook - Dalamud already hands every plugin the listings
+            // the window receives - so unlike the listing panel it does not stand down for PFRadar.
+            this.pfBoard = new PfBoard(
+                partyFinderGui, dataManager, this.ratingApi, this.config, pluginLog, this.worldHelper,
+                () => GetCurrentWorld(clientState, playerState),
+                () => GetLocalIdentity(clientState, playerState));
+
+            // A member whose game has lost the leader's listing reads it from the board instead.
+            this.pfAutomation.LeaderListingFallback = this.pfBoard.LeaderListing;
+
+            // When the player last touched anything - shared by the board's reads and coordination.
+            this.inputActivity = new InputActivity(keyState, pluginLog);
+
+            // Reading the Party Finder for the board: every 10 minutes with active sharing on,
+            // otherwise only after an hour away from the keyboard.
+            this.pfBoardFetch = new PfBoardFetch(this.config, this.pfAutomation, this.pfBoard,
+                this.inputActivity, pluginLog);
+
+            // The recruiter's own listing, reported by the recruiter: on posting, on every join or
+            // leave, on every re-post, and withdrawn when it ends.
+            this.pfOwnListing = new PfOwnListing(
+                this.ratingApi, pluginLog, this.pfAutomation, this.worldHelper, this.pfBoard,
+                () => GetLocalIdentity(clientState, playerState),
+                () => GetCurrentWorld(clientState, playerState));
+
+            // Coordinated joining: applying from the board, and hosting an omitted-slot listing that
+            // hands its party over through a private one. Needs the command manager to find /li,
+            // and the plugin interface to ask Lifestream whether a travel has finished.
+            this.pfCoordination = new PfCoordination(
+                this.ratingApi, this.config, pluginLog, this.chatGui, this.pfAutomation, this.worldHelper,
+                this.dutyDataHelper,
+                () => GetLocalIdentity(clientState, playerState),
+                () => GetCurrentWorld(clientState, playerState), this.pfBoard, this.inputActivity,
+                this.commandManager, this.framework, this.pluginInterface);
+            this.pfCoordination.OwnListingStatus = () => this.pfOwnListing.Status;
+
+            // Joining any listing on this data centre from the board, checked against the game first.
+            this.pfDirectJoin = new PfDirectJoin(this.pfAutomation, this.pfBoard, this.worldHelper,
+                this.dutyDataHelper, this.framework, this.chatGui, pluginLog,
+                () => GetCurrentWorld(clientState, playerState),
+                () => GetLocalIdentity(clientState, playerState),
+                name => PlayerNameFormat.Apply(name, this.config.PlayerNameStyle));
 
             // The server holds the opt-out, not the config file - that is the whole promise made to
             // somebody who turns ratings off, since a fresh install defaults to on. Asked once per
@@ -188,21 +245,23 @@ namespace PfPresets
             // AFTER the UI exists, not beside where the service is built. Assigning this next to the
             // constructor above read better and dereferenced a field that is not set until here.
             this.ui.Listings = this.listingXray;
+            this.ui.Worlds = this.worldHelper;
 #if PFP_RATINGS
             this.ui.Crowd = this.pfCrowdsource;
+            this.ui.Board = this.pfBoard;
+            this.ui.Coordination = this.pfCoordination;
+            this.ui.DirectJoin = this.pfDirectJoin;
+            this.ui.BoardFetch = this.pfBoardFetch;
 #endif
 
 #if PFP_RATINGS
             this.ui.Ratings = this.ratingService;
-            this.ui.Worlds = this.worldHelper;
             this.ratingService.RegionOf = this.worldHelper.GetFfLogsRegion;
             this.ui.Encounters = this.encounterStore;
-            this.ui.History = this.ratingHistory;
             this.ui.Players = this.playerHistory;
             this.ui.LocalIdentity = () => GetLocalIdentity(clientState, playerState);
             this.ui.Party = new PartyCommands(pluginLog, this.chatGui);
             this.ui.DiagnosticSink = line => this.chatGui.Print(line);
-            this.dutyTracker.EncounterCompleted += this.ui.OnEncounterCompleted;
 
             // The permanent who-have-I-met list is fed from the same event as everything else, so
             // one judgement about whether a duty was worth recording serves every store.
@@ -216,7 +275,6 @@ namespace PfPresets
             // two ask different questions: an achievement is about the feed and only some duties
             // qualify, while the vote allowance is about the post-duty window and every duty with
             // somebody else in it does. See RatingService.Allowance.cs.
-            this.dutyTracker.EncounterCompleted += this.ratingService.FileDutyForAllowance;
 
             // Combat is the service's one reason to hold a filed duty back - see
             // TickPendingDuties. Handed in as a predicate rather than a reference to the automation
@@ -248,7 +306,7 @@ namespace PfPresets
             // repeating the same paragraph four times just made the command list unreadable.
             this.commandManager.AddHandler("/pfa", new CommandInfo(OnCommand)
             {
-                HelpMessage = "Open the PF Analysis window. Subcommands: apply <name>, refresh, list.",
+                HelpMessage = "Open the PF Analysis window. Subcommands: apply <name>, refresh, list, coord.",
                 ShowInHelp = true,
             });
 
@@ -324,9 +382,20 @@ namespace PfPresets
                 return;
             }
 
+#if PFP_RATINGS
+            // "/pfp coord" - what the coordinated Party Finder thinks is going on: whether the
+            // current listing is registered, under which coordination id, and why not if it isn't.
+            if (verb.Equals("coord", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var line in this.pfCoordination.Describe())
+                    this.chatGui.Print($"[PF Analysis] {line}");
+                return;
+            }
+#endif
+
             if (trimmed.Length > 0)
             {
-                this.chatGui.Print($"[PF Analysis] Unknown command \"{trimmed}\". Try: /pfp apply <name>, /pfp refresh, /pfp list");
+                this.chatGui.Print($"[PF Analysis] Unknown command \"{trimmed}\". Try: /pfp apply <name>, /pfp refresh, /pfp list, /pfp coord");
                 return;
             }
 
@@ -569,11 +638,17 @@ namespace PfPresets
             // whether or not any window of ours is open, and a report that only refreshed while
             // somebody was looking at the plugin would be wrong exactly when it mattered.
             this.pfCrowdsource.Tick();
+            this.inputActivity.Tick();
+            this.pfBoard.Tick();
+            // A listing opened in the game's own window goes on the board as the game shows it.
+            this.pfDirectJoin.Tick();
+            this.pfBoardFetch.Tick();
+            this.pfOwnListing.Tick();
+            this.pfCoordination.Tick();
 
             // Drains at most one filed duty per frame, and only out of combat. Returns on a count
             // check the rest of the time.
             this.ratingService.TickPendingDuties();
-            this.ratingService.TickAllowances();
 
             // Framework rather than draw, for the reason the two above are: an announcement that
             // only arrives while our own window happens to be open is an announcement for the two
@@ -599,10 +674,21 @@ namespace PfPresets
             return identity.IsValid ? identity : null;
         }
 
+        /// <summary>The world the character is standing on, which is what decides which data
+        /// centre's Party Finder they are looking at. Empty while logged out.</summary>
+        private static string GetCurrentWorld(IClientState clientState, IPlayerState playerState)
+        {
+            if (!clientState.IsLoggedIn || !playerState.IsLoaded)
+                return string.Empty;
+
+            return playerState.CurrentWorld.ValueNullable?.Name.ToString() ?? string.Empty;
+        }
+
         private void OnLogoutResetSession(int type, int code) => this.ratingApi.OnCharacterChanged();
 #endif
 
         /// <summary>Moderator tooling, present only on the machines that hold a key.</summary>
+#if PFP_RATINGS
         /// <summary>
         /// Reads the opt-out setting back from the server after a login.
         ///
@@ -618,6 +704,7 @@ namespace PfPresets
                 this.ratingService.SyncOptOutSetting();
             });
         }
+#endif
 
         partial void InitPanel(IPluginLog log);
         partial void DisposePanel();
@@ -625,6 +712,7 @@ namespace PfPresets
         public void Dispose()
         {
             DisposePanel();
+            this.pfAutomation.DetachAddonLifecycle();
             this.framework.Update -= OnFrameworkUpdate;
 
             // Before the UI goes, so nothing can be mid-draw against a snapshot while the hook that
@@ -640,6 +728,10 @@ namespace PfPresets
             // publishing this" than letting the row sit until the server expires it, and somebody
             // looking at that listing stops being told we are in a party we have left.
             this.pfCrowdsource.Withdraw();
+            this.pfCoordination.Dispose();
+            this.pfDirectJoin.Dispose();
+            this.pfOwnListing.Withdraw();
+            this.pfBoard.Dispose();
 #endif
 
             this.pluginInterface.UiBuilder.Draw -= this.ui.Draw;
@@ -656,16 +748,13 @@ namespace PfPresets
 #if PFP_RATINGS
             this.clientState.Login -= this.ratingApi.OnCharacterChanged;
             this.clientState.Logout -= OnLogoutResetSession;
-            this.dutyTracker.EncounterCompleted -= this.ui.OnEncounterCompleted;
             clientState.Login -= this.SyncOptOutOnLogin;
             this.dutyTracker.EncounterCompleted -= this.playerHistory.RecordEncounter;
             this.dutyTracker.EncounterCompleted -= this.ratingService.PostAchievement;
-            this.dutyTracker.EncounterCompleted -= this.ratingService.FileDutyForAllowance;
             this.dutyTracker.Dispose();
             this.ratingService.Dispose();
             this.ratingApi.Dispose();
             this.encounterStore.Flush();
-            this.ratingHistory.Flush();
             this.playerHistory.Flush();
 #endif
 

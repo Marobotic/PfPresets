@@ -19,9 +19,6 @@ namespace PfPresets
     /// </summary>
     public partial class PluginUI
     {
-        /// <summary>Below this there is no room for a list beside a page, and the categories become
-        /// headings on one scrolling column instead.</summary>
-        private const float SettingsTwoColumnWidth = 720f;
 
         /// <summary>
         /// A page of settings: what the list on the left calls it, and what the right draws.
@@ -31,7 +28,11 @@ namespace PfPresets
         /// sat above the radar and beside the accent picker for no reason anybody could name, and
         /// three of the seven were four lines long - a page of half-empty boxes.
         /// </summary>
-        private readonly record struct SettingsPage(string Label, FontAwesomeIcon Icon, Action Draw);
+        private readonly record struct SettingsPage(string Label, FontAwesomeIcon Icon, Action Draw, string Lucide = "info");
+
+        /// <summary>The tab Back in the settings sidebar returns to: whichever was on screen before
+        /// Settings was opened.</summary>
+        private MainTab settingsReturnTab = MainTab.Presets;
 
         private int settingsPage;
 
@@ -39,20 +40,20 @@ namespace PfPresets
         {
             // Everything that changes what the plugin puts in front of you while you are using the
             // Party Finder: the two buttons it adds, and the radar that reads listings.
-            new("Party Finder", FontAwesomeIcon.Users, () =>
+            new("Party Finder", FontAwesomeIcon.UserFriends, () =>
             {
                 DrawPartyFinderSettings();
                 DrawPfRadarSettings();
-            }),
+            }, "sliders-horizontal"),
 
             // The community half and the data behind it, together.
             //
             // They were two pages and should not have been: every question on this page is the same
             // question in a different form - what the plugin knows about other people, what it tells
-            // them about you, and what leaves the machine at all. Splitting "ratings" from "data"
+            // them about you, and what leaves the machine at all. Splitting "community" from "data"
             // meant somebody turning the system off had to visit two places to find out what that
             // actually did.
-            new("Ratings & privacy", FontAwesomeIcon.Shield, () =>
+            new("Community & privacy", FontAwesomeIcon.UserShield, () =>
             {
                 DrawRatingsSettings();
 
@@ -64,11 +65,11 @@ namespace PfPresets
                 DrawClearAnnounceSettings();
 
                 DrawDataSettings();
-            }),
+            }, "shield-check"),
 
             // How the plugin looks, including how names are written in it.
             //
-            // Player names sat with ratings for a while on the reasoning that it is a setting about
+            // Player names sat with the community settings for a while on the reasoning that it is a setting about
             // other players. It is not - it is a setting about typography. Nothing about it changes
             // what is sent, stored or shown to anybody else; it changes how a name is drawn on this
             // screen, which is the same kind of choice as the accent colour beside it.
@@ -76,10 +77,10 @@ namespace PfPresets
             {
                 DrawAppearanceSettings();
                 DrawPlayerNameSettings();
-            }),
+            }, "palette"),
 
             // Version, changelog, the ask.
-            new("About", FontAwesomeIcon.InfoCircle, DrawAboutSettings),
+            new("About", FontAwesomeIcon.InfoCircle, DrawAboutSettings, "info"),
         };
 
         /// <summary>
@@ -99,116 +100,29 @@ namespace PfPresets
 
             settingsPage = Math.Clamp(settingsPage, 0, pages.Count - 1);
 
-            ImGui.SetCursorPosX(Space.Gutter);
+            // The mockup's content pane: generous padding round the page.
+            const float pagePad = 20f;
+            ImGui.SetCursorPosX(pagePad);
             ImGui.BeginChild("SettingsBody",
-                new Vector2(ImGui.GetWindowWidth() - Space.Gutter * 2f, -1), false);
+                new Vector2(ImGui.GetWindowWidth() - pagePad * 2f, -1), false);
             try
             {
-                // The page LIST needs the top margin - it is rows, not headings, so nothing gives
-                // it one. The page body opposite gets its own from the first DrawListHeading in it.
-                float avail = ImGui.GetContentRegionAvail().X;
+                // THE PAGE LIST IS THE SIDEBAR NOW. Opening Settings swaps the sidebar's tabs for
+                // its pages and a way back, as the system this is modelled on does - a list of
+                // pages inside the body beside a list of tabs outside it was two navigations for
+                // one screen. The phone's bottom bar does the same. So the body is the page.
+                ImGui.Dummy(new Vector2(0, pagePad));
+                pages[settingsPage].Draw();
 
-                if (avail < SettingsTwoColumnWidth)
-                {
-                    // No room for a list beside a page, so every page is drawn in order down one
-                    // column. A phone has no left-hand rail anywhere else in the plugin either.
-                    foreach (var page in pages)
-                        page.Draw();
-
-                    // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+                // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
+                if (settingsPage == pages.Count - 1)
                     DrawPanelSettings();
-                    return;
-                }
-
-                float listW = MathF.Min(232f, avail * 0.28f);
-
-                ImGui.BeginChild("SettingsPageList", new Vector2(listW, -1), false,
-                    ImGuiWindowFlags.NoScrollbar);
-                try
-                {
-                    ImGui.Dummy(new Vector2(0, Space.Gutter));
-
-                    for (int i = 0; i < pages.Count; i++)
-                        DrawSettingsPageRow(pages[i], i);
-                }
-                finally
-                {
-                    ImGui.EndChild();
-                }
-
-                ImGui.SameLine(0, Space.Gutter);
-
-                // The only thing on this tab that scrolls.
-                ImGui.BeginChild("SettingsPageBody", new Vector2(0, -1), false);
-                try
-                {
-                    // Room above the first heading. It sat against the top edge of the panel, which
-                    // made the page look like it had been scrolled to rather than opened.
-                    ImGui.Dummy(new Vector2(0, Space.Gutter));
-                    pages[settingsPage].Draw();
-
-                    // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
-                    if (settingsPage == pages.Count - 1)
-                        DrawPanelSettings();
-                }
-                finally
-                {
-                    ImGui.EndChild();
-                }
+                return;
             }
             finally
             {
                 ImGui.EndChild();
             }
-        }
-
-        /// <summary>
-        /// One row in the settings page list: an icon, a name, and a fill when it is the page on
-        /// screen.
-        ///
-        /// The same shape as the sidebar's navigation rows, because it is the same idea one level
-        /// down - a list of places, with the one you are in marked.
-        /// </summary>
-        private void DrawSettingsPageRow(SettingsPage page, int index)
-        {
-            const float rowH = 38f;
-            bool active = settingsPage == index;
-
-            Vector2 p = ImGui.GetCursorScreenPos();
-            float width = ImGui.GetContentRegionAvail().X;
-            var dl = ImGui.GetWindowDrawList();
-
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0, 0, 0, 0));
-            if (ImGui.Button($"##settingspage{index}", new Vector2(width, rowH)))
-                settingsPage = index;
-            ImGui.PopStyleColor(3);
-
-            bool hovered = ImGui.IsItemHovered();
-
-            if (active || hovered)
-                dl.AddRectFilled(p, new Vector2(p.X + width, p.Y + rowH),
-                    ImGui.ColorConvertFloat4ToU32(active ? Raised : Field), Radius.Small);
-
-            Vector4 colour = active || hovered ? Ink : Dim;
-            string glyph = page.Icon.ToIconString();
-
-            using (UiIconRow.Push())
-            {
-                Vector2 gs = ImGui.CalcTextSize(glyph);
-                dl.AddText(new Vector2(p.X + 12f, p.Y + (rowH - gs.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(active ? Accent : colour), glyph);
-            }
-
-            using (UiBodyFont.Push())
-            {
-                Vector2 ts = ImGui.CalcTextSize(page.Label);
-                dl.AddText(new Vector2(p.X + 36f, p.Y + (rowH - ts.Y) * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(colour), Fit(page.Label, width - 44f));
-            }
-
-            ImGui.Dummy(new Vector2(0, 2));
         }
 
         // ── Sections ──────────────────────────────────────────────
@@ -262,11 +176,6 @@ namespace PfPresets
                 + "of naming the fight. On replaces that with the duty's real name, still marked "
                 + "\"(Locked Duty)\". SPOILERS - the game hides these names on purpose.");
 
-            DrawSetting("Leader's score on a listing", () => config.ShowListingLeaderRating,
-                v => config.ShowListingLeaderRating = v,
-                "Shows the listing leader's community score beside their name while you're "
-                + "viewing it, so you see it before joining rather than after. Needs ratings on.");
-
             // No hairline under it when the two numbers follow: they are the rest of this setting,
             // not the next one.
             bool numbersFollow = config.AutoRefresherEnabled && !IsRecruitmentRefresherActive();
@@ -287,8 +196,7 @@ namespace PfPresets
             // the convenience, not the home.
             if (config.AutoRefresherEnabled && !IsRecruitmentRefresherActive())
             {
-                int interval = Math.Clamp(config.AutoRefresherIntervalMinutes,
-                    PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes);
+                int interval = pfAutomation.RefreshAtMinutesLeft;
                 int maxHours = Math.Clamp(config.AutoRefresherMaxHours, 0,
                     PfAutomation.MaxRefreshDurationHours);
 
@@ -296,19 +204,23 @@ namespace PfPresets
                 // "how often" and "until when" made the pair look like two unrelated settings that
                 // happened to follow the one they qualify. They read as a sentence: refresh every
                 // this, stop after that.
-                if (DrawInlinePairRow(
-                        "Refresh every", ref interval,
-                        PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes, "min", null,
-                        "How often to re-post your listing while it is up. A listing expires after "
-                        + $"60 minutes on its own ({PfAutomation.MinRefreshMinutes}-"
-                        + $"{PfAutomation.MaxRefreshMinutes} minutes).",
-                        "Stop after", ref maxHours,
-                        0, PfAutomation.MaxRefreshDurationHours, "h", "Never",
-                        "Stops auto-refreshing after this long, so a listing does not stay up all "
-                        + "night unattended. Your listing is not cancelled - it just expires "
-                        + "normally. Zero means never stop."))
+                // Two iOS value rows under the switch: the name on the left, and a stepper on the
+                // right - minus, the value, plus. Double-click the value to type any number.
+                bool changedA = DrawStepperRow("Refresh at", ref interval,
+                    PfAutomation.MinRefreshAtMinutesLeft, PfAutomation.MaxRefreshAtMinutesLeft, 5,
+                    "min left", null,
+                    "Re-posts your listing once this many minutes or fewer are left on it. A "
+                    + "listing lasts 60 minutes, so 30 refreshes it every half hour. Each "
+                    + "refresh is checked 30 seconds later and tried again if it didn't take "
+                    + $"({PfAutomation.MinRefreshAtMinutesLeft}-{PfAutomation.MaxRefreshAtMinutesLeft} minutes).");
+                bool changedB = DrawStepperRow("Stop after", ref maxHours,
+                    0, PfAutomation.MaxRefreshDurationHours, 1, "h", "Never",
+                    "Stops auto-refreshing after this long, so a listing does not stay up all "
+                    + "night unattended. Your listing is not cancelled - it just expires "
+                    + "normally. Zero means never stop.");
+                if (changedA || changedB)
                 {
-                    config.AutoRefresherIntervalMinutes = interval;
+                    config.AutoRefreshAtMinutesLeft = interval;
                     config.AutoRefresherMaxHours = maxHours;
                     config.Save();
                 }
@@ -330,15 +242,15 @@ namespace PfPresets
             DrawChoiceSetting("Show names as", PlayerNameFormat.StyleLabels,
                 () => (int)config.PlayerNameStyle,
                 v => config.PlayerNameStyle = (PlayerNameStyle)v,
-                "Applies everywhere a name appears - the recruitment card, your party, ratings, "
-                + "recent players and profiles. Lookups and links still use the full name.");
+                "Applies everywhere a name appears - the recruitment card, your party, the Party "
+                + "Finder board, recent players and profiles. Lookups and links still use the full name.");
 
             EndSettingsSection();
         }
 
         private void DrawRatingsSettings()
         {
-            BeginSettingsSection("Ratings");
+            BeginSettingsSection("Community");
 
             // THIS TOGGLE IS AN OPT-OUT, not a local preference, and the wording says so because
             // the consequence outlives the plugin: once approved the server holds the flag, so
@@ -355,9 +267,7 @@ namespace PfPresets
 
             if (!loggedIn)
             {
-                ImGui.TextColored(Dim, "Log in to a character to change this.");
-                ImGui.Dummy(new Vector2(0, 8));
-                DrawRuleHair(padAbove: 0f, padBelow: 10f);
+                DrawStatusRow("Log in to a character to change this.");
                 DrawBroadcastSetting();
 
                 // EVERY EXIT FROM THIS SECTION CLOSES IT. These three early returns did not, and
@@ -375,55 +285,39 @@ namespace PfPresets
             // decided - press it and watch it refuse, with the reason two sections away.
             if (config.AnalyticsMode != AnalyticsMode.Full)
             {
-                using (UiBodyFont.Push())
-                    ImGui.TextColored(Dim, "Ratings system: off");
-                SameLineHelpDot("ratingslocked",
-                    "Taking part needs \"Anonymous usage stats\" set to Full - see the Data "
-                    + "section. Below that, this install sends nothing and you are opted out of "
-                    + "ratings and clears.");
-
-                ImGui.Dummy(new Vector2(0, 8));
-                DrawRuleHair(padBelow: 8f);
+                DrawStatusRow("Community: off. Taking part needs \"Anonymous usage stats\" set "
+                    + "to Full - see Data below. Below that, this install sends nothing and you are "
+                    + "opted out of the clears feed and progress lookups.");
                 DrawBroadcastSetting();
 
                 EndSettingsSection();
                 return;
             }
 
-            DrawSetting("Enable ratings system", () => config.RatingsEnabled,
+            DrawSetting("Take part in the community", () => config.RatingsEnabled,
                 AskThenSetRatingsEnabled,
-                "Disabling this opts you out of the rating system and the Clears feed: "
-                + "players cannot view your ratings, or rate you, and nothing about your duties is "
-                + "sent. It stays opted out even after uninstalling the plugin, until you enable "
-                + "this option again.",
+                "Disabling this opts you out of the community: the Clears feed, progress lookups "
+                + "and your profile card. Nothing about your duties is sent. It stays opted out "
+                + "even after uninstalling the plugin, until you enable this option again.",
                 last: !config.RatingsEnabled);
 
             if (ratingOptOutNote.Length > 0)
-            {
-                    using (UiHelpFont.Push())
-                    ImGui.TextColored(ratingOptOutFailed ? Negative : Faint, ratingOptOutNote);
-                    ImGui.Dummy(new Vector2(0, 6));
-            }
+                DrawStatusRow(ratingOptOutNote, ratingOptOutFailed ? Negative : null, last: !config.RatingsEnabled);
 
             if (!config.RatingsEnabled)
             {
                 // Broadcasting is a different system and does not go with it - somebody who wants
-                // nothing to do with ratings may still want their Ultimate clear celebrated, and
-                // burying that setting behind this one would decide for them.
-                DrawRuleHair(padAbove: 10f, padBelow: 10f);
+                // nothing else from the community may still want their Ultimate clear celebrated,
+                // and burying that setting behind this one would decide for them.
                 DrawBroadcastSetting();
 
                 EndSettingsSection();
                 return;
             }
 
-            DrawSetting("Ask after a duty", () => config.PostDutyPromptEnabled,
-                v => config.PostDutyPromptEnabled = v,
-                "When a duty ends, a small window offers to rate the group once.");
-
-            DrawSetting("Show ratings on your party", () => config.PartyRatingsEnabled,
+            DrawSetting("Show your party's progress", () => config.PartyRatingsEnabled,
                 v => config.PartyRatingsEnabled = v,
-                "Shows each party member's rating and prog point beside their name.");
+                "Shows each party member's prog point beside their name.");
 
             DrawBroadcastSetting();
 
@@ -437,7 +331,7 @@ namespace PfPresets
 
         // ── Asking first ──────────────────────────────────────────
         //
-        // THE THREE SETTINGS THAT MOVE DATA ASK BEFORE THEY MOVE IT: ratings, usage stats and
+        // THE THREE SETTINGS THAT MOVE DATA ASK BEFORE THEY MOVE IT: the community, usage stats and
         // broadcasting. Not because a checkbox is hard to undo, but because the thing being decided
         // is not the checkbox - it is what leaves this machine, and nobody should learn that from a
         // help dot they did not hover.
@@ -454,7 +348,7 @@ namespace PfPresets
             + "combat or hardware data is ever included.";
 
         /// <summary>
-        /// Confirms before the ratings toggle actually moves.
+        /// Confirms before the community toggle actually moves.
         ///
         /// Both directions ask. Turning it off is the consequential one - it files a server-side
         /// opt-out that outlives the install - but turning it on starts sending duty results, and a
@@ -472,28 +366,28 @@ namespace PfPresets
             if (enabled)
             {
                 AskConfirm(
-                    "Turn on the ratings system?",
-                    "Your duty results start being sent so you can rate other players and be rated.",
+                    "Take part in the community?",
+                    "Your clears can be posted to the feed, and your progress looked up.",
                     "Turn it on",
                     () => SetRatingsEnabled(true),
-                    detail: "Sent: who you finished a duty with, a 1-5 score you choose, and clears "
-                        + "worth posting to the feed. " + AnonymityLine,
+                    detail: "Sent: who you finished a duty with, and clears worth posting to the feed. "
+                        + AnonymityLine,
                     danger: false);
                 return;
             }
 
             AskConfirm(
-                "Turn off the ratings system?",
-                "You will be opted out of ratings and the Clears feed.",
+                "Leave the community?",
+                "You will be opted out of the Clears feed and progress lookups.",
                 "Turn it off",
                 () => SetRatingsEnabled(false),
-                detail: "You lose: your ratings tab, ratings on your party panel, and the ability to "
-                    + "rate anyone. Nothing about your duties is sent, and your clear posts "
-                    + "are hidden. This survives uninstalling, until you turn it back on.");
+                detail: "You lose: the Players tab and progress on your party panel. Nothing about "
+                    + "your duties is sent, and your clear posts are hidden. This survives "
+                    + "uninstalling, until you turn it back on.");
         }
 
         /// <summary>
-        /// Turning ratings off opts this character out, on the server.
+        /// Turning the community off opts this character out, on the server.
         ///
         /// The local flag moves first so the UI answers immediately, and the server is told
         /// straight after. If it refuses - a machine that has not been signing in as this character
@@ -524,10 +418,10 @@ namespace PfPresets
                 {
                     ratingOptOutFailed = false;
                     ratingOptOutNote = enabled
-                        ? "Opted back in. Your ratings are visible again, and any request you had "
-                          + "waiting has been withdrawn."
-                        : "Request filed. Your ratings tab is hidden now; your score stops being "
-                          + "visible to others once it is approved.";
+                        ? "Opted back in. Your profile and clears are visible again, and any request "
+                          + "you had waiting has been withdrawn."
+                        : "Request filed. The Players tab is hidden now; your profile and clears "
+                          + "stop being visible to others once it is approved.";
                     return;
                 }
 
@@ -562,12 +456,8 @@ namespace PfPresets
         {
             if (!BroadcastAvailable)
             {
-                using (UiHelpFont.Push())
-                    ImGui.TextColored(Faint,
-                        "Broadcasting is unavailable while you are opted out. Your existing posts "
-                        + "are hidden, not deleted - opting back in restores them.");
-
-                ImGui.Dummy(new Vector2(0, 8));
+                DrawStatusRow("Broadcasting is unavailable while you are opted out. Your existing posts "
+                    + "are hidden, not deleted - opting back in restores them.", last: true);
                 return;
             }
 
@@ -721,9 +611,6 @@ namespace PfPresets
         private string analyticsOptOutNote = string.Empty;
         private bool analyticsOptOutFailed;
 
-        /// <summary>The value a slider held when its handle was picked up. One field for all of
-        /// them: ImGui has one active item, so two sliders cannot be mid-drag at once.</summary>
-        private object? sliderGrabbedValue;
 
         /// <summary>
         /// The opt-out that rides along with dropping the stats slider below Full.
@@ -783,7 +670,7 @@ namespace PfPresets
                     "Send full usage stats?",
                     "This install starts sending counts of which plugin features get used.",
                     "Added to the random install id and version already sent. It also unlocks the "
-                    + "ratings system, which stays off until you turn it on yourself."),
+                    + "community, which stays off until you turn it on yourself."),
 
                 AnalyticsMode.Basic => (
                     "Send basic usage stats only?",
@@ -798,9 +685,9 @@ namespace PfPresets
 
             if (alsoOptsOut)
             {
-                detail += " You will also be opted out of ratings and clears, and that "
+                detail += " You will also be opted out of the community and clears, and that "
                     + "opt-out is filed with the server - dragging this back up later does not "
-                    + "turn ratings back on by itself.";
+                    + "turn the community back on by itself.";
             }
 
             detail += " The install id is random and is never your character name; no chat, combat "
@@ -830,8 +717,8 @@ namespace PfPresets
                 analyticsOptOutFailed = false;
                 analyticsOptOutNote = config.RatingsEnabled
                     ? string.Empty
-                    : "Still opted out. Turn \"Enable ratings system\" back on in the Ratings "
-                      + "section to take part again.";
+                    : "Still opted out. Turn \"Take part in the community\" back on in the "
+                      + "Community section to take part again.";
                 return;
             }
 
@@ -856,8 +743,8 @@ namespace PfPresets
                 if (error.Length == 0)
                 {
                     analyticsOptOutFailed = false;
-                    analyticsOptOutNote = "Opted out. Ratings and clears are hidden now; your "
-                        + "score stops being visible to others once the request is approved.";
+                    analyticsOptOutNote = "Opted out. The community and clears are hidden now; your "
+                        + "profile stops being visible to others once the request is approved.";
                     return;
                 }
 
@@ -920,7 +807,34 @@ namespace PfPresets
                 + "that listing. One person sharing is enough to describe the whole party, "
                 + "which is what makes the panel above worth reading. Only a listed party "
                 + "is ever sent; it comes down when the listing ends, and the server forgets "
-                + "it within the hour either way.",
+                + "it within the hour either way.");
+
+            // The Party Finder tab's two options, moved here from the top of the tab: they are
+            // decisions made once, and the tab is for the board.
+            DrawSetting("Share my party finder data actively",
+                () => config.PfActiveShareEnabled,
+                v =>
+                {
+                    config.PfActiveShareEnabled = v;
+                    if (v)
+                        BoardFetch?.ReadSoon();
+                },
+                "On: PF Analysis reads the Party Finder every 10 minutes and shares what it finds, "
+                + "whether or not you are at the keyboard.\n\n"
+                + "Off (the default): it only does so once you have been away (no mouse or keyboard) "
+                + "for an hour, then every 10 minutes until you are back.\n\n"
+                + "Either way, never in an instance, in combat, or while you have the Party Finder "
+                + "open, and a read never holds the window for more than a few seconds.");
+
+            DrawSetting("Coordinated joining",
+                () => config.PfCoordinationEnabled,
+                v => config.PfCoordinationEnabled = v,
+                "Apply to listings with the Join button, and take applications on your own.\n\n"
+                + "Any listing you lead takes applications. Plugin users press Join, travel to your "
+                + "data centre with /li (Lifestream) if needed, and join it.\n\n"
+                + "To keep a listing up without strangers walking in, post a preset with its open "
+                + "seats omitted. When every omitted seat has an applicant, PF Analysis reposts it "
+                + "as a private listing and moves the applicants in with a password.",
                 last: true);
 #endif
 
@@ -931,19 +845,20 @@ namespace PfPresets
         {
             BeginSettingsSection("Data");
 
-            DrawSliderSetting("Anonymous usage stats", AnalyticsModeInfo.Labels,
-                () => AnalyticsModeInfo.IndexOf(config.AnalyticsMode),
-                v => config.AnalyticsMode = AnalyticsModeInfo.FromIndex(v),
-                i => AnalyticsModeInfo.Explain(AnalyticsModeInfo.FromIndex(i)),
-                grabbed: () => config.AnalyticsMode,
-                released: CommitAnalyticsMode);
+            var stops = AnalyticsModeInfo.Labels;
+            int mode = AnalyticsModeInfo.IndexOf(config.AnalyticsMode);
+            string explain = string.Join("\n\n", stops.Select((stop, i) =>
+                $"{stop} - {AnalyticsModeInfo.Explain(AnalyticsModeInfo.FromIndex(i))}"));
+            if (DrawDropdownRow("Anonymous usage stats", stops, ref mode, explain, last: analyticsOptOutNote.Length == 0))
+            {
+                var was = config.AnalyticsMode;
+                config.AnalyticsMode = AnalyticsModeInfo.FromIndex(mode);
+                config.Save();
+                CommitAnalyticsMode(was);
+            }
 
             if (analyticsOptOutNote.Length > 0)
-            {
-                using (UiHelpFont.Push())
-                    ImGui.TextColored(analyticsOptOutFailed ? Negative : Faint, analyticsOptOutNote);
-                ImGui.Dummy(new Vector2(0, 6));
-            }
+                DrawStatusRow(analyticsOptOutNote, analyticsOptOutFailed ? Negative : null, last: true);
 
             EndSettingsSection();
         }
@@ -952,66 +867,64 @@ namespace PfPresets
         {
             BeginSettingsSection("Appearance");
 
-            // THE DEVICE SWITCH GOES FIRST, above the accent, because it is the setting on this
-            // surface that changes the most. Everything else on the Appearance section recolours
-            // the window; this one reshapes it.
-            float width = SettingsContentWidth();
-
-            DrawSettingLabelRow("Window",
-                "Portrait is one column with a tab bar along the bottom, and fits beside the game. "
-                + "Landscape is wider, with a sidebar and two-column pages, and wants a big "
-                + "monitor. Neither can be resized - each is drawn for the size it is.", width);
-
+            // THE WINDOW FIRST, above the accent: it reshapes the window, the accent recolours it.
             int device = (int)config.Device;
-            string[] deviceLabels =
-            {
-                $"Portrait · {DeviceMetrics.SizeLabel(DeviceLayout.Portrait)}",
-                $"Landscape · {DeviceMetrics.SizeLabel(DeviceLayout.Landscape)}",
-            };
-
-            // The track is measured back to the card's padding like every other control here.
-            // Content-region-avail alone runs to the window and put its right edge outside the card.
-            if (DrawSegmentedControl("device", deviceLabels, ref device, width))
+            string[] deviceLabels = { "Portrait", "Landscape" };
+            if (DrawSegmentRow("Window", "device", deviceLabels, ref device,
+                    $"Portrait ({DeviceMetrics.SizeLabel(DeviceLayout.Portrait)}) is one column with a tab bar "
+                    + "along the bottom, and fits beside the game. Landscape "
+                    + $"({DeviceMetrics.SizeLabel(DeviceLayout.Landscape)}) is wider, with a sidebar and "
+                    + "two-column pages, and wants a big monitor. Neither can be resized - each is drawn "
+                    + "for the size it is."))
             {
                 config.Device = (DeviceLayout)device;
                 config.Save();
             }
 
-            ImGui.Dummy(new Vector2(0, Space.Gutter));
-
-            DrawSettingLabelRow("Accent colour",
-                "Colours the primary action, active tab and countdown. Role and vote colours "
-                + "never change.", width);
-
-            ImGui.Dummy(new Vector2(0, 4f));
-            DrawAccentSwatches();
-            ImGui.Dummy(new Vector2(0, Space.Gutter));
-            ImGui.Dummy(new Vector2(0, 12));
+            DrawSwatchRow("Accent colour",
+                "Colours the primary action, the page you are on and the countdown. Role "
+                + "colours never change.", last: true);
 
             EndSettingsSection();
         }
 
         private void DrawAboutSettings()
         {
-            BeginSettingsSection("About");
+            BeginSettingsSection("About PF Analysis");
 
-            if (DrawNeutralButton("View changelog##OpenChangelog", new Vector2(180, ButtonHeight)))
+            // The settings mockup's About card: the name and version in bold, a line of what it is,
+            // then the two things you can do from here.
+            ImGui.Dummy(new Vector2(0, 12f));
+            using (UiTitleFont.Push())
+                ImGui.TextColored(new Vector4(1, 1, 1, 1), $"PF Analysis {VersionLabel}");
+            ImGui.Dummy(new Vector2(0, 2f));
+            using (UiHelpFont.Push())
+            {
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + SettingsContentWidth());
+                ImGui.TextColored(PfSlate300, "Party Finder presets, recruitment and clears for Final Fantasy XIV.");
+                ImGui.PopTextWrapPos();
+            }
+            ImGui.Dummy(new Vector2(0, 10f));
+
+            float w = MathF.Min(200f, (SettingsContentWidth() - 8f) * 0.5f);
+            if (DrawIosButton("View changelog", "##OpenChangelog", FontAwesomeIcon.FileAlt, new Vector2(w, 32f), primary: false))
+            {
+                // A sheet only appears once it is opened as one - setting the flag alone left the
+                // button doing nothing at all.
                 isChangelogVisible = true;
-
-            ImGui.Dummy(new Vector2(0, 8));
-
-            // The whole run again, from the fork. It is where the window shape, the accent and the
-            // announcements were first asked about, so it is a reasonable second route to all three
-            // as well as a way to re-read the tour.
-            if (DrawNeutralButton("Replay onboarding##ReplayOnboarding", new Vector2(180, ButtonHeight)))
+                OpenSheet(SheetKind.Changelog);
+            }
+            ImGui.SameLine(0, 8f);
+            // The whole run again, from the fork - where the window shape, the accent and the
+            // announcements were first asked about, and a way to re-read the tour.
+            if (DrawIosButton("Replay onboarding", "##ReplayOnboarding", FontAwesomeIcon.Redo, new Vector2(w, 32f), primary: false))
                 ReplayOnboarding();
 
-            // Trailing room so the last control clears the bottom of the scroll region. Without it
-            // the tab scrolls to exactly the end of the button and stops, leaving it sitting half in
-            // the clip rect with nothing below to scroll to.
-            ImGui.Dummy(new Vector2(0, 24));
-
+            ImGui.Dummy(new Vector2(0, 14f));
             EndSettingsSection();
+
+            // Room so the last card clears the bottom of the scroll region.
+            ImGui.Dummy(new Vector2(0, 24));
         }
 
         // The rating server override has no settings UI on purpose.
@@ -1040,159 +953,364 @@ namespace PfPresets
         /// and it is a few words, because the version of this that was a sentence under the whole
         /// section sat beneath a different setting than the one it was about, ran off the side of
         /// the page, and explained at paragraph length something the reader only needed named.</param>
+        /// <summary>Settings rows whose explanation is open under them, by label.</summary>
+        private readonly HashSet<string> settingsHelpOpen = new();
+
+        // ── The row every setting is ──────────────────────────────
+        //
+        // THE SETTINGS MOCKUP'S ROW, AND EVERY SETTING IS ONE: 48px, the name in white on the left
+        // with a round info button after it that opens the explanation on a darker panel under the
+        // row, the control at the right edge, and a hairline across the whole card between rows.
+        // The switch, the stepper, the menu, the swatches and the rest differ only in what sits on
+        // the right.
+
+        private readonly record struct SettingsRow(Vector2 Min, float CentreY, float Width, bool Open, string Key, string Help);
+
+        /// <summary>Starts a row: the name and its info button. <paramref name="rightReserve"/> is
+        /// the room the control on the right takes, so the name is fitted short of it.</summary>
+        private SettingsRow BeginSettingsRow(string label, string help, float rightReserve)
+        {
+            const float info = 20f;
+            var dl = ImGui.GetWindowDrawList();
+            float width = SettingsContentWidth();
+            Vector2 min = ImGui.GetCursorScreenPos();
+            float cy = min.Y + SettingRowHeight * 0.5f;
+            bool open = settingsHelpOpen.Contains(label);
+
+            string shown;
+            float labelW;
+            using (UiBodyFont.Push())
+            {
+                float lh = ImGui.GetTextLineHeight();
+                shown = Fit(label, MathF.Max(40f, width - rightReserve - info - 24f));
+                labelW = ImGui.CalcTextSize(shown).X;
+                dl.AddText(new Vector2(min.X, cy - lh * 0.5f), ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), shown);
+            }
+
+            if (help.Length > 0)
+            {
+                var infoMin = new Vector2(min.X + labelW + 8f, cy - info * 0.5f);
+                ImGui.SetCursorScreenPos(infoMin);
+                if (ImGui.InvisibleButton($"##rowhelp{label}", new Vector2(info)))
+                {
+                    if (!settingsHelpOpen.Remove(label))
+                        settingsHelpOpen.Add(label);
+                    open = !open;
+                }
+                bool hot = ImGui.IsItemHovered();
+                if (hot)
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                DrawInfoCircle(dl, infoMin, hot, open);
+            }
+
+            ImGui.SetCursorScreenPos(min);
+            return new SettingsRow(min, cy, width, open, label, help);
+        }
+
+        /// <summary>Ends a row: its explanation when open, the hairline, and the cursor past it.</summary>
+        private void EndSettingsRow(SettingsRow row, bool last)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float bottom = row.Min.Y + SettingRowHeight;
+
+            if (row.Open && row.Help.Length > 0)
+            {
+                const float pad = 10f;
+                using (UiHelpFont.Push())
+                {
+                    float lh = ImGui.GetTextLineHeight() + 2f;
+                    var lines = new List<string>();
+                    foreach (string para in row.Help.Replace("\r", string.Empty).Split('\n'))
+                    {
+                        if (para.Trim().Length == 0)
+                            lines.Add(string.Empty);
+                        else
+                            lines.AddRange(FbWrap(para.Trim(), row.Width - pad * 2f));
+                    }
+                    var hMin = new Vector2(row.Min.X, bottom);
+                    var hMax = hMin + new Vector2(row.Width, pad * 2f + lines.Count * lh);
+                    dl.AddRectFilled(hMin, hMax, ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0.4f)), Radius.Card);
+                    dl.AddRect(hMin, hMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Card, ImDrawFlags.None, 1f);
+                    for (int i = 0; i < lines.Count; i++)
+                        dl.AddText(hMin + new Vector2(pad, pad + i * lh), ImGui.ColorConvertFloat4ToU32(FbSlate400), lines[i]);
+                    bottom = hMax.Y + 10f;
+                }
+            }
+
+            if (!last)
+                dl.AddRectFilled(new Vector2(settingsCardMin.X, bottom), new Vector2(settingsCardMin.X + settingsCardWidth, bottom + 1f),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
+            ImGui.SetCursorScreenPos(new Vector2(row.Min.X, bottom + (last ? 0f : 1f)));
+        }
+
+        /// <summary>
+        /// A choice as an iOS menu: the current value in grey at the right with an up-down chevron,
+        /// and a menu of the options, the chosen one ticked, opening under it. True when changed.
+        /// </summary>
+        private bool DrawDropdownRow(string label, string[] options, ref int value, string help, bool last = false)
+        {
+            if (options.Length == 0)
+                return false;
+            value = Math.Clamp(value, 0, options.Length - 1);
+
+            float valueW;
+            using (UiBodyFont.Push())
+                valueW = options.Max(o => ImGui.CalcTextSize(o).X) + 28f;
+            var row = BeginSettingsRow(label, help, valueW);
+            var dl = ImGui.GetWindowDrawList();
+
+            string current = options[value];
+            float curW;
+            using (UiBodyFont.Push())
+                curW = ImGui.CalcTextSize(current).X;
+            float boxW = curW + 34f;
+            var bMin = new Vector2(row.Min.X + row.Width - boxW, row.CentreY - 15f);
+            var bSize = new Vector2(boxW, 30f);
+            ImGui.SetCursorScreenPos(bMin);
+            string popup = $"##dropdown{label}";
+            if (ImGui.InvisibleButton($"##dropbtn{label}", bSize))
+                ImGui.OpenPopup(popup);
+            bool hot = ImGui.IsItemHovered();
+            bool isOpen = ImGui.IsPopupOpen(popup);
+            if (hot)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            if (hot || isOpen)
+                dl.AddRectFilled(bMin, bMin + bSize, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)), Radius.Small);
+
+            using (UiBodyFont.Push())
+            {
+                float lh = ImGui.GetTextLineHeight();
+                dl.AddText(new Vector2(bMin.X + 8f, row.CentreY - lh * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(hot || isOpen ? new Vector4(1, 1, 1, 1) : FbSlate400), current);
+            }
+            // The up-down chevron iOS puts on a menu button.
+            var cx = bMin.X + boxW - 13f;
+            uint ink = ImGui.ColorConvertFloat4ToU32(hot || isOpen ? new Vector4(1, 1, 1, 1) : FbSlate400);
+            dl.AddLine(new Vector2(cx - 3.5f, row.CentreY - 1.5f), new Vector2(cx, row.CentreY - 5f), ink, 1.4f);
+            dl.AddLine(new Vector2(cx, row.CentreY - 5f), new Vector2(cx + 3.5f, row.CentreY - 1.5f), ink, 1.4f);
+            dl.AddLine(new Vector2(cx - 3.5f, row.CentreY + 1.5f), new Vector2(cx, row.CentreY + 5f), ink, 1.4f);
+            dl.AddLine(new Vector2(cx, row.CentreY + 5f), new Vector2(cx + 3.5f, row.CentreY + 1.5f), ink, 1.4f);
+
+            bool changed = false;
+            ImGui.SetNextWindowPos(bMin + new Vector2(boxW, bSize.Y + 4f), ImGuiCond.Always, new Vector2(1f, 0f));
+            PushIosMenuStyle();
+            if (ImGui.BeginPopup(popup))
+            {
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+                for (int i = 0; i < options.Length; i++)
+                {
+                    if (IosMenuCheckItem(options[i], i == value) && i != value)
+                    {
+                        value = i;
+                        changed = true;
+                    }
+                }
+                ImGui.PopStyleVar();
+                ImGui.EndPopup();
+            }
+            PopIosMenuStyle();
+
+            EndSettingsRow(row, last);
+            return changed;
+        }
+
+        /// <summary>The segmented picker at the right of a row, sized to its labels.</summary>
+        private bool DrawSegmentRow(string label, string id, string[] options, ref int value, string help, bool last = false)
+        {
+            float fit = IosSegmentedFitWidth(options, SettingsContentWidth() * 0.62f);
+            var row = BeginSettingsRow(label, help, fit);
+            ImGui.SetCursorScreenPos(new Vector2(row.Min.X + row.Width - fit, row.CentreY - 15f));
+            bool changed = DrawIosSegmented(id, options, ref value, fit);
+            EndSettingsRow(row, last);
+            return changed;
+        }
+
+        /// <summary>The accent colours as circles at the right of a row.</summary>
+        private void DrawSwatchRow(string label, string help, bool last = false)
+        {
+            float swatchesW = AccentChoices.Length * 28f + (AccentChoices.Length - 1) * 10f;
+            var row = BeginSettingsRow(label, help, swatchesW);
+            ImGui.SetCursorScreenPos(new Vector2(row.Min.X + row.Width - swatchesW, row.CentreY - 14f));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(ImGui.GetStyle().ItemSpacing.X, 0f));
+            DrawAccentSwatches();
+            ImGui.PopStyleVar();
+            EndSettingsRow(row, last);
+        }
+
+        /// <summary>A row whose control is a small button at the right - "Play" for the preview.</summary>
+        private bool DrawButtonRow(string label, string help, string button, FontAwesomeIcon icon, bool last = false)
+        {
+            float bw;
+            using (UiBodyFont.Push())
+                bw = ImGui.CalcTextSize(button).X + 44f;
+            var row = BeginSettingsRow(label, help, bw);
+            ImGui.SetCursorScreenPos(new Vector2(row.Min.X + row.Width - bw, row.CentreY - 15f));
+            bool clicked = DrawIosButton(button, $"##rowbtn{label}", icon, new Vector2(bw, 30f), primary: true);
+            EndSettingsRow(row, last);
+            return clicked;
+        }
+
+        /// <summary>A number changed by dragging sideways across its value, or typed on a
+        /// double-click - for offsets, which are found by moving and looking.</summary>
+        private bool DrawDragRow(string label, ref int value, int min, int max, string suffix, string help, bool last = false)
+        {
+            const float pillW = 96f, pillH = 28f;
+            var row = BeginSettingsRow(label, help, pillW);
+            bool changed = DrawDragNumberChip($"drag{label}", ref value, suffix, min, max,
+                new Vector2(row.Min.X + row.Width - pillW, row.CentreY - pillH * 0.5f), new Vector2(pillW, pillH));
+            EndSettingsRow(row, last);
+            return changed;
+        }
+
+        /// <summary>A line of status on its own row: grey, or tinted when it is a result.</summary>
+        private void DrawStatusRow(string text, Vector4? tint = null, bool last = false)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float width = SettingsContentWidth();
+            Vector2 min = ImGui.GetCursorScreenPos();
+            float lh;
+            List<string> lines;
+            using (UiHelpFont.Push())
+            {
+                lh = ImGui.GetTextLineHeight() + 2f;
+                lines = FbWrap(text, width);
+            }
+            float h = MathF.Max(SettingRowHeight, lines.Count * lh + 24f);
+            float top = min.Y + (h - lines.Count * lh) * 0.5f;
+            using (UiHelpFont.Push())
+                for (int i = 0; i < lines.Count; i++)
+                    dl.AddText(new Vector2(min.X, top + i * lh), ImGui.ColorConvertFloat4ToU32(tint ?? FbSlate400), lines[i]);
+            float bottom = min.Y + h;
+            if (!last)
+                dl.AddRectFilled(new Vector2(settingsCardMin.X, bottom), new Vector2(settingsCardMin.X + settingsCardWidth, bottom + 1f),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
+            ImGui.SetCursorScreenPos(new Vector2(min.X, bottom + (last ? 0f : 1f)));
+        }
+
         private void DrawSetting(string label, Func<bool> get, Action<bool> set, string explanation,
             bool last = false, bool joinNext = false, string tag = "")
         {
             bool value = get();
-            var dl = ImGui.GetWindowDrawList();
-            float width = SettingsContentWidth();
-
-            bool rowClicked = BeginListRow($"set{label}", width, out Vector2 min, SettingRowHeight);
-            float centreY = min.Y + SettingRowHeight * 0.5f;
-
-            // Measured before the label is fitted, so the two can never overlap on a narrow page -
-            // the label gives up characters to the ellipsis rather than running under the tag.
-            float tagWidth = 0f;
+            float tagW = 0f;
             if (tag.Length > 0)
-            {
                 using (UiHelpFont.Push())
-                    tagWidth = ImGui.CalcTextSize(tag).X + SettingRowGap;
-            }
+                    tagW = ImGui.CalcTextSize(tag).X + 12f;
 
-            // Switch, gap, sentence, question mark - the mockup's row, in that order. The switch is
-            // the state you scan the column for, so it leads and every one of them sits on one x.
-            ImGui.SetCursorScreenPos(new Vector2(min.X,
-                                                 centreY - ImGui.GetTextLineHeight() * 0.5f));
-            bool changed = DrawSquareToggle($"set{label}", ref value);
+            var row = BeginSettingsRow(label, explanation, FbSwitchW + tagW);
+            var dl = ImGui.GetWindowDrawList();
 
-            float textX = min.X + ToggleTrackWidth + SettingRowGap;
-            float textRoom = width - (textX - min.X) - HelpMarkColumn - tagWidth;
+            // The whole row toggles; the info button, submitted first, keeps its own clicks.
+            bool rowClicked = ImGui.InvisibleButton($"##setrow{label}", new Vector2(row.Width, SettingRowHeight));
+            if (ImGui.IsItemHovered())
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
-            float labelWidth;
-            using (UiBodyFont.Push())
-            {
-                float lineH = ImGui.GetTextLineHeight();
-                string shown = Fit(label, textRoom);
-                labelWidth = ImGui.CalcTextSize(shown).X;
-                dl.AddText(new Vector2(textX, centreY - lineH * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Ink), shown);
-            }
-
-            // BESIDE THE WORDS, not at the end of the row. It marks that sentence, and a column of
-            // question marks a hand's breadth from the sentences they belong to reads as a column
-            // of its own - which is what it looked like.
-            DrawRowHelpMark($"set{label}", explanation,
-                new Vector2(textX + labelWidth + HelpMarkGap, centreY));
-
-            // Right-aligned to the row's own end, so a column of these lines up whatever the
-            // labels beside them are doing. Amber rather than the faint grey: the whole reason it
-            // is here is that the switch says on and the feature is not running, and a note about
-            // that which reads as quieter than the label is a note nobody sees.
+            float switchX = row.Min.X + row.Width - FbSwitchW;
             if (tag.Length > 0)
-            {
                 using (UiHelpFont.Push())
                 {
                     Vector2 ts = ImGui.CalcTextSize(tag);
-                    dl.AddText(new Vector2(min.X + width - ts.X, centreY - ts.Y * 0.5f),
+                    dl.AddText(new Vector2(switchX - 12f - ts.X, row.CentreY - ts.Y * 0.5f),
                         ImGui.ColorConvertFloat4ToU32(AccentYellow), tag);
                 }
-            }
 
-            // The whole row is the target. The switch and the mark are submitted first and take the
-            // clicks that land on them; everything between falls through to here.
+            float t = switchAnim.TryGetValue($"set{label}", out float anim) ? anim : (value ? 1f : 0f);
+            DrawFbSwitch(dl, new Vector2(switchX, row.CentreY - FbSwitchH * 0.5f), value, ref t);
+            switchAnim[$"set{label}"] = t;
+
             if (rowClicked)
             {
-                value = !value;
-                changed = true;
-            }
-
-            if (changed)
-            {
-                set(value);
+                set(!value);
                 config.Save();
             }
 
-            if (!last && !joinNext)
-                DrawRowSeparator(dl, min, SettingRowHeight, 0f, min.X + width);
-
-            ImGui.SetCursorScreenPos(new Vector2(min.X, min.Y + SettingRowHeight));
+            EndSettingsRow(row, last);
         }
 
-        /// <summary>Room kept at the end of a row for its question mark, and the gap before it.
-        /// </summary>
-        private const float HelpMarkColumn = 18f + 10f;
 
         /// <summary>A settings row's height and the gap between its control and its words - 8px of
         /// padding either side of a 20px switch, and 11px across, from the mockup.</summary>
-        private const float SettingRowHeight = 38f;
-        private const float SettingRowGap = 11f;
+        private const float SettingRowHeight = 48f;
 
-        /// <summary>Width of the switch, so a row can reserve its trailing edge without measuring
-        /// it.</summary>
-        private const float ToggleTrackWidth = 36f;
 
         /// <summary>
-        /// A number with a minus and a plus either side of it, laid out like the toggle rows above.
-        ///
-        /// Stepped rather than typed. The footer's copy of these is a chip you double-click into a
-        /// text field, which is a fine trick on a strip with no room for anything else and a poor
-        /// one on a settings page, where a control you have to discover is a control most people
-        /// never find.
+        /// A number as an iOS row: the name and its info button on the left, and on the right the
+        /// value beside a stepper - a small grey pill split into minus and plus. The value is typed
+        /// by double-clicking it, as it always could be; the stepper nudges it by <paramref name="step"/>.
         /// </summary>
-        /// <param name="zeroLabel">What zero is called, when it means something other than nought -
-        /// "Stop after 0 h" is "Never".</param>
-        /// <summary>
-        /// Two numbers on one line, each a word and a chip, flowing from the left.
-        ///
-        /// Left-aligned rather than pushed to the right edge. A value pinned to the far side of a
-        /// wide card is a long way from the word that names it, and with two of them the row read
-        /// as four separate things instead of one sentence.
-        /// </summary>
-        private bool DrawInlinePairRow(
-            string labelA, ref int valueA, int minA, int maxA, string suffixA, string? zeroA, string helpA,
-            string labelB, ref int valueB, int minB, int maxB, string suffixB, string? zeroB, string helpB)
+        private bool DrawStepperRow(string label, ref int value, int min, int max, int step,
+            string suffix, string? zeroLabel, string help, bool last = false)
         {
+            const float pillW = 84f, pillH = 28f, valueW = 86f;
+            var row = BeginSettingsRow(label, help, pillW + valueW + 8f);
             var dl = ImGui.GetWindowDrawList();
-            float width = SettingsContentWidth();
-
-            Vector2 rowMin = ImGui.GetCursorScreenPos();
-            float centreY = rowMin.Y + SettingRowHeight * 0.5f;
-            const float chipW = 74f;
-            const float chipH = 26f;
-
-            float x = rowMin.X;
             bool changed = false;
 
+            // The stepper: a grey pill split into minus and plus.
+            var pMin = new Vector2(row.Min.X + row.Width - pillW, row.CentreY - pillH * 0.5f);
+            dl.AddRectFilled(pMin, pMin + new Vector2(pillW, pillH), ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), 9f);
+            dl.AddRectFilled(new Vector2(pMin.X + pillW * 0.5f - 0.5f, pMin.Y + 6f), new Vector2(pMin.X + pillW * 0.5f + 0.5f, pMin.Y + pillH - 6f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.15f)));
             for (int i = 0; i < 2; i++)
             {
-                string label = i == 0 ? labelA : labelB;
-                string help = i == 0 ? helpA : helpB;
-
-                using (UiBodyFont.Push())
+                bool minus = i == 0;
+                var sMin = new Vector2(pMin.X + pillW * 0.5f * i, pMin.Y);
+                var sSize = new Vector2(pillW * 0.5f, pillH);
+                bool enabled = minus ? value > min : value < max;
+                ImGui.SetCursorScreenPos(sMin);
+                bool clicked = ImGui.InvisibleButton($"##step{label}{i}", sSize) && enabled;
+                bool hot = ImGui.IsItemHovered() && enabled;
+                if (hot)
                 {
-                    Vector2 ts = ImGui.CalcTextSize(label);
-                    dl.AddText(new Vector2(x, centreY - ts.Y * 0.5f),
-                        ImGui.ColorConvertFloat4ToU32(Dim), label);
-                    x += ts.X + Space.Tight;
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                    dl.AddRectFilled(sMin, sMin + sSize, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)), 9f,
+                        minus ? ImDrawFlags.RoundCornersLeft : ImDrawFlags.RoundCornersRight);
                 }
-
-                var chipAt = new Vector2(x, centreY - chipH * 0.5f);
-
-                if (i == 0)
-                    changed |= DrawEditableNumberChip($"pair{labelA}", ref valueA, suffixA, zeroA,
-                        minA, maxA, chipAt, new Vector2(chipW, chipH), "Double-click to type a number.");
-                else
-                    changed |= DrawEditableNumberChip($"pair{labelB}", ref valueB, suffixB, zeroB,
-                        minB, maxB, chipAt, new Vector2(chipW, chipH), "Double-click to type a number.");
-
-                x += chipW + Space.Tight;
-                DrawRowHelpMark($"pair{label}", help, new Vector2(x, centreY));
-                x += 18f + Space.Gutter;
+                // Drawn strokes, sharp at any size.
+                var c = sMin + sSize * 0.5f;
+                uint ink = ImGui.ColorConvertFloat4ToU32(enabled ? new Vector4(1, 1, 1, 1) : FbSlate500);
+                dl.AddLine(c - new Vector2(5f, 0f), c + new Vector2(5f, 0f), ink, 1.6f);
+                if (!minus)
+                    dl.AddLine(c - new Vector2(0f, 5f), c + new Vector2(0f, 5f), ink, 1.6f);
+                if (clicked)
+                {
+                    value = Math.Clamp(minus ? value - step : value + step, min, max);
+                    changed = true;
+                }
             }
 
-            DrawRowSeparator(dl, rowMin, SettingRowHeight, 0f, rowMin.X + width);
-            ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMin.Y + SettingRowHeight));
+            // The value, just left of the stepper; double-click to type it.
+            string id = $"step{label}";
+            var vMin = new Vector2(pMin.X - 8f - valueW, row.CentreY - pillH * 0.5f);
+            if (chipEditingId == id)
+            {
+                changed |= DrawEditableNumberChip(id, ref value, suffix, zeroLabel, min, max, vMin,
+                    new Vector2(valueW, pillH), "Type a number, then Enter.");
+            }
+            else
+            {
+                ImGui.SetCursorScreenPos(vMin);
+                ImGui.InvisibleButton($"##stepvalue{label}", new Vector2(valueW, pillH));
+                bool vHot = ImGui.IsItemHovered();
+                if (vHot)
+                {
+                    PaddedTooltip("Double-click to type a number.");
+                    if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    {
+                        chipEditingId = id;
+                        chipEditValue = value;
+                        chipEditFocusPending = true;
+                    }
+                }
+                string shown = value <= 0 && zeroLabel != null ? zeroLabel : $"{value} {suffix}";
+                using (UiBodyFont.Push())
+                {
+                    Vector2 ts = ImGui.CalcTextSize(shown);
+                    dl.AddText(new Vector2(vMin.X + valueW - ts.X, row.CentreY - ts.Y * 0.5f),
+                        ImGui.ColorConvertFloat4ToU32(vHot ? new Vector4(1, 1, 1, 1) : FbSlate400), shown);
+                }
+            }
 
+            EndSettingsRow(row, last);
             return changed;
         }
 
@@ -1218,230 +1336,14 @@ namespace PfPresets
         /// right, which would leave it dangling off the end of a full-width dropdown.
         /// </summary>
         private void DrawChoiceSetting(string label, string[] options, Func<int> get, Action<int> set,
-            string explanation)
+            string explanation, bool last = false)
         {
             int value = Math.Clamp(get(), 0, options.Length - 1);
-            float width = SettingsContentWidth();
-
-            DrawSettingLabelRow(label, explanation, width);
-
-            if (DrawChoiceRows($"set{label}", options, ref value, width))
+            if (DrawDropdownRow(label, options, ref value, explanation, last))
             {
                 set(value);
                 config.Save();
             }
-        }
-
-        /// <summary>
-        /// A column of mutually exclusive choices, one per row, on the card they already sit on.
-        ///
-        /// NO TRACK AROUND THEM AND NO SURFACE UNDER THEM. They were drawn as a bordered box
-        /// containing four filled boxes, which is two more edges than the choice needs and reads as
-        /// a control bolted onto the card rather than as part of it. A settings card is already a
-        /// surface; these are rows on it, like the switches above them, separated the same way.
-        ///
-        /// The mark is a ring that fills with the accent when chosen - the same colour the switches
-        /// use for on, so "this one" means the same thing everywhere on the page.
-        /// </summary>
-        private bool DrawChoiceRows(string id, string[] options, ref int value, float width)
-        {
-            const float rowH = 34f;
-            const float mark = 16f;
-
-            var dl = ImGui.GetWindowDrawList();
-            bool changed = false;
-
-            for (int i = 0; i < options.Length; i++)
-            {
-                Vector2 rowMin = ImGui.GetCursorScreenPos();
-
-                ImGui.SetCursorScreenPos(rowMin);
-                ImGui.InvisibleButton($"##{id}row{i}", new Vector2(width, rowH));
-                bool hot = ImGui.IsItemHovered();
-
-                if (ImGui.IsItemClicked() && value != i)
-                {
-                    value = i;
-                    changed = true;
-                }
-
-                bool active = value == i;
-                var centre = new Vector2(rowMin.X + mark * 0.5f, rowMin.Y + rowH * 0.5f);
-
-                // A ring, filled when chosen. Not a box, and nothing behind the row: the card is
-                // the surface and the ring is the only thing that has to change.
-                dl.AddCircle(centre, mark * 0.5f,
-                    ImGui.ColorConvertFloat4ToU32(active ? Accent : BorderControl), 24,
-                    active ? 1.8f : 1.4f);
-
-                if (active)
-                    dl.AddCircleFilled(centre, mark * 0.5f - 4f,
-                        ImGui.ColorConvertFloat4ToU32(Accent), 24);
-
-                using (UiBodyFont.Push())
-                {
-                    float textX = rowMin.X + mark + 12f;
-                    Vector2 ts = ImGui.CalcTextSize(options[i]);
-                    dl.AddText(new Vector2(textX, rowMin.Y + (rowH - ts.Y) * 0.5f),
-                        ImGui.ColorConvertFloat4ToU32(active ? Ink : hot ? Ink : Dim),
-                        Fit(options[i], width - (textX - rowMin.X)));
-                }
-
-                if (i < options.Length - 1)
-                    DrawRowSeparator(dl, rowMin, rowH, mark + 12f, rowMin.X + width);
-
-                ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMin.Y + rowH));
-            }
-
-            return changed;
-        }
-
-        /// <summary>
-        /// The line that names a control sitting under it, on the same grid the toggle rows use.
-        ///
-        /// A control that needs a whole row of its own - a stepper, a colour, a column of choices -
-        /// still needs saying what it is, and that line has to sit at the same height and the same
-        /// left edge as the labels above and below it or the card reads as two different lists
-        /// stacked on each other.
-        /// </summary>
-        private void DrawSettingLabelRow(string label, string? explanation, float width)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 p = ImGui.GetCursorScreenPos();
-            float centreY = p.Y + SettingRowHeight * 0.5f;
-
-            float labelWidth;
-            using (UiBodyFont.Push())
-            {
-                float lineH = ImGui.GetTextLineHeight();
-                string shown = Fit(label, width - HelpMarkColumn);
-                labelWidth = ImGui.CalcTextSize(shown).X;
-                dl.AddText(new Vector2(p.X, centreY - lineH * 0.5f),
-                    ImGui.ColorConvertFloat4ToU32(Ink), shown);
-            }
-
-            if (!string.IsNullOrEmpty(explanation))
-                DrawRowHelpMark($"lbl{label}", explanation!,
-                    new Vector2(p.X + labelWidth + HelpMarkGap, centreY));
-
-            ImGui.SetCursorScreenPos(new Vector2(p.X, p.Y + SettingRowHeight));
-        }
-
-        /// <summary>
-        /// A setting as a handle you drag along a flat track that stops at fixed points, with the
-        /// name of the current stop above it and its meaning printed underneath.
-        ///
-        /// Built by hand rather than from ImGui's slider because a settings choice is not a number:
-        /// SliderInt would show "1/2", accept anything in between while dragging, and give the
-        /// three states no names. Here the handle can only ever be at a stop - the drag snaps
-        /// continuously, so there is no in-between state to read or to save.
-        ///
-        /// The value is written on every snap but the config is only saved when the handle is let
-        /// go. Dragging across three stops otherwise writes the file once per crossing, and the
-        /// in-memory value is what the rest of the plugin reads anyway.
-        /// </summary>
-        /// <param name="grabbed">Read once, the frame the handle is picked up, and handed back to
-        /// <paramref name="released"/> when it is put down. For a setting whose change has a
-        /// consequence beyond the config file: the stops crossed mid-drag are not choices, so a
-        /// caller needs the two ends of the gesture rather than every value in between.</param>
-        /// <param name="released">Called once when the handle is let go, after the save.</param>
-        private void DrawSliderSetting<T>(string label, string[] stops, Func<int> get, Action<int> set,
-            Func<int, string> explain, Func<T>? grabbed = null, Action<T>? released = null)
-        {
-            if (stops.Length < 2)
-                return;
-
-            float rowWidth = SettingsContentWidth();
-
-            // Every stop in the one hover, not just the selected one: choosing here means comparing
-            // the options, and a reader who has to drag the handle to find out what each one sends
-            // has already changed the setting.
-            DrawSettingLabelRow(label, string.Join("\n\n",
-                stops.Select((stop, i) => $"{stop} - {explain(i)}")), rowWidth);
-
-            ImGui.Dummy(new Vector2(0, 4f));
-
-            int value = Math.Clamp(get(), 0, stops.Length - 1);
-
-            const float trackH = 6f;
-            const float handleW = 12f;
-            const float handleH = 18f;
-
-            float width = SettingsContentWidth();
-            float height = handleH;
-
-            Vector2 origin = ImGui.GetCursorScreenPos();
-            ImGui.InvisibleButton($"##slider{label}", new Vector2(width, height));
-
-            bool active = ImGui.IsItemActive();
-            bool hot = active || ImGui.IsItemHovered();
-
-            // Where the handle was picked up, kept for the release below. Boxed into a field shared
-            // by every slider, which is safe because only one control can be active at a time.
-            if (ImGui.IsItemActivated() && grabbed != null)
-                sliderGrabbedValue = grabbed();
-
-            // Inset by half a handle at both ends so the handle stays inside the control when it
-            // sits on the first or last stop.
-            float trackY = origin.Y + height * 0.5f;
-            float left = origin.X + handleW * 0.5f;
-            float right = origin.X + width - handleW * 0.5f;
-            float step = (right - left) / (stops.Length - 1);
-
-            if (active)
-            {
-                int nearest = (int)MathF.Round(
-                    Math.Clamp((ImGui.GetIO().MousePos.X - left) / step, 0, stops.Length - 1));
-
-                if (nearest != value)
-                {
-                    set(nearest);
-                    value = nearest;
-                }
-            }
-
-            if (ImGui.IsItemDeactivated())
-            {
-                config.Save();
-
-                if (released != null && sliderGrabbedValue is T before)
-                    released(before);
-
-                sliderGrabbedValue = null;
-            }
-
-            var dl = ImGui.GetWindowDrawList();
-            float handleX = left + step * value;
-
-            dl.AddRectFilled(new Vector2(left, trackY - trackH * 0.5f),
-                new Vector2(right, trackY + trackH * 0.5f),
-                ImGui.ColorConvertFloat4ToU32(Field), Radius.Pill);
-            dl.AddRectFilled(new Vector2(left, trackY - trackH * 0.5f),
-                new Vector2(handleX, trackY + trackH * 0.5f),
-                ImGui.ColorConvertFloat4ToU32(Accent), Radius.Pill);
-
-            // A notch at every stop, so the track shows where the handle can land before anyone
-            // drags it and finds out.
-            for (int i = 0; i < stops.Length; i++)
-            {
-                float x = left + step * i;
-                dl.AddRectFilled(new Vector2(x - 1f, trackY - trackH * 0.5f - 3f),
-                    new Vector2(x + 1f, trackY + trackH * 0.5f + 3f),
-                    ImGui.ColorConvertFloat4ToU32(i <= value ? Accent : RuleStrong), Radius.Pill);
-            }
-
-            dl.AddRectFilled(new Vector2(handleX - handleW * 0.5f, trackY - handleH * 0.5f),
-                new Vector2(handleX + handleW * 0.5f, trackY + handleH * 0.5f),
-                ImGui.ColorConvertFloat4ToU32(hot ? AccentHover : Accent), Radius.Pill);
-
-            ImGui.Dummy(new Vector2(0, 6));
-
-            // The stop's name in words as well as in position: the handle alone says how far along
-            // the scale you are, not what you have chosen.
-            using (UiBodyFont.Push())
-                ImGui.TextColored(Ink, stops[value]);
-
-            ImGui.Dummy(new Vector2(0, 12));
         }
 
         // ── Appearance ────────────────────────────────────────────

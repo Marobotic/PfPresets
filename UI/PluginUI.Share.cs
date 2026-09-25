@@ -24,6 +24,10 @@ namespace PfPresets
         private string shareImportError = string.Empty;
         private string shareImportSuccess = string.Empty;
 
+        /// <summary>Whether the paste box had focus last frame - it shows its own text while being
+        /// typed in, and the wrapped copy otherwise.</summary>
+        private bool shareImportActive;
+
         /// <summary>Buffer size for the paste box. A preset code is a few hundred characters; this
         /// leaves room for one that arrives wrapped in whitespace.</summary>
         private const int ShareCodeBufferSize = 8192;
@@ -82,7 +86,7 @@ namespace PfPresets
                 return;
             }
 
-            if (!BeginSheet("ShareExport", "Share preset", 340f))
+            if (!BeginSheet("ShareExport", "Share preset", 340f, ShareSheetWidth))
                 return;
 
             try
@@ -91,35 +95,34 @@ namespace PfPresets
                 {
                     try
                     {
-                        DrawSectionLabel("SHARE CODE");
-                        ImGui.PushTextWrapPos(0);
-                        ImGui.TextColored(TextSecondary,
-                            $"Anyone can paste this into PF Analysis to get \"{shareExportPresetName}\".");
-                        ImGui.PopTextWrapPos();
-                        ImGui.Dummy(new Vector2(0, 8));
+                        float width = ImGui.GetContentRegionAvail().X;
 
-                        // Read-only so the code can be selected and copied by hand but never edited
-                        // into something that no longer decodes.
-                        PushFramedInput();
-                        ImGui.InputTextMultiline(
-                            "##ShareExportCode",
-                            ref shareExportCode,
-                            ShareCodeBufferSize,
-                            new Vector2(-1, 96),
-                            ImGuiInputTextFlags.ReadOnly);
-                        PopFramedInput();
+                        DrawSectionCaption("SHARE CODE");
+                        using (UiHelpFont.Push())
+                        {
+                            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+                            ImGui.TextColored(FbSlate400,
+                                $"Anyone can paste this into PF Analysis to get \"{shareExportPresetName}\".");
+                            ImGui.PopTextWrapPos();
+                        }
+                        ImGui.Dummy(new Vector2(0, 6));
+
+                        // The code, all of it, broken across lines wherever it has to be - it has no
+                        // spaces, so ImGui's word wrap would leave it one line running off the box.
+                        // Shown rather than edited: Copy below is how it leaves, and a code nobody
+                        // can type into is a code nobody can break.
+                        DrawWrappedCodeBox(shareExportCode, width);
 
                         ImGui.Dummy(new Vector2(0, 10));
 
                         bool justCopied = shareExportCopiedAt > 0
                             && ImGui.GetTime() - shareExportCopiedAt < CopiedFeedbackSeconds;
 
-                        // The button says so itself rather than growing a "Copied!" beside it. On a
-                        // 460px sheet there is no room for a third thing on that row, and the label
-                        // changing under the cursor is the clearer confirmation anyway.
-                        if (DrawPrimaryButton(
-                                justCopied ? "Copied!##ShareExportCopy" : "Copy to clipboard##ShareExportCopy",
-                                new Vector2(-1, ButtonHeight)))
+                        // The button says so itself rather than growing a "Copied!" beside it - the
+                        // label changing under the cursor is the clearer confirmation.
+                        if (DrawIosButton(justCopied ? "Copied!" : "Copy to clipboard", "##ShareExportCopy",
+                                justCopied ? FontAwesomeIcon.Check : FontAwesomeIcon.Copy,
+                                new Vector2(width, ButtonHeight), primary: true))
                         {
                             ImGui.SetClipboardText(shareExportCode);
                             shareExportCopiedAt = ImGui.GetTime();
@@ -153,7 +156,7 @@ namespace PfPresets
                 return;
             }
 
-            if (!BeginSheet("ShareImport", "Import preset", 360f))
+            if (!BeginSheet("ShareImport", "Import preset", 360f, ShareSheetWidth))
                 return;
 
             try
@@ -162,37 +165,72 @@ namespace PfPresets
                 {
                     try
                     {
-                        DrawSectionLabel("PASTE A SHARE CODE");
-                        ImGui.PushTextWrapPos(0);
-                        ImGui.TextColored(TextSecondary,
-                            "Paste a PF Analysis code below, or pull one straight from your clipboard.");
-                        ImGui.PopTextWrapPos();
-                        ImGui.Dummy(new Vector2(0, 8));
+                        float width = ImGui.GetContentRegionAvail().X;
 
-                        PushFramedInput();
-                        if (ImGui.InputTextMultiline(
-                                "##ShareImportInput",
-                                ref shareImportInput,
-                                ShareCodeBufferSize,
-                                new Vector2(-1, 86)))
+                        DrawSectionCaption("PASTE A SHARE CODE");
+                        using (UiHelpFont.Push())
+                        {
+                            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+                            ImGui.TextColored(FbSlate400,
+                                "Paste a PF Analysis code below, or pull one straight from your clipboard.");
+                            ImGui.PopTextWrapPos();
+                        }
+                        ImGui.Dummy(new Vector2(0, 6));
+
+                        // WRAPPED WHEREVER IT HAS TO BREAK. A pasted code has no spaces, so the field
+                        // cannot wrap it itself: while it is not being typed in, the field's own text
+                        // is hidden and the code is drawn over it broken across lines, all on screen.
+                        Vector2 boxMin = ImGui.GetCursorScreenPos();
+                        const float boxH = 100f;
+                        bool typing = shareImportActive;
+                        if (!typing && shareImportInput.Length > 0)
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0, 0, 0, 0));
+                        if (DrawIosTextBox("##ShareImportInput", ref shareImportInput, ShareCodeBufferSize,
+                                new Vector2(width, boxH), readOnly: false))
                         {
                             // Typing again clears the previous result so stale feedback never sits
                             // under a code the user has since changed.
                             shareImportError = string.Empty;
                             shareImportSuccess = string.Empty;
                         }
-                        PopFramedInput();
+                        if (!typing && shareImportInput.Length > 0)
+                            ImGui.PopStyleColor();
+                        shareImportActive = ImGui.IsItemActive();
+
+                        var boxDl = ImGui.GetWindowDrawList();
+                        if (shareImportInput.Length == 0)
+                        {
+                            boxDl.AddText(boxMin + new Vector2(10f),
+                                ImGui.ColorConvertFloat4ToU32(FbSlate500), "Paste a share code here");
+                        }
+                        else if (!typing)
+                        {
+                            using (UiBodyFont.Push())
+                            {
+                                float lh = ImGui.GetTextLineHeight() + 2f;
+                                var lines = HardWrap(shareImportInput.Trim(), width - 20f);
+                                int fit = Math.Max(1, (int)((boxH - 20f) / lh));
+                                for (int i = 0; i < lines.Count && i < fit; i++)
+                                {
+                                    string line = i == fit - 1 && lines.Count > fit ? Fit(lines[i] + "…", width - 20f) : lines[i];
+                                    boxDl.AddText(boxMin + new Vector2(10f, 10f + i * lh),
+                                        ImGui.ColorConvertFloat4ToU32(PfSlate300), line);
+                                }
+                            }
+                        }
 
                         ImGui.Dummy(new Vector2(0, 10));
 
-                        float half = (ImGui.GetContentRegionAvail().X - 8f) * 0.5f;
+                        float half = (width - 8f) * 0.5f;
 
-                        if (DrawPrimaryButton("Import##ShareImportGo", new Vector2(half, ButtonHeight)))
+                        if (DrawIosButton("Import", "##ShareImportGo", FontAwesomeIcon.FileImport,
+                                new Vector2(half, ButtonHeight), primary: true,
+                                enabled: !string.IsNullOrWhiteSpace(shareImportInput)))
                             TryImportShareCode(shareImportInput);
 
                         ImGui.SameLine(0, 8);
-                        if (DrawNeutralButton("From clipboard##ShareImportClipboard",
-                                new Vector2(half, ButtonHeight)))
+                        if (DrawIosButton("From clipboard", "##ShareImportClipboard", FontAwesomeIcon.Paste,
+                                new Vector2(half, ButtonHeight), primary: false))
                         {
                             string clip = ReadClipboard();
                             shareImportInput = clip;
@@ -202,17 +240,9 @@ namespace PfPresets
                         ImGui.Dummy(new Vector2(0, 8));
 
                         if (!string.IsNullOrEmpty(shareImportError))
-                        {
-                            ImGui.PushTextWrapPos(0);
-                            ImGui.TextColored(AccentRed, shareImportError);
-                            ImGui.PopTextWrapPos();
-                        }
+                            DrawIosNote(shareImportError, AccentRed, width);
                         else if (!string.IsNullOrEmpty(shareImportSuccess))
-                        {
-                            ImGui.PushTextWrapPos(0);
-                            ImGui.TextColored(AccentGreen, shareImportSuccess);
-                            ImGui.PopTextWrapPos();
-                        }
+                            DrawIosNote(shareImportSuccess, AccentGreen, width);
                     }
                     finally
                     {
@@ -228,6 +258,56 @@ namespace PfPresets
             {
                 EndSheet();
             }
+        }
+
+        /// <summary>The share sheets on the wide layout: a code and a button or two, which a 760px
+        /// sheet spread out to a sliver of text in a slab of nothing.</summary>
+        private const float ShareSheetWidth = 460f;
+
+        /// <summary>Lines of text that break anywhere - mid-word when a word is longer than the
+        /// line, which a share code always is.</summary>
+        private static System.Collections.Generic.List<string> HardWrap(string text, float width)
+        {
+            var lines = new System.Collections.Generic.List<string>();
+            int start = 0;
+            while (start < text.Length)
+            {
+                int len = 1;
+                while (start + len < text.Length && ImGui.CalcTextSize(text.Substring(start, len + 1)).X <= width)
+                    len++;
+                lines.Add(text.Substring(start, len));
+                start += len;
+            }
+            return lines;
+        }
+
+        /// <summary>A read-only code on the rounded field, wrapped to it. Selecting it is not
+        /// needed - the Copy button is right below.</summary>
+        private void DrawWrappedCodeBox(string code, float width)
+        {
+            const float pad = 12f;
+            var dl = ImGui.GetWindowDrawList();
+            Vector2 min = ImGui.GetCursorScreenPos();
+
+            float lh;
+            System.Collections.Generic.List<string> lines;
+            using (UiBodyFont.Push())
+            {
+                lh = ImGui.GetTextLineHeight() + 2f;
+                lines = HardWrap(code, width - pad * 2f);
+            }
+            float h = MathF.Max(64f, pad * 2f + lines.Count * lh);
+            var max = min + new Vector2(width, h);
+
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(0.463f, 0.463f, 0.502f, 0.22f)), Radius.Card);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Card, ImDrawFlags.None, 1f);
+            using (UiBodyFont.Push())
+            {
+                for (int i = 0; i < lines.Count; i++)
+                    dl.AddText(min + new Vector2(pad, pad + i * lh), ImGui.ColorConvertFloat4ToU32(PfSlate300), lines[i]);
+            }
+
+            ImGui.Dummy(new Vector2(width, h));
         }
 
         /// <summary>Validates a code and, if it holds up, adds the preset. Everything the user needs

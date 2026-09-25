@@ -5,6 +5,33 @@ repo — see `PfRatingsApi/README.md` for the backend half.
 
 ---
 
+> ## RETIRED IN 4.0.0 — THIS FILE IS A HISTORICAL RECORD, NOT A DESCRIPTION
+>
+> Ratings were removed on 2026-09-25. There is no voting path left in this repository or in the
+> backend: no vote endpoint on the client, and `POST /pfp/v2/ratings` answers
+> `403 ratings_retired` on the server so an older build in the wild drops the votes it was holding
+> instead of asking again for the rest of its life. The duty allowance behind the post-duty
+> window is frozen rather than computed. `Core/RatingService.Allowance.cs`,
+> `Data/VoteQueue.cs`, `Data/RatingHistory.cs`, `Data/DutyAllowanceModels.cs`,
+> `UI/PluginUI.RatingPrompt.cs` and `UI/PluginUI.ListingLeaderRating.cs` are all gone, and the file
+> paths named throughout this document no longer exist.
+>
+> Nothing below was updated to match, deliberately. It is kept because the reasoning is the most
+> valuable thing in the repository and it still governs the parts that survived — progression,
+> clears, the feed, and the identity and evidence rules underneath them. **Do not read it as a
+> description of what the plugin does.** For that, read `CHANGELOG.md` and `README.md`.
+>
+> What survived, and what these rules still govern: the identity model (three HMAC peppers,
+> server-side only), the `name@world` normaliser in `Core/../src/identity.js` that every route
+> shares, the sealed-evidence rules in `VoteEvidence.cs` (now built for clears and settings
+> changes), and the "an answer is stored even when the answer is nothing" pattern that the
+> portrait and fight-art caches both inherit.
+>
+> `docs/version-history.json` is also behind: its newest entry after 4.0.0 is 3.5.1.1, so
+> 3.5.2.0, 3.5.3.0 and 3.5.4.0 were never written into it.
+
+---
+
 ## A vote is never thrown away, on either side
 
 **The client sends. The server decides. Neither of them deletes.**

@@ -5,6 +5,195 @@
   "_about": "Complete release history, structured for the planned in-plugin 'What's New' viewer. CHANGELOG.md stays the human-readable copy; this file is the machine-readable one. Keep both in step when cutting a release. Newest release first. 'change.type' is one of: new, changed, fixed, removed, internal. 'published' is false for versions that exist in the repo's history but were never served from repo.json, so a viewer can skip them or fold them into the release that shipped their features.",
   "releases": [
     {
+      "version": "4.0.0.0",
+      "date": "2026-09-25",
+      "published": true,
+      "headline": "Ratings are retired, and the Party Finder gets a board, a Join button and coordinated parties",
+      "notes": "Ratings are gone on the server too: POST /ratings answers 403 ratings_retired so an older build in the wild drops its queue rather than retrying, and the duty allowance behind the post-duty window is frozen rather than computed. Progression, clears and the feed are untouched. The new backend work - the board, coordination, feedback, portraits, fight art and the clears stream - lives in the backend repository.",
+      "changes": [
+        {
+          "type": "removed",
+          "title": "Ratings are retired",
+          "body": "Nobody can vote on anybody any more, no score is shown anywhere, and the window that appeared the moment you left a duty is gone. Nothing replaces it. The Players tab keeps search, profiles, clears and everyone you have met, and the community half of the plugin is progression, clears and the feed. The server is part of this too: the vote endpoint now answers 403 ratings_retired, so an older build drops the votes it was holding instead of asking again every few minutes for the rest of its life."
+        },
+        {
+          "type": "removed",
+          "title": "A leader's score is no longer printed on a listing",
+          "body": "The community score that used to appear beside the leader's name on the game's own listing window is removed, and the setting that controlled it is gone from Settings. The board card shows loot rule, item level, tags, time left and seats instead."
+        },
+        {
+          "type": "new",
+          "title": "A Party Finder tab",
+          "body": "A new tab lists every recruitment listing any plugin user's Party Finder window has been handed, for a region and data centre you pick - your own first, then the others. Cards or one line per listing, search across duty, leader, comment, data centre and member names, fifty a page with a range. It is recruitment notices only: what the game's own window shows anybody on that data centre, and nothing about who is in a party unless somebody in it is running the plugin. It is there on a fresh install and needs no setting to read."
+        },
+        {
+          "type": "new",
+          "title": "A Join button on every listing on your data centre",
+          "body": "Press Join and the plugin opens the listing, which makes the game fetch it afresh, puts that fresh copy on the board so the card shows exactly what the game shows, checks it, and only then presses Join Party. What it checks, in the order the game itself would object: private without a password, no open seat, wrong world, duty level, duty not unlocked, item level, completion requirement, no open seat that takes your job, one player per job, and whether the game is offering Join Party at all. A refusal is one sentence on the card and the same sentence in chat. Shown only for your own data centre, because anywhere else is a data centre travel, which is what Apply is for."
+        },
+        {
+          "type": "new",
+          "title": "Alliance raids get a Join per party",
+          "body": "A 24-man listing shows each party and its seats, with a Join for each one. Pressing one with no party specified picks the first party with a seat that fits you."
+        },
+        {
+          "type": "new",
+          "title": "Apply, and hand the party over",
+          "body": "Plugin parties take applications from other data centres. Press Apply and you are registered and nothing else - you stay free until the listing is full, and every open seat has an applicant. Then the host's plugin takes the public listing down, reposts it privately with a random four-digit password, and each applicant is asked to accept. Nothing moves your character before you accept. Once you do, the plugin travels to the host's data centre if it has to, waits until you have arrived, and joins. If the listing stops being full your offer is withdrawn and you keep your place in the queue. A seat is held by job, so if nothing on the listing fits the job you applied with you are turned away with that said plainly. You can also press Join party now to go straight in without waiting for the party to fill."
+        },
+        {
+          "type": "new",
+          "title": "Refresh on your own data centre reads the game",
+          "body": "On the data centre you are standing on, the board's refresh button opens the Party Finder, reads every page with the window kept off-screen, and makes the board exactly what it shows. A listing that has gone comes off, one that changed is updated. Anywhere else, or while your character is busy, it fetches the board as it stands. Rate-limited to one game read every five minutes."
+        },
+        {
+          "type": "new",
+          "title": "The plugin reads the Party Finder while you are away",
+          "body": "The board only knew a listing when somebody's window had been handed it, so a data centre nobody was browsing emptied out and a listing its owner had refreshed still disappeared at its old time. So on a schedule the plugin opens the list itself, lets the game download every page, and closes it again, with the window transparent and off-screen and its real position put back afterwards. It only starts after fifteen seconds with no mouse or keyboard input and stops the instant you touch anything, and never in an instance, in combat, or over any other Party Finder action. Off by default: turn on \"Share my party finder data actively\" to read every ten minutes whether or not you are at the keyboard. Your own browsing counts as a read - open the list on the Data Centre tab with every category showing and page to the end, and the board is tidied to match."
+        },
+        {
+          "type": "new",
+          "title": "Your own listing reports itself",
+          "body": "The recruiter's own plugin now says so, the moment a listing goes up, whenever somebody joins or leaves, whenever it is re-posted, and once more as a withdrawal when it comes down. So your listing reaches the board even on a data centre nobody else is browsing, and appears when you post it rather than the next time somebody happens to browse."
+        },
+        {
+          "type": "new",
+          "title": "Auto Refresh runs off your listing's own clock",
+          "body": "The old refresher counted a number of minutes and fired, whatever the listing said - so a listing re-posted by hand in the meantime was refreshed again for nothing, and a refresh that silently failed was not noticed until the listing had expired. It now reads your listing's clock, waits until exactly the threshold, refreshes, and reads the clock again thirty seconds later. Above the threshold means the refresh took; still at or under means it did not, and it tries again. Nothing moves on to waiting until a refresh is seen to have worked. The footer says whether it is checking, refreshing, or holding a refresh up and why - \"due - Party Finder open\", \"due - in combat\". The setting is \"Refresh at N min left\", 3 to 55, and an install that had the old fixed interval keeps the same schedule: \"every 20 minutes\" and \"at 40 minutes left\" are the same thing on a fresh listing."
+        },
+        {
+          "type": "new",
+          "title": "A Feedback tab",
+          "body": "Report a bug, ask for something, or just say something. Four categories, a message box that counts, and an optional name for the author to reach you by in game. It goes to the author's Discord through the server, so the webhook address never ships in the plugin and the server stores your message first, which means a Discord outage delays it rather than losing it. The tab is there whether or not you are taking part in the community, because a bug report is not a community feature."
+        },
+        {
+          "type": "new",
+          "title": "A watched listing in its own window",
+          "body": "Watch any listing and it floats into a small window with the duty, the leader, the data centre, the time left and the seats filling. A lock stops it being dragged, and a listing that is re-posted stays the same watch, because it is followed by leader."
+        },
+        {
+          "type": "new",
+          "title": "Dancing Mad says which mechanic a member is on",
+          "body": "For that duty only, and on a switch under the list, each party member's progress grows a mechanic name - \"P4 58% - Grand Cross 3 - Kefka Says\" - taken from the phase and boss HP of their furthest logged pull. Approximate on purpose: gear, uptime, deaths and Limit Breaks move the ranges, and the hover says so."
+        },
+        {
+          "type": "changed",
+          "title": "A new look throughout",
+          "body": "Line icons instead of solid ones, iOS system colours, party rows as rounded cards with bare job icons, and settings rebuilt as one row per setting: name in white, a round explanation button, control on the right, a hairline between. The controls are new - a switch with an overshoot, a stepper pill, a dropdown menu, segmented pills, circular colour swatches. The list of settings pages has become a sidebar on a wide window and a bottom bar on a narrow one, and there is one page at a time. Party Finder role tiles are now read out of the game's own texture rather than redrawn. The type scale and the corner radii did not change."
+        },
+        {
+          "type": "changed",
+          "title": "A member is described by the job they joined on",
+          "body": "A Party Finder seat is taken on a job and the listing keeps saying that job, whatever its holder switches to afterwards - a healer who wanders off to craft is still the healer as far as the listing is concerned. Everything the plugin says about a listing to other players now says the job joined on, not the job worn right now. A healer who switched to a crafter for the walk back was being published as a crafter, so the listing's seats and the coordination's seating mis-described a party the game's own window still called SCH."
+        },
+        {
+          "type": "changed",
+          "title": "Clears are pushed, not polled",
+          "body": "The announcer used to learn about a clear by reading the feed on a two-minute grid, so a clear reached people anywhere up to two minutes after it happened and every client asked every two minutes whether anything had. The server now writes each new clear to every connected client at once, so everybody hears it in the same second and a quiet evening costs one ping every twenty-five seconds. The poll is still there as a fallback, so the worst case is the old behaviour and never silence. A reconnect waits a random two to thirty seconds, so a server restart does not bring every client back at once."
+        },
+        {
+          "type": "changed",
+          "title": "Old progress says it is old",
+          "body": "A reading from over a day ago is greyed, says when it is from, and says how to get a current one. Somebody progging moves a phase in an evening, so yesterday's reading is a claim about who they were rather than who they are. Progress now sits in a tinted pill, and people who have opted out or are hidden no longer get a Fetch button that cannot work."
+        },
+        {
+          "type": "changed",
+          "title": "Your party list shows every seat while a listing is up",
+          "body": "The seats nobody is in are there too, waiting, in italics with a light sweeping through them, and the ones you omitted read Omitted. Only while a listing is up - yours, or the one you joined."
+        },
+        {
+          "type": "changed",
+          "title": "The community section is called the community",
+          "body": "\"Enable ratings system\" is \"Take part in the community\", \"Show ratings on your party\" is \"Show your party's progress\", and the confirmations say what is actually sent: who you finished a duty with, and clears worth posting to the feed."
+        },
+        {
+          "type": "changed",
+          "title": "The sharing switch is no longer hidden",
+          "body": "It used to be drawn only while \"Show listing details\" was on. Publishing runs on its own now, so turning the panel off would have hidden the switch while the party went on being published - and a setting somebody cannot see is one they cannot turn off either."
+        },
+        {
+          "type": "changed",
+          "title": "A member whose game lost the leader's listing still sees the duty",
+          "body": "The game keeps one listing at a time and drops the leader's the moment another is looked at, or never had it for somebody who joined through a link or an invite. The duty, the seats and the comment come off the board instead. Without that a member saw no duty, and with no duty no progress column at all."
+        },
+        {
+          "type": "fixed",
+          "title": "A listing could lose its healer and gain a fifth DPS",
+          "body": "Three separate ways. Posting a listing with people already in the party seated them by position, so a Black Mage took the pure-healer seat and every refresh after kept it that way - members are now seated by the job the seat takes, in the order the game seats them. The slot adjuster guessed the role of a vacated seat from whoever had been sitting in it, so a healer who left had their seat become DPS; a vacated seat now goes back to what the plugin posted it as, and only vacant seats are ever touched. And the coordination's own verification rebuilt a listing's seats from a reading, which is how a listing's real seats were once replaced. Auto-adjust also no longer re-opens the seats your preset deliberately closed."
+        },
+        {
+          "type": "fixed",
+          "title": "A full party stayed on the board as 8/8",
+          "body": "The game takes a listing down when the last seat fills, but the client reporting it could go on believing it was in a party. A party of eight is full and a full party is not recruiting, so it is taken down instead - and the same goes for a light party at four, or a listing with seats omitted once the rest are taken."
+        },
+        {
+          "type": "fixed",
+          "title": "Stepping away from the keyboard looked like you had stopped recruiting",
+          "body": "A character shows one status, the highest-ranked of those set, and Away from Keyboard, Busy, In Duty and Viewing Cutscene all outrank Recruiting. Reading the displayed one decided that a host who stepped away had stopped recruiting - the exact moment a listing most needs looking after. Every status that is set is read now, not the one on display. The same misreading hid other people's recruitment from you, which said nothing either way when it could not tell; a leader whose statuses cannot be read is now recorded as unknown rather than as not recruiting."
+        },
+        {
+          "type": "fixed",
+          "title": "The page-forward arrow stopped working on page two",
+          "body": "A button carries a chain of events - mouse over, mouse out, click - and the first is not always the click. Forward turned page one fine; on page two the same call fired something else and the page never moved."
+        },
+        {
+          "type": "fixed",
+          "title": "A clear banner drew over other windows but was behind them for clicks",
+          "body": "Painting on the foreground list puts the banner over everything, but the mouse goes to whichever window is on top - and the banner takes no focus when it appears, so any window focused after it sat above it and got every click while the banner drew over them looking clickable. It is raised in the display order every frame now, so the hit target matches what is on screen. Display order only: keyboard focus stays where you left it."
+        },
+        {
+          "type": "fixed",
+          "title": "A search box's cross could not be pressed",
+          "body": "It was an invisible button laid over the field, and it could not be pressed while the field had focus - which is always, since you have just been typing in it. ImGui gives every click inside an active widget to that widget, so the press moved the caret instead. The mouse is now read against the rectangle directly."
+        },
+        {
+          "type": "fixed",
+          "title": "A listing of somebody else's was kept in view less often than it should be",
+          "body": "Only a listing's owner can read their own listing, so the only way another party's arrives is when you open its detail window. The watcher now opens the game's window only when there is something to find, and compares once a frame when the card is off-screen and once a second when it is on, rather than the other way round."
+        },
+        {
+          "type": "fixed",
+          "title": "The server could refuse a session fifty times a minute",
+          "body": "After a refused session every caller asked again on every attempt, which kept a rate limit permanently hit and could keep it hit for an hour. Nobody asks again until the server's Retry-After, minimum ten seconds. The twenty-second retry loop for a broken connection is bounded too, and a malformed answer is not retried at all."
+        },
+        {
+          "type": "fixed",
+          "title": "Your own listing's seats were read from the wrong place",
+          "body": "They were read from the recruitment window's memory, which is the last recruitment set up on this client and stops describing the live listing after a relog - it read as eight seats of any job, and a repost built from it replaced a listing's real seats with that."
+        },
+        {
+          "type": "fixed",
+          "title": "A refresh held up by the Party Finder waited a full minute every time",
+          "body": "It was asking a condition flag that stays set for as long as the listing is up, window or no window, so every due refresh was held for the full minute and the countdown looped. The windows are what you would actually lose, and a read never holds a refresh up at all - the game itself can leave the Party Finder open after one, which would otherwise have stalled the check behind it for as long as nobody closed it."
+        },
+        {
+          "type": "fixed",
+          "title": "A status box sized itself a line short when a comment had a line break in it",
+          "body": "The whole comment was wrapped as one run, so a line break the author typed counted as one line while the drawing honoured the break and drew two, and every panel sized from the count came out short. Each paragraph is wrapped on its own."
+        },
+        {
+          "type": "fixed",
+          "title": "The \"Read the update\" button in Settings did nothing",
+          "body": "A sheet only appears once it is opened as one, and setting the flag alone left the button doing nothing at all."
+        },
+        {
+          "type": "fixed",
+          "title": "A share code had no visible line breaks",
+          "body": "It has no spaces, so it drew as one unbroken run across the window. Export draws it hard-wrapped and read-only, import hides the raw text while you are not typing in it and draws it wrapped underneath, and there is a From clipboard button beside Import."
+        },
+        {
+          "type": "fixed",
+          "title": "Applicants were reported as a job they had switched away from",
+          "body": "See \"A member is described by the job they joined on\" above."
+        },
+        {
+          "type": "internal",
+          "title": "One step removed from the first run",
+          "body": "The voting step is gone from the setup screen and from the tour, and a fresh install lands on Settings rather than Recruit."
+        }
+      ]
+    },
+    {
       "version": "3.5.1.1",
       "date": "2026-08-24",
       "published": false,

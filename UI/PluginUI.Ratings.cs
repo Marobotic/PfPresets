@@ -21,6 +21,8 @@ namespace PfPresets
         Settings = 2,
         Achievements = 3,
         Vote = 4,
+        PartyFinder = 5,
+        Feedback = 6,
 
         // Identities for tabs contributed by optional components. Nothing in this repository adds
         // them to the list or draws them; they exist so that a component which does has a stable
@@ -74,94 +76,10 @@ namespace PfPresets
 
         private const int MaxSearchSuggestions = 6;
 
-        /// <summary>The top tab strip's height, and the rail row's, are the button height - a tab
-        /// is a control you press, and there is no reason for it to be a different size from the
-        /// controls beside it.</summary>
-        private const float NavStripHeight = ButtonHeight;
 
         // ══════════════════════════════════════════════════════════
         //  NAV STRIP
         // ══════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// The tab strip: plain labels with an underline that lights on the active one. Drawn by
-        /// hand rather than with ImGui's tab bar, whose filled-chrome look fights the rest of the
-        /// window.
-        /// </summary>
-        private void DrawNavStrip()
-        {
-            Vector2 start = ImGui.GetCursorScreenPos();
-            float winX = ImGui.GetWindowPos().X;
-            float width = ImGui.GetWindowWidth();
-
-            // One list, shared with the rail - see TabList. It used to be built again here, and
-            // the two copies drifted: a tab added to one simply did not exist in the other, which
-            // is exactly the layout depending on how wide the window happened to be.
-            var tabs = TabList().ToArray();
-
-            const float stripPad = 8f;
-            float room = width - stripPad * 2f;
-
-            // ── How much of each tab actually fits ──
-            //
-            // The strip used to divide the width into equal segments and centre an icon and a
-            // label in each, measuring neither. At three tabs on a wide window that looked fine.
-            // At four - and at six with the moderator build's - every label ran straight through
-            // its neighbour, because "Achievements" is wider than a hundred-pixel segment and
-            // nothing was checking.
-            //
-            // So measure first, then choose how much to show. Labels for everything if they fit;
-            // otherwise a label on the tab you are actually on and icons for the rest, which is
-            // what a phone does and for the same reason; and icons alone when even that is too
-            // much. The hit areas are always the full cell, whichever tier is drawn.
-            var mode = FitNavLabels(tabs, room);
-
-            float[] widths = new float[tabs.Length];
-            float total = 0f;
-
-            for (int i = 0; i < tabs.Length; i++)
-            {
-                bool labelled = mode == NavFit.AllLabels
-                    || (mode == NavFit.ActiveLabelOnly && activeTab == tabs[i].Item3);
-
-                widths[i] = NavTabWidth(tabs[i].Item1, tabs[i].Item3, labelled);
-                total += widths[i];
-            }
-
-            // Whatever is left over is shared out between the tabs rather than added to the last
-            // one, so the row stays evenly spaced instead of bunching at the left.
-            float slack = Math.Max(0f, room - total) / tabs.Length;
-
-            var dl = ImGui.GetWindowDrawList();
-
-            float baselineY = start.Y + NavStripHeight - 2f;
-            dl.AddLine(new Vector2(winX, baselineY), new Vector2(winX + width, baselineY),
-                ImGui.ColorConvertFloat4ToU32(BorderDefault), 1.0f);
-
-            if (ChromeDiagnosticRequested)
-                ReportChromeDiagnostic($"nav strip: {tabs.Length} tabs, mode={mode}, "
-                    + $"needed={total:F0} of {room:F0} at y={start.Y:F0}, width={width:F0}");
-
-            float x = winX + stripPad;
-
-            for (int i = 0; i < tabs.Length; i++)
-            {
-                var (label, icon, tab) = tabs[i];
-
-                bool labelled = mode == NavFit.AllLabels
-                    || (mode == NavFit.ActiveLabelOnly && activeTab == tab);
-
-                float cell = widths[i] + slack;
-
-                DrawNavTab(dl, label, icon, tab,
-                    new Vector2(x, start.Y), new Vector2(cell, NavStripHeight - 2f),
-                    baselineY, labelled);
-
-                x += cell;
-            }
-
-            ImGui.SetCursorScreenPos(new Vector2(winX + stripPad, start.Y + NavStripHeight + 2));
-        }
 
         /// <summary>How much of a tab the strip has room to show.</summary>
         private enum NavFit
@@ -169,24 +87,6 @@ namespace PfPresets
             AllLabels,
             ActiveLabelOnly,
             IconsOnly,
-        }
-
-        private NavFit FitNavLabels((string, FontAwesomeIcon, MainTab)[] tabs, float room)
-        {
-            float all = 0f;
-            float activeOnly = 0f;
-            float icons = 0f;
-
-            foreach (var (label, _, tab) in tabs)
-            {
-                all += NavTabWidth(label, tab, withLabel: true);
-                activeOnly += NavTabWidth(label, tab, withLabel: activeTab == tab);
-                icons += NavTabWidth(label, tab, withLabel: false);
-            }
-
-            if (all <= room) return NavFit.AllLabels;
-            if (activeOnly <= room) return NavFit.ActiveLabelOnly;
-            return NavFit.IconsOnly;
         }
 
         /// <summary>What one tab needs, including the breathing room either side of it.</summary>
@@ -207,7 +107,7 @@ namespace PfPresets
                 return glyph + pad * 2f;
 
             float text = ImGui.CalcTextSize(label).X;
-            float beta = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
+            float beta = StatusChipFor(tab) is { } status ? StatusChipWidth(status) + 6f : 0f;
 
             // Counted, not overlaid, wherever there are labels. The strip is measured to the pixel
             // and an overlay would be the one thing on it free to land on the next tab's word.
@@ -217,16 +117,20 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The word beta, as a chip rather than part of the label.
+        /// A tab's release status, as a chip rather than part of the label - or null for none.
         ///
         /// It was "Achievements (beta)" for a day, which made the longest label in the strip forty
         /// per cent longer than it needed to be and pushed the whole row into its icons-only tier
         /// on any window narrow enough to have a strip at all. The word is a status, not a name.
+        /// Clears has graduated; the Party Finder tab is the newest thing here.
         /// </summary>
-        private float BetaChipWidth()
+        private static string? StatusChipFor(MainTab tab) => tab switch
         {
-            return ChipWidth("BETA");
-        }
+            MainTab.PartyFinder => "ALPHA",
+            _ => null,
+        };
+
+        private float StatusChipWidth(string status) => ChipWidth(status);
 
         // ── The unread badge ──────────────────────────────────────
         //
@@ -281,31 +185,6 @@ namespace PfPresets
             return string.Equals(config.PollSeenSlug, p.Slug, StringComparison.Ordinal)
                 ? (TabBadge.None, string.Empty)
                 : (TabBadge.Dot, string.Empty);
-        }
-
-        /// <summary>Whether anything in the navigation is marked, for the collapsed bar - which has
-        /// no navigation to put a mark on.</summary>
-        private bool AnyTabMarked()
-            => AchievementsBadge().Kind != TabBadge.None || VoteBadge().Kind != TabBadge.None;
-
-        /// <summary>What the mark on the collapsed bar is about. Says both when both apply, because
-        /// restoring the window to find the wrong tab marked is worse than a slightly long
-        /// tooltip.</summary>
-        private string MinimizedBadgeTooltip()
-        {
-            var feed = AchievementsBadge();
-            bool vote = VoteBadge().Kind != TabBadge.None;
-
-            string clears = feed.Kind switch
-            {
-                TabBadge.Count => $"{feed.Text} new clears",
-                TabBadge.Dot => "Achievements not opened yet",
-                _ => string.Empty,
-            };
-
-            if (clears.Length > 0 && vote) return $"{clears}, and a poll you haven't seen";
-            if (clears.Length > 0) return clears;
-            return vote ? "A poll you haven't seen" : string.Empty;
         }
 
         private (TabBadge Kind, string Text) AchievementsBadge()
@@ -422,155 +301,23 @@ namespace PfPresets
             }
         }
 
-        private void DrawBetaChip(ImDrawListPtr dl, Vector2 pos, float height, float alpha)
+        private void DrawStatusChip(ImDrawListPtr dl, string status, Vector2 pos, float height, float alpha,
+            bool onAccent = false)
         {
-            DrawChip(new Vector2(pos.X, pos.Y + (height - ChipHeight) * 0.5f),
-                "BETA", Dim with { W = alpha });
-        }
-
-        private void DrawNavTab(ImDrawListPtr dl, string label, FontAwesomeIcon icon, MainTab tab,
-            Vector2 pos, Vector2 size, float baselineY, bool withLabel)
-        {
-            bool active = activeTab == tab;
-
-            ImGui.SetCursorScreenPos(pos);
-
-            // Invisible hit area: every bit of chrome is painted below, so the button must add
-            // none of its own - no fill, no border, no rounding.
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.04f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.07f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
-
-            if (ImGui.Button($"##Nav{tab}", size))
+            // The dashboard mockup's orange tag: orange/20 fill, orange/30 border, orange text.
+            // On the selected row, which is filled with the accent, it goes white - orange on an
+            // accent fill is two loud colours fighting, and black read as a hole in the row.
+            var orange = onAccent ? new Vector4(1, 1, 1, 1) : ColorFromHex("#ff9f0a");
+            var min = new Vector2(pos.X, pos.Y + (height - ChipHeight) * 0.5f);
+            var max = new Vector2(min.X + StatusChipWidth(status), min.Y + ChipHeight);
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(orange with { W = 0.2f * alpha }), Radius.Chip);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(orange with { W = 0.3f * alpha }), Radius.Chip, ImDrawFlags.None, 1f);
+            using (UiLabelFont.Push())
             {
-                // Choosing a tab by hand is its own navigation: whatever Back was remembering is
-                // no longer where you came from.
-                activeTab = tab;
-                profileReturnTab = null;
+                Vector2 ts = ImGui.CalcTextSize(status.ToUpperInvariant());
+                dl.AddText(new Vector2(min.X + ChipPadX, min.Y + (ChipHeight - ts.Y) * 0.5f),
+                    ImGui.ColorConvertFloat4ToU32(orange with { W = alpha }), status.ToUpperInvariant());
             }
-
-            bool hovered = ImGui.IsItemHovered();
-
-            ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor(3);
-
-            var color = active ? TextPrimary : hovered ? TextSecondary : TextMuted;
-
-            (TabBadge Kind, string Text) badge = TabBadgeFor(tab);
-
-            if (withLabel)
-            {
-                float betaRoom = tab == MainTab.Achievements ? BetaChipWidth() + 6f : 0f;
-                float badgeRoom = BadgeWidth(badge);
-
-                DrawIconLabelCentered(icon, label,
-                    pos, new Vector2(size.X - betaRoom - badgeRoom, size.Y), color);
-
-                if (betaRoom > 0f || badgeRoom > 0f)
-                {
-                    // Placed against the label's own end rather than the cell's, so they travel
-                    // with the word instead of drifting off toward the next tab on a wide window.
-                    float glyph;
-                    using (pluginInterface.UiBuilder.IconFontHandle.Push())
-                        glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
-
-                    float content = glyph + 8f + ImGui.CalcTextSize(label).X;
-                    float startX = pos.X + (size.X - betaRoom - badgeRoom - content) * 0.5f;
-
-                    // Same order as the rail: word, badge, then beta last. Last rather than pinned
-                    // to the cell's right edge, because a strip's cells sit shoulder to shoulder -
-                    // a chip flush against a cell boundary reads as belonging to the tab after it.
-                    DrawTabBadge(dl, badge, new Vector2(startX + content, pos.Y), size.Y);
-
-                    if (betaRoom > 0f)
-                        DrawBetaChip(dl, new Vector2(startX + content + badgeRoom + 6f, pos.Y),
-                            size.Y, active ? 1f : 0.7f);
-                }
-            }
-            else
-            {
-                DrawIconCentered(icon, pos, size, color);
-
-                // Over the icon's top-right corner, overlaid rather than beside it, so it still
-                // costs the strip no width at the tier that has none to spare.
-                //
-                // THE NUMBER SURVIVES HERE. It used to flatten to a plain mark on the grounds that
-                // a cell this narrow has no room for one - but "3" is barely wider than the mark it
-                // replaced, and a count is the entire reason anybody looks at this badge. A window
-                // narrow enough to drop the labels is not a window that stopped caring how many
-                // clears it missed. Only the never-opened dot stays a mark, because it has no
-                // number to show in the first place.
-                if (badge.Kind != TabBadge.None)
-                {
-                    float glyph;
-                    using (pluginInterface.UiBuilder.IconFontHandle.Push())
-                        glyph = ImGui.CalcTextSize(icon.ToIconString()).X;
-
-                    float iconRight = pos.X + (size.X + glyph) * 0.5f;
-                    float topY = pos.Y + size.Y * 0.5f - ImGui.GetTextLineHeight() * 0.5f - 2f;
-                    uint fill = ImGui.ColorConvertFloat4ToU32(Negative);
-
-                    if (badge.Kind == TabBadge.Dot)
-                    {
-                        var corner = new Vector2(iconRight - BadgeDotSize * 0.5f, topY);
-                        dl.AddRectFilled(corner,
-                            new Vector2(corner.X + BadgeDotSize, corner.Y + BadgeDotSize), fill);
-                    }
-                    else
-                    {
-                        using (UiLabelFont.Push())
-                        {
-                            Vector2 ts = ImGui.CalcTextSize(badge.Text);
-                            float w = ts.X + 6f;
-                            float h = ts.Y + 2f;
-
-                            // Clamped inside the cell. "99+" against the right-hand tab would
-                            // otherwise hang off the strip's end, and a badge that draws outside
-                            // its own tab is a badge on the wrong tab.
-                            float x = Math.Min(iconRight - 2f, pos.X + size.X - w - 1f);
-                            x = Math.Max(x, pos.X + 1f);
-
-                            var min = new Vector2(x, topY);
-                            dl.AddRectFilled(min, new Vector2(min.X + w, min.Y + h), fill);
-
-                            // Ink for the same reason the counted badge uses it: this fill is a
-                            // fixed red, not the player's accent.
-                            dl.AddText(new Vector2(min.X + 3f, min.Y + 1f),
-                                ImGui.ColorConvertFloat4ToU32(Ink), badge.Text);
-                        }
-                    }
-                }
-
-                if (hovered)
-                {
-                    string tip = tab == MainTab.Achievements ? $"{label} (beta)" : label;
-
-                    // The badge carries the number now, so this is the wording rather than the
-                    // count: "12" on the icon and "12 new" here say the same thing, and the tier
-                    // with no label is the one where the word is worth spelling out.
-                    if (badge.Kind == TabBadge.Count)
-                        tip += $" - {badge.Text} new";
-                    else if (badge.Kind == TabBadge.Dot)
-                        tip += " - not opened yet";
-
-                    PaddedTooltip(tip);
-                }
-            }
-
-            if (!active)
-                return;
-
-            // The lit underline, matched to what is actually drawn rather than to a fixed inset -
-            // a 14px inset on an icons-only cell left an underline wider than the icon above it.
-            float half = Math.Min(size.X * 0.5f - 6f, (withLabel ? size.X * 0.5f - 14f : 14f));
-            float mid = pos.X + size.X * 0.5f;
-
-            dl.AddRectFilled(
-                new Vector2(mid - half, baselineY - 1f),
-                new Vector2(mid + half, baselineY + 1f),
-                ImGui.ColorConvertFloat4ToU32(AccentBlue), 1f);
         }
 
         /// <summary>An icon on its own, centred in a cell.</summary>
@@ -755,79 +502,7 @@ namespace PfPresets
                 return;
             }
 
-            var eligible = Ratings?.EligibleToRate();
-
-            // WHAT WILL ACTUALLY DRAW, which is not the same as what is eligible. A row that has
-            // finished its exit animation takes no space and paints nothing, so counting the
-            // eligible list left the card claiming people it was not showing. See RateRowHasGone.
-            if (eligible is { Count: > 0 })
-                eligible = eligible.FindAll(c => !RateRowHasGone(c));
-
-            // The section is absent when there is nobody in it, heading and all.
-            //
-            // It used to keep its heading over a line explaining that the group turns up here after
-            // a duty, which was both a permanent empty section and untrue - the party appears on
-            // Recruit. A heading with nothing under it is a promise the tab does not keep.
-            if (eligible is { Count: > 0 })
-            {
-                DrawListHeading("You can still rate these");
-
-                DrawListCard(() =>
-                {
-                    DrawSkipAll(eligible.Count);
-
-                    if (Ratings != null)
-                    {
-                        var identities = new List<CharacterIdentity>(eligible.Count);
-                        foreach (var c in eligible)
-                            identities.Add(c.Identity);
-                        Ratings.Prefetch(identities);
-                    }
-
-                    foreach (var contact in eligible)
-                        DrawRateRow(contact);
-
-                    DrawRatingStatusLine();
-                });
-
-                ImGui.Dummy(new Vector2(0, 12));
-            }
-
             DrawRecentPlayers();
-        }
-
-        /// <summary>
-        /// Declines the whole round.
-        ///
-        /// Right-aligned and quiet: it is the alternative to answering, not an equal option beside
-        /// it. Confirmed because it cannot be undone - the votes are not postponed, they are given
-        /// up, and a misclick would otherwise cost a whole duty's worth of ratings.
-        /// </summary>
-        private void DrawSkipAll(int waiting)
-        {
-            ImGui.Indent(HoverRowTextInset);
-
-            ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(TextMuted, waiting == 1 ? "1 person to rate" : $"{waiting} people to rate");
-
-            const float w = 74f;
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - w - 8f);
-
-            if (DrawSecondaryButton("Skip all##SkipVotes", new Vector2(w, ButtonHeight)))
-            {
-                AskConfirm("Skip these ratings", $"Skip all {waiting}?", "Skip them",
-                    () =>
-                    {
-                        int skipped = Encounters?.SkipAllVotable() ?? 0;
-                        if (skipped > 0)
-                            rateStates.Clear();
-                    },
-                    detail: "They won't come back - you can still look anyone up by name.");
-            }
-
-            ImGui.Unindent(8);
-            ImGui.Dummy(new Vector2(0, 4));
         }
 
         private void DrawRecentPlayers()
@@ -850,20 +525,12 @@ namespace PfPresets
                     : null);
 
             clickedProfile = null;
-            recentRatingBatch.Clear();
 
             DrawListCard(() =>
             {
                 foreach (var entry in recent)
                     DrawRecentPlayerRow(entry);
             });
-
-            // One request for the rows the reader can actually see, after they have all been
-            // drawn. Prefetch skips anything already fresh, so a list held still costs nothing
-            // after its first pass, and the service coalesces what is left into a single batched
-            // call rather than one per name.
-            if (recentRatingBatch.Count > 0)
-                Ratings?.Prefetch(recentRatingBatch);
 
             if (clickedProfile != null)
             {
@@ -916,31 +583,10 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The height of a row in the "everyone you have met" list.
-        ///
-        /// A vote row's height plus room to breathe. The two lists are one column and the earlier
-        /// players are most of it, so they get the size of a list you are meant to read rather than
-        /// the size of a footnote.
+        /// The height of a row in the "everyone you have met" list: an ordinary row plus room to
+        /// breathe, the size of a list you are meant to read rather than the size of a footnote.
         /// </summary>
-        private static float RecentRowHeight() => RateRowHeight(withSubline: false) + 8f;
-
-        /// <summary>
-        /// The rows on screen this frame, gathered for one batched lookup after the list is drawn.
-        ///
-        /// A field rather than a local so the list itself is reused: this runs every frame the tab
-        /// is open, and a fresh allocation per frame for a column of numbers is not a trade worth
-        /// making.
-        /// </summary>
-        private readonly List<CharacterIdentity> recentRatingBatch = new();
-
-        /// <summary>
-        /// Ceiling on how many players one frame will ask about, however tall the window is.
-        ///
-        /// Comfortably more than fits on screen at any sane size, so in practice it never binds -
-        /// it is here so a bug in the visibility test, or some future layout that draws this list
-        /// without a clip rect, cannot turn into a request for four hundred names.
-        /// </summary>
-        private const int RecentRatingBatchMax = 40;
+        private float RecentRowHeight() => HoverRowHeight() + 8f;
 
         private void DrawRecentPlayerRow(PlayerSeen entry)
         {
@@ -951,22 +597,6 @@ namespace PfPresets
             //
             // Tested before the row is drawn, while the cursor is still at its top-left, which is
             // what IsRectVisible measures from.
-            bool onScreen = ImGui.IsRectVisible(new Vector2(1f, RecentRowHeight()));
-            if (onScreen && recentRatingBatch.Count < RecentRatingBatchMax)
-                recentRatingBatch.Add(entry.Identity);
-
-            // Read without asking: whatever is already in memory or on disk. The ask for the
-            // visible rows is queued above and its answer lands on a later frame.
-            var score = Ratings?.Peek(entry.Identity);
-
-            // What this install thinks of them, when it has an opinion. The list is now everyone
-            // met rather than only everyone rated, so most rows have no arrow - and the ones that
-            // do are the trace that rating someone worked, which is why the rating history exists.
-            var rated = History?.LastRatingFor(entry.Identity);
-
-            // The same height as a vote row above it. The two lists are one column - one at 32px
-            // and one at 42px read as a list and a footnote, and the earlier players are not a
-            // footnote.
             // Inset past the job icon, which is what leads the row - see DrawRowIdentity for where
             // that width comes from.
             float identityInset;
@@ -988,30 +618,8 @@ namespace PfPresets
                 const float timeColumn = 52f;
                 const float menuColumn = 26f;
 
-                // The community score's column, and the last thing on the row before the time.
-                //
-                // Your own vote used to have a caret of its own immediately right of this one, and
-                // the pair did not survive contact with real data. Both are carets, both take their
-                // green from the same #4ea36b - AccentGreen is literally defined as Positive - and
-                // they sat six pixels apart, so the only thing telling them apart was that one had
-                // a number after it and one did not. Nobody reads a difference that fine, and while
-                // the score column was blank on most rows the collision stayed invisible; as votes
-                // accumulated and the scores filled in, every rated row grew a second green arrow.
-                //
-                // What everyone thinks is the fact worth scanning down a list. What you did about
-                // them is one person's opinion you already know, so it moves to this column's
-                // tooltip and stays on their profile card.
-                const float scoreColumn = 46f;
-                const float scoreGap = 16f;
-
                 float timeRight = rightEdge - menuColumn;
-                float scoreLeft = timeRight - timeColumn - scoreGap - scoreColumn;
-
-                DrawRowIdentity(entry.JobId, entry.Name, entry.World, start.X, scoreLeft - 8f);
-
-                ImGui.SameLine();
-                ImGui.SetCursorScreenPos(new Vector2(scoreLeft, start.Y));
-                DrawScoreColumn(entry.Identity, score, scoreColumn, onScreen, rated);
+                DrawRowIdentity(entry.JobId, entry.Name, entry.World, start.X, timeRight - timeColumn - 8f);
 
                 ImGui.SameLine();
                 float agoW = ImGui.CalcTextSize(ago).X;
@@ -1033,104 +641,6 @@ namespace PfPresets
                     clickedProfile = entry.Identity;
             }, contextMenu: () => DrawPlayerMenuItems(entry.Identity),
                height: RecentRowHeight());
-        }
-
-        /// <summary>
-        /// The community's weighted score, right-aligned in a fixed column.
-        ///
-        /// Takes the rating it was handed rather than fetching one, which is the whole difference
-        /// between this and <see cref="DrawRatingChip"/>: that one reads and requests together,
-        /// which is right for a party of eight and would make this list's length its request size.
-        ///
-        /// Blank, not zero and not a dash, for the many people nobody has voted on. A column of
-        /// dashes down a list of forty looks like data and is not, and a "0" is a real score that
-        /// somebody could have earned.
-        /// </summary>
-        /// <param name="rated">This install's own vote on them, when there is one. It has no mark
-        /// of its own on the row any more, so it rides along in this column's tooltip.</param>
-        private void DrawScoreColumn(CharacterIdentity who, PlayerRating? rating, float column,
-            bool onScreen, RatingGiven? rated = null)
-        {
-            ImGui.AlignTextToFramePadding();
-
-            // Two words rather than a blank, because a blank in this column already means "no score
-            // yet" and a reader cannot tell a person who opted out from a lookup still in flight.
-            if (IsOptedOut(rating))
-            {
-                DrawOptedOutColumn(who, column);
-                return;
-            }
-
-            // Banned draws nothing at all - the same blank as somebody nobody has rated. The column
-            // still reserves its width, so the rows above and below stay aligned.
-            if (IsHidden(rating))
-            {
-                ImGui.Dummy(new Vector2(column, 0));
-                return;
-            }
-
-            if (rating is { Gated: false, OptedOut: false } && rating.Count > 0)
-            {
-                bool up = rating.Score >= 0;
-                int shown = Math.Abs(rating.Score);
-
-                float used = ArrowCountWidth(shown);
-                if (used < column)
-                {
-                    ImGui.Dummy(new Vector2(column - used, 0));
-                    ImGui.SameLine(0, 0);
-                }
-
-                DrawArrowCount(up ? FontAwesomeIcon.CaretUp : FontAwesomeIcon.CaretDown, shown,
-                    NetScoreColor(rating.Score));
-
-                if (ImGui.IsItemHovered())
-                {
-                    PaddedTooltip($"{who}\n\n"
-                        + $"Weighted score {rating.Score}\n"
-                        + $"{rating.Upvotes} up, {rating.Downvotes} down, {rating.Count} votes"
-                        + OwnVoteLine(rated));
-                }
-                return;
-            }
-
-            // The dots are worth the space only while an answer is actually coming. Off screen
-            // nothing was ever asked, so a row scrolled past with no score is settled rather than
-            // pending, and drawing "···" on it would promise something that isn't on its way.
-            bool loading = rating == null && onScreen && Ratings?.IsLoading(who) == true;
-            if (!loading)
-            {
-                ImGui.Dummy(new Vector2(column, 0));
-                return;
-            }
-
-            const string dots = "···";
-            float tw = ImGui.CalcTextSize(dots).X;
-            if (tw < column)
-            {
-                ImGui.Dummy(new Vector2(column - tw, 0));
-                ImGui.SameLine(0, 0);
-            }
-            ImGui.TextColored(TextMuted, dots);
-        }
-
-        /// <summary>
-        /// The "and here is what you did about them" line appended to the score tooltip.
-        ///
-        /// Empty when this install never voted, rather than a line saying so. The tooltip is opened
-        /// to read the score; "you have not rated them" on every unrated row is a sentence that
-        /// never changes and never helps.
-        /// </summary>
-        private string OwnVoteLine(RatingGiven? rated)
-        {
-            if (rated == null)
-                return string.Empty;
-
-            if (rated.Direction == VoteDirection.Unknown)
-                return "\n\nYou rated them, but this install no longer remembers which way.";
-
-            bool up = rated.Direction == VoteDirection.Up;
-            return $"\n\nYou rated them {(up ? "up" : "down")} {Ago(rated.RatedUtc)}.";
         }
 
         /// <summary>
@@ -1233,14 +743,12 @@ namespace PfPresets
             ImGui.Indent(8);
             ImGui.PushTextWrapPos(ImGui.GetWindowWidth() - 24);
 
-            ImGui.TextColored(TextPrimary, "Community ratings are off.");
+            ImGui.TextColored(TextPrimary, "The community is off.");
             ImGui.Dummy(new Vector2(0, 6));
             ImGui.TextColored(TextSecondary,
-                "Look up other players' community ratings, and rate the people you finish duties "
-                + "with.\n\n"
+                "Look up other players' clears and progress, and see who you have played with.\n\n"
                 + "While it's on, the plugin keeps a local list of who you met in duties, and "
-                + "sends a name and world to the rating server when you search or rate. Ratings are "
-                + "stored anonymously - the server keeps no record linking one back to you.");
+                + "sends a name and world to the server when you look someone up.");
 
             ImGui.Dummy(new Vector2(0, 10));
             ImGui.PopTextWrapPos();
@@ -1253,25 +761,12 @@ namespace PfPresets
                 ImGui.TextColored(TextSecondary,
                     "Taking part needs \"Anonymous usage stats\" set to Full, under Settings.");
             }
-            else if (DrawPrimaryButton("Turn on community ratings", new Vector2(260, ButtonHeight)))
+            else if (DrawPrimaryButton("Turn on the community", new Vector2(260, ButtonHeight)))
             {
                 config.RatingsEnabled = true;
                 config.Save();
             }
 
-            ImGui.Unindent(8);
-        }
-
-        private void DrawRatingStatusLine()
-        {
-            if (string.IsNullOrEmpty(ratingStatusMessage) || DateTime.UtcNow > ratingStatusExpiresUtc)
-                return;
-
-            ImGui.Dummy(new Vector2(0, 4));
-            ImGui.Indent(HoverRowTextInset);
-            ImGui.PushTextWrapPos(ImGui.GetWindowWidth() - 24);
-            ImGui.TextColored(AccentYellow, ratingStatusMessage);
-            ImGui.PopTextWrapPos();
             ImGui.Unindent(8);
         }
 
@@ -1359,13 +854,6 @@ namespace PfPresets
                     if (contact.Member.IsValid)
                         yield return contact.Member.Identity;
                 }
-            }
-
-            var rated = History?.Recent();
-            if (rated != null)
-            {
-                foreach (var entry in rated)
-                    yield return entry.Identity;
             }
 
             var everyone = Players?.All();
@@ -1549,35 +1037,6 @@ namespace PfPresets
         //  PROFILE CARD
         // ══════════════════════════════════════════════════════════
 
-        /// <summary>A single up/down proportion bar. Two numbers don't need a histogram.</summary>
-        private void DrawVoteBar(PlayerRating rating)
-        {
-            int total = rating.Upvotes + rating.Downvotes;
-            if (total == 0)
-                return;
-
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 pos = ImGui.GetCursorScreenPos();
-            float fullWidth = ImGui.GetContentRegionAvail().X;
-
-            // 7, not 10. At ten it read as a filled panel rather than a proportion, and on a
-            // unanimous player it became a solid slab of colour across the whole card.
-            const float height = 7f;
-
-            float upWidth = fullWidth * ((float)rating.Upvotes / total);
-
-            dl.AddRectFilled(pos, new Vector2(pos.X + fullWidth, pos.Y + height),
-                ImGui.ColorConvertFloat4ToU32(ColorFromHex("#e06a5a")), 4f);
-
-            if (rating.Upvotes > 0)
-            {
-                dl.AddRectFilled(pos, new Vector2(pos.X + upWidth, pos.Y + height),
-                    ImGui.ColorConvertFloat4ToU32(ColorFromHex("#3fb56a")), 4f,
-                    rating.Downvotes == 0 ? ImDrawFlags.RoundCornersAll : ImDrawFlags.RoundCornersLeft);
-            }
-
-            ImGui.Dummy(new Vector2(fullWidth, height));
-        }
     }
 }
 #endif

@@ -52,6 +52,40 @@ namespace PfPresets
             return true;
         }
 
+        /// <summary>
+        /// Like <see cref="ClickAddonButton"/>, but fires the button's click event rather than
+        /// whichever event it happens to have first.
+        ///
+        /// A button carries a chain of events - mouse over, mouse out, click - and the first is not
+        /// always the click. The Party Finder's page arrows are the case that showed it: forward
+        /// turned page one fine, and on page two the same call fired something else and the page
+        /// never moved. This walks the chain for the ButtonClick event and fires that, falling back
+        /// to the first event only if there is no click among them.
+        /// </summary>
+        public static bool ClickAddonButtonByClickEvent(AtkUnitBase* addon, AtkComponentButton* button)
+        {
+            if (addon == null || button == null || !button->IsEnabled) return false;
+            var ownerNode = button->AtkComponentBase.OwnerNode;
+            if (ownerNode == null) return false;
+            var btnRes = &ownerNode->AtkResNode;
+            var first = (AtkEvent*)btnRes->AtkEventManager.Event;
+            if (first == null) return false;
+
+            var chosen = first;
+            int guard = 0;
+            for (var evt = first; evt != null && guard++ < 32; evt = evt->NextEvent)
+            {
+                if (evt->State.EventType == AtkEventType.ButtonClick)
+                {
+                    chosen = evt;
+                    break;
+                }
+            }
+
+            addon->ReceiveEvent(chosen->State.EventType, (int)chosen->Param, chosen);
+            return true;
+        }
+
         /// <summary>True when a dropdown's item list has been built by the game
         /// (i.e. it has at least one entry).</summary>
         /// <summary>The visible label of a component button, or empty when it has no text node.

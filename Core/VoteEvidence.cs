@@ -8,12 +8,13 @@ using Newtonsoft.Json;
 namespace PfPresets
 {
     /// <summary>
-    /// Evidence: the sealed payload a rating or vote carries to show it came out of a real duty.
+    /// Evidence: the sealed payload a clear or a setting change carries to show it came from a real
+    /// character and, for a clear, a real duty.
     ///
     /// <para>
-    /// The payload names the instance, the duty, when it started and ended, who was in the party
-    /// and who the vote is about. It is serialised, then sealed with AES-GCM under a key compiled
-    /// into the plugin, and travels as one opaque base64 blob.
+    /// The payload names the instance, the duty, when it started and ended, and who was in the
+    /// party. It is serialised, then sealed with AES-GCM under a key compiled into the plugin, and
+    /// travels as one opaque base64 blob.
     /// </para>
     ///
     /// <para>
@@ -30,7 +31,7 @@ namespace PfPresets
 
         partial void BuildClearEvidence(DutyEncounter encounter, ref string evidence)
         {
-            CharacterIdentity me = api.LocalIdentity;
+            CharacterIdentity? me = api.LocalIdentity;
 
             // A NAMELESS DUTY IS STILL A ROOM WITH PEOPLE IN IT.
             //
@@ -38,7 +39,6 @@ namespace PfPresets
             // payload means PostAchievement returns without calling the server, so no duty is filed,
             // so nothing exists for a vote to be checked against - and every vote cast out of that
             // duty is held forever, with nothing on either side to say why. Meanwhile
-            // BuildVoteEvidence has never required the name, so the vote itself sealed perfectly.
             // One missing string, and the vote and the thing that justifies it stopped agreeing.
             //
             // The name comes from a lookup that returns empty on any failure, so this fired for
@@ -105,7 +105,7 @@ namespace PfPresets
 
         partial void BuildSettingEvidence(string kind, ref string evidence)
         {
-            CharacterIdentity me = api.LocalIdentity;
+            CharacterIdentity? me = api.LocalIdentity;
             if (me != null && me.IsValid && !string.IsNullOrEmpty(kind))
             {
                 var payload = new
@@ -122,63 +122,6 @@ namespace PfPresets
                 };
                 evidence = Seal(JsonConvert.SerializeObject(payload));
             }
-        }
-
-        partial void BuildVoteEvidence(CharacterIdentity target, int score, ref string evidence)
-        {
-            CharacterIdentity me = api.LocalIdentity;
-            DutyEncounter encounter = encounters.LatestWith(target);
-            if (encounter == null || me == null || !me.IsValid || !target.IsValid)
-            {
-                return;
-            }
-            List<object> party = new List<object>
-            {
-                new
-                {
-                    n = me.Name,
-                    w = me.World,
-                    j = (int)encounter.LocalJobId
-                }
-            };
-            foreach (EncounterMember member in encounter.Members)
-            {
-                if (member.IsValid)
-                {
-                    party.Add(new
-                    {
-                        n = member.Identity.Name,
-                        w = member.Identity.World,
-                        j = (int)member.JobId
-                    });
-                }
-            }
-            var payload = new
-            {
-                v = 1,
-                instance = encounter.Id,
-                duty = (int)encounter.DutyRowId,
-                dutyName = encounter.DutyName,
-                started = ToUnixMsEvidence(encounter.StartedUtc),
-                ended = ToUnixMsEvidence(encounter.CompletedUtc),
-                cleared = encounter.Cleared,
-                job = (int)encounter.LocalJobId,
-                party = party,
-                me = new
-                {
-                    n = me.Name,
-                    w = me.World
-                },
-                target = new
-                {
-                    n = target.Name,
-                    w = target.World
-                },
-                score = score,
-                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                nonce = Guid.NewGuid().ToString("N")
-            };
-            evidence = Seal(JsonConvert.SerializeObject(payload));
         }
 
         private static long ToUnixMsEvidence(DateTime utc)

@@ -119,7 +119,7 @@ namespace PfPresets
         /// <summary>Where a sheet of a given content height ends up. Height is requested, not
         /// demanded: a sheet never grows past its share of the screen, and never shrinks below
         /// something you can read.</summary>
-        private (Vector2 Pos, Vector2 Size) SheetRect(float wantHeight)
+        private (Vector2 Pos, Vector2 Size) SheetRect(float wantHeight, float? wantWidth = null)
         {
             if (IsPortrait)
             {
@@ -129,7 +129,7 @@ namespace PfPresets
                         new Vector2(screenSize.X, h));
             }
 
-            float w = MathF.Min(LandscapeSheetMaxWidth, screenSize.X - 48f);
+            float w = MathF.Min(wantWidth ?? LandscapeSheetMaxWidth, screenSize.X - 48f);
             float th = Math.Clamp(wantHeight, 240f, screenSize.Y * LandscapeSheetMaxFraction);
             return (new Vector2(screenPos.X + (screenSize.X - w) * 0.5f,
                                 screenPos.Y + (screenSize.Y - th) * 0.5f),
@@ -418,9 +418,11 @@ namespace PfPresets
         /// the body and must call <see cref="EndSheet"/> when <c>BeginSheet</c> returned true.
         /// </summary>
         /// <param name="wantHeight">Preferred height. Clamped by <see cref="SheetRect"/>.</param>
-        private bool BeginSheet(string id, string title, float wantHeight)
+        /// <param name="wantWidth">A narrower sheet on the wide layout, for one with little in
+        /// it - a share code does not need 760px. The phone's sheets are always its full width.</param>
+        private bool BeginSheet(string id, string title, float wantHeight, float? wantWidth = null)
         {
-            var (pos, size) = SheetRect(wantHeight);
+            var (pos, size) = SheetRect(wantHeight, wantWidth);
 
             ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(size, ImGuiCond.Always);

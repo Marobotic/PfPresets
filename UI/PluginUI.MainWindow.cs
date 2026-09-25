@@ -226,6 +226,10 @@ namespace PfPresets
         /// </summary>
         private void DrawActiveTab()
         {
+#if PFP_RATINGS
+            if (activeTab != MainTab.Settings)
+                settingsReturnTab = activeTab;
+#endif
             // Erased entirely in an ordinary build - see PluginUI.AdminHooks.cs.
             bool extraHandled = false;
             DrawPanelTabBody(ref extraHandled);
@@ -248,6 +252,18 @@ namespace PfPresets
             if (activeTab == MainTab.Vote)
             {
                 DrawVoteTab();
+                return;
+            }
+
+            if (activeTab == MainTab.PartyFinder && config.CommunityEnabled)
+            {
+                DrawPartyFinderTab();
+                return;
+            }
+
+            if (activeTab == MainTab.Feedback)
+            {
+                DrawFeedbackTab();
                 return;
             }
 
@@ -306,7 +322,19 @@ namespace PfPresets
             if (split)
             {
                 float bodyH = ImGui.GetContentRegionAvail().Y - GetFooterHeight();
-                float colW = (ImGui.GetWindowWidth() - BodyGutter * 2f - ColumnGap) * 0.5f;
+                float both = ImGui.GetWindowWidth() - BodyGutter * 2f - ColumnGap;
+
+                // WIDER ON THE LEFT DURING A DANCING MAD RECRUITMENT. That layout puts each
+                // player's progress, mechanic and boss on one line beside their name, and at half
+                // the tab it had to cut them - "P4 58.5% - Grand Cross 3 - Kefk…". The presets
+                // give up the room; they are not what you are looking at while the party fills.
+                bool dmuRecruiting = snapshot.IsRecruiting
+#if PFP_RATINGS
+                    && DmuLayout(snapshot.DutyName, snapshot.DutyRowId)
+#endif
+                    ;
+                float colW = both * (dmuRecruiting ? 0.58f : 0.5f);
+                float rightW = both - colW;
 
                 ImGui.SetCursorPosX(BodyGutter);
                 if (ImGui.BeginChild("RecruitLeft", new Vector2(colW, bodyH), false))
@@ -316,7 +344,8 @@ namespace PfPresets
                         // A heading naming what the column is about, the way the profile tab names
                         // its two. Which words those are is the whole state of the tab in three
                         // words - see LeftColumnTitle.
-                        DrawListHeading(LeftColumnTitle(snapshot));
+                        DrawRecruitHeading(snapshot);
+                        bool applying = DrawApplicationCard();
 
                         // THE PARTY LIST IS NOT PART OF THE CARD'S CONDITION.
                         //
@@ -334,7 +363,7 @@ namespace PfPresets
 #endif
 
                         // Only when there is genuinely nothing else: no card and no party.
-                        if (!(showCard && snapshot.HasAnythingToShow) && !InAPartyForColumn())
+                        if (!(showCard && snapshot.HasAnythingToShow) && !InAPartyForColumn() && !applying)
                             DrawSoloCard();
                     }
                     finally { ImGui.EndChild(); }
@@ -343,11 +372,11 @@ namespace PfPresets
 
                 ImGui.SameLine(0, ColumnGap);
 
-                if (ImGui.BeginChild("RecruitRight", new Vector2(colW, bodyH), false))
+                if (ImGui.BeginChild("RecruitRight", new Vector2(rightW, bodyH), false))
                 {
                     try
                     {
-                        DrawListHeading("My presets");
+                        DrawPresetsHeading();
                         DrawPresetList();
                     }
                     finally { ImGui.EndChild(); }
@@ -370,7 +399,8 @@ namespace PfPresets
                         // The same two headings the wide layout has. One column instead of two, so
                         // they are stacked rather than side by side, but a phone should not be a
                         // different tab from a tablet - only a narrower one.
-                        DrawListHeading(LeftColumnTitle(snapshot));
+                        DrawRecruitHeading(snapshot);
+                        bool applying = DrawApplicationCard();
 
                         // THE PARTY LIST IS NOT PART OF THE CARD'S CONDITION.
                         //
@@ -388,10 +418,10 @@ namespace PfPresets
 #endif
 
                         // Only when there is genuinely nothing else: no card and no party.
-                        if (!(showCard && snapshot.HasAnythingToShow) && !InAPartyForColumn())
+                        if (!(showCard && snapshot.HasAnythingToShow) && !InAPartyForColumn() && !applying)
                             DrawSoloCard();
 
-                        DrawListHeading("My presets");
+                        DrawPresetsHeading();
                         DrawPresetList();
                     }
                     finally
@@ -406,6 +436,55 @@ namespace PfPresets
             }
 
             DrawFooter();
+        }
+
+        /// <summary>The left column's heading, with "● Active listing" on the right while a listing
+        /// is up - the dashboard mockup's header.</summary>
+        /// <summary>
+        /// The party you have applied to, while the application is open: the same view as the PF
+        /// Coordination window - the party filling in, where you stand, and Join party now or
+        /// Withdraw - so it is where you already look rather than in a window you may have shut.
+        /// True when drawn.
+        /// </summary>
+        private bool DrawApplicationCard()
+        {
+#if PFP_RATINGS
+            var c = Coordination;
+            var a = c?.Applicant;
+            if (c == null || a == null || a.Phase == PfCoordination.ApplicantPhase.Ended)
+                return false;
+
+            float width = ImGui.GetContentRegionAvail().X - 12f;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 6f);
+            MeasuredPanel("recruitapplication", width, FbCard, FbBorder, Radius.Card, 14f, inner =>
+            {
+                string title = a.DutyLabel.Length > 0 ? a.DutyLabel : c.DutyName(a.DutyId);
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(FbSlate400, "YOUR APPLICATION");
+                using (UiSegmentFont.Push())
+                    ImGui.TextColored(FbWhite, title);
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(FbSlate400, $"{DisplayName(a.HostName)} @ {a.HostWorld}");
+                ImGui.Dummy(new Vector2(0, 4f));
+                DrawApplicantBody(c, a);
+            });
+            ImGui.Dummy(new Vector2(0, 8f));
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        private void DrawRecruitHeading(RecruitmentSnapshot snap)
+            => DrawListHeading(LeftColumnTitle(snap),
+                note: snap.IsRecruiting ? "Active listing" : null,
+                noteColour: ColorFromHex("#30d158"), notePulse: true);
+
+        /// <summary>"My presets", with how many are saved on the right.</summary>
+        private void DrawPresetsHeading()
+        {
+            int n = config.Presets.Count(p => DutyComposition.IsOffered(p.DutyCategoryId));
+            DrawListHeading("My presets", note: n == 1 ? "1 preset saved" : $"{n} presets saved");
         }
 
         /// <summary>
@@ -624,35 +703,70 @@ namespace PfPresets
 
             // Both actions are meaningless while the editor owns the preset being edited.
             bool editingInProgress = isEditorWindowVisible;
-            if (editingInProgress) ImGui.BeginDisabled();
 
+            var dl = ImGui.GetWindowDrawList();
+            float alpha = editingInProgress ? 0.45f : 1f;
+
+            // New preset - the dashboard mockup's white button: black text, rounded-xl, a soft
+            // shadow, a little press. The one bright thing on the row, because it is the one
+            // action somebody with no presets has to find.
             Vector2 newPos = new(winX + width - SearchBarInset - actionsW, controlY);
             var newSize = new Vector2(newW, controlH);
             ImGui.SetCursorScreenPos(newPos);
-            if (DrawNeutralButton("##CreatePreset", newSize))
+            bool createClicked = ImGui.InvisibleButton("##CreatePreset", newSize);
+            bool createHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
+            bool createHeld = ImGui.IsItemActive() && !editingInProgress;
+            {
+                Vector2 bMin = newPos, bMax = newPos + newSize;
+                if (createHeld)
+                {
+                    bMin += newSize * 0.025f;
+                    bMax -= newSize * 0.025f;
+                }
+                for (int i = 1; i <= 3; i++)
+                    dl.AddRectFilled(bMin + new Vector2(-i, 3f - i * 0.5f), bMax + new Vector2(i, 2f + i),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0.12f * alpha)), Radius.Control + i);
+                Vector4 fill = createHovered && !editingInProgress ? ColorFromHex("#e2e8f0") : new Vector4(1, 1, 1, 1);
+                dl.AddRectFilled(bMin, bMax, ImGui.ColorConvertFloat4ToU32(fill with { W = alpha }), Radius.Control);
+                DrawIconLabelLeft(FontAwesomeIcon.Plus, newLabel, bMin, bMax - bMin,
+                    new Vector4(0, 0, 0, alpha), NewPresetPadX, UiIconSmall);
+            }
+            if (createClicked && !editingInProgress)
             {
                 // Detached: it is not in the list, not counted and not on disk until Save is
                 // pressed. See Configuration.CreateDetachedPreset.
                 var created = config.CreateDetachedPreset();
                 OpenEditor(created, true);
             }
-            bool createHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
 
-            // Drawn by hand so the glyph comes from the icon font, which a plain Button label
-            // cannot reach. Same face and same icon size as Import beside it.
-            DrawIconLabelLeft(FontAwesomeIcon.Plus, newLabel, newPos, newSize, Ground,
-                NewPresetPadX, UiIconSmall);
-
+            // Import preset - the mockup's glass button: the card's fill, a white/10 border,
+            // slate text going white on a lighter wash.
             Vector2 importPos = new(newPos.X + newW + gap, controlY);
             var importSize = new Vector2(importW, controlH);
             ImGui.SetCursorScreenPos(importPos);
-            if (DrawSecondaryButton("##ImportPreset", importSize))
-                OpenShareImport();
+            bool importClicked = ImGui.InvisibleButton("##ImportPreset", importSize);
             bool importHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
-            DrawIconLabelLeft(FontAwesomeIcon.FileImport, importLabel, importPos, importSize, Ink,
-                SearchBarInset, UiIconSmall);
-
-            if (editingInProgress) ImGui.EndDisabled();
+            bool importHeld = ImGui.IsItemActive() && !editingInProgress;
+            {
+                bool lit = importHovered && !editingInProgress;
+                Vector2 bMin = importPos, bMax = importPos + importSize;
+                if (importHeld)
+                {
+                    bMin += importSize * 0.025f;
+                    bMax -= importSize * 0.025f;
+                }
+                dl.AddRectFilled(bMin, bMax, ImGui.ColorConvertFloat4ToU32(
+                    (lit ? new Vector4(1, 1, 1, 0.1f) : ColorFromHex("#1e1e22") with { W = 0.75f }) with { W = (lit ? 0.1f : 0.75f) * alpha }),
+                    Radius.Control);
+                dl.AddRect(bMin, bMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f * alpha)),
+                    Radius.Control, ImDrawFlags.None, 1f);
+                DrawIconLabelLeft(FontAwesomeIcon.FileImport, importLabel, bMin, bMax - bMin,
+                    (lit ? new Vector4(1, 1, 1, 1) : PfSlate300) with { W = alpha }, SearchBarInset, UiIconSmall);
+            }
+            if (importClicked && !editingInProgress)
+                OpenShareImport();
+            if ((createHovered || importHovered) && !editingInProgress)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
             if (editingInProgress && (createHovered || importHovered))
                 PaddedTooltip("Finish or close the current preset first.");
@@ -724,29 +838,6 @@ namespace PfPresets
             ImGui.PopStyleVar();
         }
 
-        /// <summary>Tag color for an objective: Loot=yellow, Duty Completion=blue, Practice=green, else grey.</summary>
-        private static Vector4 GetObjectiveColor(int objectiveId) => objectiveId switch
-        {
-            1 => AccentBlue,    // Duty Completion
-            2 => AccentGreen,   // Practice
-            3 => AccentYellow,  // Loot
-            _ => TextMuted,
-        };
-
-        /// <summary>Draws a small rounded tag pill and returns its width.</summary>
-        private float DrawTagPill(Vector2 topLeft, string text, Vector4 color)
-        {
-            var dl = ImGui.GetWindowDrawList();
-            Vector2 ts = ImGui.CalcTextSize(text);
-            const float padX = 6f, h = 17f;
-            float w = ts.X + padX * 2f;
-            dl.AddRectFilled(topLeft, new Vector2(topLeft.X + w, topLeft.Y + h),
-                ImGui.ColorConvertFloat4ToU32(new Vector4(color.X, color.Y, color.Z, 0.18f)),
-                Radius.Chip);
-            dl.AddText(new Vector2(topLeft.X + padX, topLeft.Y + (h - ts.Y) * 0.5f), ImGui.ColorConvertFloat4ToU32(color), text);
-            return w;
-        }
-
         /// <summary>
         /// One preset, as a card.
         ///
@@ -763,14 +854,18 @@ namespace PfPresets
         /// </summary>
         private void DrawPresetRow(PfPresetData preset)
         {
-            const float pad = CardPadding;
-            const float tile = 48f;
+            // The dashboard mockup's preset card, at the plugin's scale: rounded-3xl with a faint
+            // border that lifts on hover; the duty image, title and subtitle with the fold chevron
+            // at the right; the tags on their own row; the seats as small rounded tiles; then a
+            // hairline and the actions - Apply across the row, and three square buttons.
+            const float pad = 14f;
+            const float tile = 40f;
             const float tileGap = 12f;
-            const float chevron = 28f;
-            // The strip has the whole card width to itself in this layout rather than sharing a
-            // column with the text, so the tiles can be read at a glance instead of squinted at.
-            const float slot = 28f, slotGap = 5f;
-            const float actionBtn = ButtonHeight;
+            const float chevron = 26f;
+            // The seat icons fill their seat: with no tile round them, a smaller icon inside the old
+            // tile's box only looked far apart.
+            const float slot = 28f, slotGap = 3f, slotInner = 28f;
+            const float actionBtn = 32f;
             const float gap = 10f;
 
             float width = ImGui.GetContentRegionAvail().X;
@@ -781,9 +876,6 @@ namespace PfPresets
             bool expanded = hasComment && expandedPresets.Contains(preset.Id);
 
             // ── Measure, before anything is drawn ─────────────────
-            //
-            // The card's height decides its background, its hover fill and its hit area, and all
-            // three have to be right on the frame it first appears.
             float textLeft = pad + tile + tileGap;
             float textRoom = width - textLeft - chevron - pad - 8f;
 
@@ -795,12 +887,11 @@ namespace PfPresets
             float chipsH = 0f;
             if (chips.Count > 0)
             {
-                int chipRows = Math.Max(1, ChipRowCount(chips, textRoom));
-                chipsH = 6f + chipRows * ChipRowHeight + (chipRows - 1) * ChipRowGap;
+                int chipRows = Math.Max(1, ChipRowCount(chips, inner));
+                chipsH = gap + chipRows * ChipRowHeight + (chipRows - 1) * ChipRowGap;
             }
 
-            float textBlockH = nameLineH + 2f + subLineH + chipsH;
-            float headerH = MathF.Max(tile, textBlockH);
+            float headerH = MathF.Max(tile, nameLineH + 2f + subLineH);
 
             float commentPanelH = 0f;
             List<string>? commentLines = null;
@@ -813,26 +904,23 @@ namespace PfPresets
                     + commentLines.Count * CommentLineHeight();
             }
 
-            float cardH = pad + headerH + gap + slot + gap + actionBtn
+            float cardH = pad + headerH + chipsH + gap + slot + gap + 1f + gap + actionBtn
                 + (expanded ? gap + commentPanelH : 0f) + pad;
 
             Vector2 origin = ImGui.GetCursorScreenPos();
             var dl = ImGui.GetWindowDrawList();
 
-            // ONE COLOUR, ALWAYS. The card used to lighten to Raised under the cursor, which is
-            // why it "still isn't #1c1c1e" - it is, right up until the mouse crosses it, and a card
-            // is nearly always under the mouse when somebody is looking at it. A hover tint belongs
-            // on something you press; this is a container, and everything inside it that IS
-            // pressable lights up on its own.
             var cardMax = new Vector2(origin.X + width, origin.Y + cardH);
-            dl.AddRectFilled(origin, cardMax, ImGui.ColorConvertFloat4ToU32(Field), Radius.Card);
-            dl.AddRect(origin, cardMax, ImGui.ColorConvertFloat4ToU32(CardBorder),
-                Radius.Card, ImDrawFlags.None, 1f);
+            bool cardHot = ImGui.IsWindowHovered() && IsMouseOver(origin, cardMax);
+            dl.AddRectFilled(origin, cardMax, ImGui.ColorConvertFloat4ToU32(
+                cardHot ? ColorFromHex("#232327") : Field), 16f);
+            dl.AddRect(origin, cardMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, cardHot ? 0.12f : 0.08f)),
+                16f, ImDrawFlags.None, 1f);
 
             float top = origin.Y + pad;
 
-            // ── The duty's tile ───────────────────────────────────
-            var tileMin = new Vector2(origin.X + pad, top);
+            // ── The duty's image ──────────────────────────────────
+            var tileMin = new Vector2(origin.X + pad, top + (headerH - tile) * 0.5f);
             var tileMax = new Vector2(tileMin.X + tile, tileMin.Y + tile);
 
             uint categoryIcon = GetCategoryIcon(
@@ -843,13 +931,13 @@ namespace PfPresets
 
             if (categoryIcon != 0 && TryGetIconHandle(categoryIcon, out var iconHandle))
             {
-                dl.AddImage(iconHandle, tileMin, tileMax);
+                dl.AddImageRounded(iconHandle, tileMin, tileMax, Vector2.Zero, Vector2.One,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), Radius.Card);
             }
             else
             {
-                // The lettered fallback, and the only place a letter stands in for an icon: a
-                // missing sheet entry must not leave a hole where the card's leading mark should be.
-                dl.AddRectFilled(tileMin, tileMax, ImGui.ColorConvertFloat4ToU32(Panel), Radius.Tile);
+                // The lettered fallback, and the only place a letter stands in for an icon.
+                dl.AddRectFilled(tileMin, tileMax, ImGui.ColorConvertFloat4ToU32(Panel), Radius.Card);
                 string initial = string.IsNullOrEmpty(preset.DutyName)
                     ? "?" : preset.DutyName[..1].ToUpperInvariant();
                 using (UiNameFont.Push())
@@ -861,19 +949,15 @@ namespace PfPresets
                 }
             }
 
-            // ── Title, subtitle, chips ────────────────────────────
+            // ── Title and subtitle ────────────────────────────────
             float tx = origin.X + textLeft;
-            float ty = top;
+            float ty = top + (headerH - (nameLineH + 2f + subLineH)) * 0.5f;
 
-            // WHAT THE CARD IS FOR, AND WHETHER YOU CAN GET IN.
-            //
-            // A locked duty says so on the line that names it, because that line is the answer to
-            // "why is Apply greyed out" and a tooltip on a disabled button is a poor place to keep
-            // it. With HideLockedDuties on the name goes entirely and the card only admits that
-            // something is locked - the point of the setting is not to be shown the fight.
+            // WHAT THE CARD IS FOR, AND WHETHER YOU CAN GET IN - a locked duty says so on the line
+            // that names it; with HideLockedDuties on, the name goes and only "locked" is left.
             bool titleLocked = IsPresetLocked(preset);
             string dutyTitle = string.IsNullOrEmpty(preset.DutyName) ? "No duty set" : preset.DutyName;
-            Vector4 titleColour = Ink;
+            Vector4 titleColour = new Vector4(1, 1, 1, 1);
 
             if (titleLocked)
             {
@@ -888,10 +972,7 @@ namespace PfPresets
                 }
             }
 
-            // AND WHETHER THE PLUGIN CAN POST IT AT ALL. A card that is only on screen because the
-            // developer override is on has to say so on the same line, or the six broken categories
-            // become six cards indistinguishable from the working ones - which is exactly the
-            // confusion the card was hidden to avoid, just moved somewhere harder to notice.
+            // AND WHETHER THE PLUGIN CAN POST IT AT ALL, when only the developer override shows it.
             if (DutyComposition.OfferUnsupported && !DutyComposition.IsSupported(preset.DutyCategoryId))
                 dutyTitle = $"{dutyTitle} (Unsupported)";
 
@@ -900,49 +981,58 @@ namespace PfPresets
                     Fit(dutyTitle, textRoom));
 
             ty += nameLineH + 2f;
-
             DrawPresetSubtitle(dl, preset, new Vector2(tx, ty), textRoom, subLineH);
-            ty += subLineH;
-
-            if (chips.Count > 0)
-            {
-                float chipX = tx;
-                float chipY = ty + 6f;
-
-                foreach (var (text, colour) in chips)
-                {
-                    float w = ChipWidth(text);
-                    if (chipX > tx && chipX + w > tx + textRoom)
-                    {
-                        chipX = tx;
-                        chipY += ChipRowHeight + ChipRowGap;
-                    }
-
-                    DrawChip(new Vector2(chipX, chipY), text, colour);
-                    chipX += w + ChipGap;
-                }
-            }
 
             // ── The chevron, when there is something folded away ──
             if (hasComment)
             {
                 var chevPos = new Vector2(origin.X + width - pad - chevron, top);
                 ImGui.SetCursorScreenPos(chevPos);
-                if (DrawIconSquareButton(
-                        expanded ? FontAwesomeIcon.ChevronUp : FontAwesomeIcon.ChevronDown,
-                        $"presetfold_{preset.Id}", chevron))
+                bool fold = ImGui.InvisibleButton($"##presetfold_{preset.Id}", new Vector2(chevron));
+                bool chevHot = ImGui.IsItemHovered();
+                if (chevHot)
                 {
-                    if (!expandedPresets.Remove(preset.Id))
-                        expandedPresets.Add(preset.Id);
-                }
-                if (ImGui.IsItemHovered())
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                    dl.AddRectFilled(chevPos, chevPos + new Vector2(chevron),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), Radius.Small);
                     PaddedTooltip(expanded ? "Hide the comment" : "Show the comment");
+                }
+                DrawGlyphAtOn(dl, expanded ? FontAwesomeIcon.ChevronUp : FontAwesomeIcon.ChevronDown,
+                    chevPos, chevron, chevHot ? new Vector4(1, 1, 1, 1) : FbSlate400, UiIconSmall);
+                if (fold && !expandedPresets.Remove(preset.Id))
+                    expandedPresets.Add(preset.Id);
             }
 
-            // ── Slot strip ────────────────────────────────────────
+            float y = top + headerH;
+
+            // ── Tags, on their own row ────────────────────────────
+            if (chips.Count > 0)
+            {
+                float chipX = origin.X + pad;
+                float chipY = y + gap;
+
+                foreach (var (text, colour) in chips)
+                {
+                    float w = ChipWidth(text);
+                    if (chipX > origin.X + pad && chipX + w > origin.X + pad + inner)
+                    {
+                        chipX = origin.X + pad;
+                        chipY += ChipRowHeight + ChipRowGap;
+                    }
+
+                    DrawChip(new Vector2(chipX, chipY), text, colour);
+                    chipX += w + ChipGap;
+                }
+                y += chipsH;
+            }
+
+            // ── Seats: rounded tiles, the seat image inside ───────
             {
                 float sx = origin.X + pad;
-                float sy = top + headerH + gap;
+                float sy = y + gap;
+                float innerPad = (slot - slotInner) * 0.5f;
+
+                // Bare icons: no tile, no border behind a job or a seat, anywhere.
 
                 if (preset.UsesAutoAdjust)
                 {
@@ -950,23 +1040,37 @@ namespace PfPresets
                     int n = Math.Min(autoSlots.Count, 8);
                     for (int i = 0; i < n; i++)
                     {
-                        DrawAutoSlotMiniIcon(autoSlots[i].Role, autoSlots[i].JobId, new Vector2(sx, sy), slot);
+                        DrawAutoSlotMiniIcon(autoSlots[i].Role, autoSlots[i].JobId, new Vector2(sx + innerPad, sy + innerPad), slotInner);
                         sx += slot + slotGap;
                     }
                 }
                 else
                 {
+                    // SEAT ONE IS YOU. Whoever posts the listing sits in the first seat, on the job
+                    // they are on, whatever the preset says about it - so it is drawn as your current
+                    // job, the way the game's own recruitment window shows it.
+                    uint myJob = pfAutomation.GetLocalJobAndLevel().JobId;
                     int n = Math.Min(preset.Slots.Count, 8);
                     for (int i = 0; i < n; i++)
                     {
-                        DrawSlotMiniIcon(preset.Slots[i], new Vector2(sx, sy), slot);
+                        var at = new Vector2(sx + innerPad, sy + innerPad);
+                        if (i == 0 && myJob > 0 && TryGetIconHandle(IconJobBase + myJob, out var mine))
+                            dl.AddImage(mine, at, at + new Vector2(slotInner));
+                        else
+                            DrawSlotMiniIcon(preset.Slots[i], at, slotInner);
                         sx += slot + slotGap;
                     }
                 }
+                y = sy + slot;
             }
 
-            // ── Actions ───────────────────────────────────────────
-            float actionsY = top + headerH + gap + slot + gap;
+            // ── A hairline, then the actions ──────────────────────
+            y += gap;
+            dl.AddRectFilled(new Vector2(origin.X + pad, y), new Vector2(origin.X + width - pad, y + 1f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
+            y += 1f + gap;
+
+            float actionsY = y;
             DrawPresetActions(dl, preset, origin.X + pad, actionsY, inner, actionBtn);
 
             // ── The comment, when it is asked for ─────────────────
@@ -976,22 +1080,18 @@ namespace PfPresets
                 var panelMin = new Vector2(origin.X + pad, panelY);
                 var panelMax = new Vector2(panelMin.X + inner, panelY + commentPanelH);
 
-                // A step LIGHTER than the card, not darker. Recessed was the instinct and it was
-                // wrong: this panel is the thing you just asked to see, and a surface that sinks
-                // away from the card holding it reads as disabled rather than as revealed.
+                // A step LIGHTER than the card: this is the thing you just asked to see.
                 dl.AddRectFilled(panelMin, panelMax,
-                    ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
+                    ImGui.ColorConvertFloat4ToU32(ColorFromHex("#2c2c2e") with { W = 0.7f }), Radius.Card);
 
                 using (UiLabelFont.Push())
                     dl.AddText(new Vector2(panelMin.X + CommentPanelPad, panelMin.Y + CommentPanelPad),
-                        ImGui.ColorConvertFloat4ToU32(Dim), "COMMENT");
+                        ImGui.ColorConvertFloat4ToU32(FbSlate400), "COMMENT");
 
                 float cy = panelMin.Y + CommentPanelPad + commentLabelH + 4f;
                 ImGui.SetCursorScreenPos(new Vector2(panelMin.X + CommentPanelPad, cy));
 
-                // Drawn line by line rather than as one wrapped block, because an auto-translate
-                // phrase's brackets have to be tinted separately from the words between them, and
-                // ImGui's own wrapping colours a whole call at once.
+                // Line by line, so an auto-translate phrase's brackets can be tinted apart.
                 using (CommentFont.Push())
                     DrawCommentLines(commentLines, Ink, inner - CommentPanelPad * 2f);
             }
@@ -1081,24 +1181,37 @@ namespace PfPresets
             var applyPos = new Vector2(left, y);
             var applySize = new Vector2(applyW, h);
 
-            // DISABLED IS AN OUTLINE, NOT A FILL. Filled with the card's own colour the button
-            // vanished, and "you cannot recruit right now" looked like a rendering fault.
-            Vector4 fill = !canRecruit ? new Vector4(0, 0, 0, 0) : compWarn ? AccentYellow : Accent;
-            Vector4 hover = !canRecruit ? new Vector4(0, 0, 0, 0)
-                : compWarn ? Lighten(AccentYellow, 0.12f) : AccentHover;
-            Vector4 label = !canRecruit ? Faint : OnAccent;
-
+            // The mockup's Apply: the accent, rounded-xl, a soft glow, the play mark and the words
+            // in white. Amber when the game is going to warn about the party's jobs; an outline when
+            // it cannot be pressed, because a fill the card's own colour looked like a fault.
             ImGui.SetCursorScreenPos(applyPos);
-            ImGui.PushStyleColor(ImGuiCol.Button, fill);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, hover);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, hover);
-            bool applyClicked = ImGui.Button($"##apply_{preset.Id}", applySize);
-            ImGui.PopStyleColor(3);
+            bool applyClicked = ImGui.InvisibleButton($"##apply_{preset.Id}", applySize);
+            bool applyHot = ImGui.IsItemHovered();
+            bool applyHeld = ImGui.IsItemActive() && canRecruit;
 
-            if (!canRecruit)
-                dl.AddRect(applyPos, applyPos + applySize,
-                    ImGui.ColorConvertFloat4ToU32(BorderControl),
-                    Radius.Control, ImDrawFlags.None, 1f);
+            Vector2 aMin = applyPos, aMax = applyPos + applySize;
+            if (applyHeld)
+            {
+                aMin += applySize * 0.01f;
+                aMax -= applySize * 0.01f;
+            }
+
+            if (canRecruit)
+            {
+                Vector4 fill = compWarn ? AccentYellow : Accent;
+                if (applyHot)
+                    fill = compWarn ? Lighten(AccentYellow, 0.12f) : AccentHover;
+                for (int i = 1; i <= 3; i++)
+                    dl.AddRectFilled(aMin + new Vector2(-i, 3f - i * 0.5f), aMax + new Vector2(i, 2f + i),
+                        ImGui.ColorConvertFloat4ToU32(fill with { W = 0.07f }), Radius.Control + i);
+                dl.AddRectFilled(aMin, aMax, ImGui.ColorConvertFloat4ToU32(fill), Radius.Control);
+                if (applyHot)
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            }
+            else
+            {
+                dl.AddRect(aMin, aMax, ImGui.ColorConvertFloat4ToU32(BorderControl), Radius.Control, ImDrawFlags.None, 1f);
+            }
 
             if (applyClicked && canRecruit)
             {
@@ -1110,7 +1223,7 @@ namespace PfPresets
 #endif
             }
 
-            if (ImGui.IsItemHovered())
+            if (applyHot)
             {
                 if (!canRecruit)
                     PaddedTooltip($"Cannot recruit: {reason}");
@@ -1118,54 +1231,66 @@ namespace PfPresets
                     PaddedTooltip("A non-battle job (crafter/gatherer) is in your party.\nThe game will warn about party composition - the listing still\nposts, and PF Analysis confirms the warning for you.");
             }
 
-            DrawIconLabelCentered(FontAwesomeIcon.Play, "Apply preset", applyPos, applySize, label,
+            Vector4 label = !canRecruit ? Faint : compWarn ? OnAccent : new Vector4(1, 1, 1, 1);
+            DrawIconLabelCentered(FontAwesomeIcon.Play, "Apply preset", aMin, aMax - aMin, label,
                 1f, UiIconSmall);
 
             float sx = left + applyW + smallGap;
 
-            ImGui.SetCursorScreenPos(new Vector2(sx, y));
-            if (DrawRowActionButton($"##edit_{preset.Id}", new Vector2(small, small)))
+            // Edit, share, more: square, grey, bordered - the mockup's p-2 buttons.
+            bool SquareButton(string id, FontAwesomeIcon icon, string tip)
+            {
+                var min = new Vector2(sx, y);
+                ImGui.SetCursorScreenPos(min);
+                bool clicked = ImGui.InvisibleButton(id, new Vector2(small, small));
+                bool hot = ImGui.IsItemHovered();
+                bool held = ImGui.IsItemActive();
+                var bMin = held ? min + new Vector2(small * 0.025f) : min;
+                var bMax = held ? min + new Vector2(small * 0.975f) : min + new Vector2(small);
+                dl.AddRectFilled(bMin, bMax, ImGui.ColorConvertFloat4ToU32(hot ? FbNeutral700 : FbNeutral800), Radius.Control);
+                dl.AddRect(bMin, bMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), Radius.Control, ImDrawFlags.None, 1f);
+                DrawGlyphAtOn(dl, icon, bMin, bMax.X - bMin.X, hot ? new Vector4(1, 1, 1, 1) : PfSlate300, UiIconSmall);
+                if (hot)
+                {
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                    if (tip.Length > 0)
+                        PaddedTooltip(tip);
+                }
+                sx += small + smallGap;
+                return clicked;
+            }
+
+            if (SquareButton($"##edit_{preset.Id}", FontAwesomeIcon.Pen, "Edit"))
                 OpenEditor(preset, false);
-            DrawGlyphCentered(FontAwesomeIcon.Pen, new Vector2(sx, y),
-                new Vector2(sx + small, y + small), Dim, UiIconRow);
-            if (ImGui.IsItemHovered()) PaddedTooltip("Edit");
-            sx += small + smallGap;
-
-            ImGui.SetCursorScreenPos(new Vector2(sx, y));
-            if (DrawRowActionButton($"##share_{preset.Id}", new Vector2(small, small)))
+            if (SquareButton($"##share_{preset.Id}", FontAwesomeIcon.ShareAlt, "Share"))
                 OpenShareExport(preset);
-            DrawGlyphCentered(FontAwesomeIcon.Share, new Vector2(sx, y),
-                new Vector2(sx + small, y + small), Dim, UiIconRow);
-            if (ImGui.IsItemHovered()) PaddedTooltip("Share");
-            sx += small + smallGap;
-
-            ImGui.SetCursorScreenPos(new Vector2(sx, y));
-            if (DrawRowActionButton($"##kebab_{preset.Id}", new Vector2(small, small)))
+            if (SquareButton($"##kebab_{preset.Id}", FontAwesomeIcon.EllipsisH, string.Empty))
                 ImGui.OpenPopup($"presetmenu_{preset.Id}");
-            DrawGlyphCentered(FontAwesomeIcon.EllipsisV, new Vector2(sx, y),
-                new Vector2(sx + small, y + small), Dim, UiIconRow);
 
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6, 6));
+            // The iOS menu: icons, roomy rows, a rounded card, Delete in red.
+            PushIosMenuStyle();
             if (ImGui.BeginPopup($"presetmenu_{preset.Id}"))
             {
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 0));
+
                 // Safe to mutate config.Presets here: DrawPresetList iterates a snapshot.
-                if (ImGui.Selectable("  Duplicate")) config.DuplicatePreset(preset.Id);
-                ImGui.Separator();
-                if (ImGui.Selectable("  Move up")) config.MovePresetUp(preset.Id);
-                if (ImGui.Selectable("  Move down")) config.MovePresetDown(preset.Id);
-                ImGui.Separator();
-                ImGui.PushStyleColor(ImGuiCol.Text, KoFi);
-                if (ImGui.Selectable("  Delete"))
+                if (IosMenuItem("Duplicate", FontAwesomeIcon.Copy)) config.DuplicatePreset(preset.Id);
+                IosMenuSeparator();
+                if (IosMenuItem("Move up", FontAwesomeIcon.ArrowUp)) config.MovePresetUp(preset.Id);
+                if (IosMenuItem("Move down", FontAwesomeIcon.ArrowDown)) config.MovePresetDown(preset.Id);
+                IosMenuSeparator();
+                if (IosMenuItem("Delete", FontAwesomeIcon.TrashAlt, destructive: true))
                 {
                     var doomed = preset;
                     AskConfirm("Delete preset", $"Delete \"{doomed.Name}\"?", "Delete",
                         () => config.DeletePreset(doomed.Id),
                         detail: "This cannot be undone.");
                 }
-                ImGui.PopStyleColor();
+
+                ImGui.PopStyleVar();
                 ImGui.EndPopup();
             }
-            ImGui.PopStyleVar();
+            PopIosMenuStyle();
         }
 
         /// <summary>
@@ -1234,7 +1359,7 @@ namespace PfPresets
         /// </summary>
         private static Vector4 ObjectiveColour(int objectiveId) => objectiveId switch
         {
-            1 => ColorFromHex("#4a9be0"),   // Duty Completion
+            1 => ColorFromHex("#0a84ff"),   // Duty Completion
             2 => Positive,                  // Practice
             3 => AccentYellow,              // Loot
             _ => Dim,                       // None - a preset with no stated objective
@@ -1297,8 +1422,13 @@ namespace PfPresets
             if (filled)
                 dl.AddRectFilled(topLeft, max, ImGui.ColorConvertFloat4ToU32(color), Radius.Chip);
             else
-                dl.AddRect(topLeft, max, ImGui.ColorConvertFloat4ToU32(color with { W = 0.55f }),
+            {
+                // The dashboard mockup's tag: color/15 fill, color/30 border, the text in the colour.
+                dl.AddRectFilled(topLeft, max, ImGui.ColorConvertFloat4ToU32(color with { W = color.W * 0.15f }),
+                    Radius.Chip);
+                dl.AddRect(topLeft, max, ImGui.ColorConvertFloat4ToU32(color with { W = color.W * 0.3f }),
                     Radius.Chip, ImDrawFlags.None, 1f);
+            }
 
             using (UiLabelFont.Push())
                 dl.AddText(new Vector2(topLeft.X + ChipPadX, topLeft.Y + (ChipHeight - ts.Y) * 0.5f),
@@ -1464,7 +1594,8 @@ namespace PfPresets
 
             if (dutyIcon != 0 && TryGetIconHandle(dutyIcon, out var dutyHandle))
             {
-                dl.AddImage(dutyHandle, markMin, markMax);
+                dl.AddImageRounded(dutyHandle, markMin, markMax, Vector2.Zero, Vector2.One,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), Radius.Small);
             }
             else
             {
@@ -1503,8 +1634,10 @@ namespace PfPresets
             }
 
             float refreshX = caretX - 8f - refreshW;
+            // The turn-arrow takes 16px more; the text room comes in to match.
+            float refreshLeft = refreshX - 16f;
             float textRoom = ownListing
-                ? MathF.Max(60f, refreshX - 12f - textX)
+                ? MathF.Max(60f, refreshLeft - 12f - textX)
                 : MathF.Max(60f, winX + width - 12f - textX);
 
             string title = snap.IsRecruiting && !string.IsNullOrEmpty(snap.DutyName)
@@ -1522,11 +1655,26 @@ namespace PfPresets
 
             // Refresh now: the listing's own action, and the only reason to look at this strip in
             // a hurry. Only reached when the listing is ours, so it is never disabled.
-            ImGui.SetCursorScreenPos(new Vector2(refreshX, midY - ButtonHeight * 0.5f));
-            if (DrawPrimaryButton($"{refreshLabel}##FooterRefreshNow", new Vector2(refreshW, ButtonHeight)))
+            // The mockup's Refresh now: the accent, rounded-xl, a soft glow, the turn-arrow and the
+            // words in white.
+            var rMin = new Vector2(refreshX, midY - ButtonHeight * 0.5f);
+            var rSize = new Vector2(refreshW + 16f, ButtonHeight);
+            rMin.X -= 16f;
+            ImGui.SetCursorScreenPos(rMin);
+            bool refreshClicked = ImGui.InvisibleButton("##FooterRefreshNow", rSize);
+            bool refreshHot = ImGui.IsItemHovered();
+            for (int i = 1; i <= 3; i++)
+                dl.AddRectFilled(rMin + new Vector2(-i, 3f - i * 0.5f), rMin + rSize + new Vector2(i, 2f + i),
+                    ImGui.ColorConvertFloat4ToU32(Accent with { W = 0.07f }), Radius.Control + i);
+            dl.AddRectFilled(rMin, rMin + rSize, ImGui.ColorConvertFloat4ToU32(refreshHot ? AccentHover : Accent), Radius.Control);
+            DrawIconLabelCentered(FontAwesomeIcon.SyncAlt, refreshLabel, rMin, rSize, new Vector4(1, 1, 1, 1), 1f, UiIconSmall);
+            if (refreshClicked)
                 pfAutomation.ExecuteRefreshTask();
-            if (ImGui.IsItemHovered())
-                PaddedTooltip("Re-post your listing now, and restart the timer.");
+            if (refreshHot)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                PaddedTooltip("Re-post your listing now. The next refresh is timed from the fresh listing.");
+            }
 
             // The caret, which is the whole reason the settings can be out of the way.
             DrawFooterCaret(caretX, midY - ButtonHeight * 0.5f, caretW);
@@ -1598,14 +1746,22 @@ namespace PfPresets
             ImGui.SetCursorScreenPos(new Vector2(x, y));
             Vector2 pos = ImGui.GetCursorScreenPos();
 
-            if (DrawSecondaryButton("##FooterExpand", new Vector2(size, ButtonHeight)))
+            // The mockup's square: neutral-800, a faint border, rounded-xl.
+            bool clicked = ImGui.InvisibleButton("##FooterExpand", new Vector2(size, ButtonHeight));
+            bool hot = ImGui.IsItemHovered();
+            var dl = ImGui.GetWindowDrawList();
+            dl.AddRectFilled(pos, pos + new Vector2(size, ButtonHeight), ImGui.ColorConvertFloat4ToU32(hot ? FbNeutral700 : FbNeutral800), Radius.Control);
+            dl.AddRect(pos, pos + new Vector2(size, ButtonHeight), ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), Radius.Control, ImDrawFlags.None, 1f);
+            if (clicked)
             {
                 config.FooterExpanded = !config.FooterExpanded;
                 config.Save();
             }
+            if (hot)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
             DrawGlyphCentered(config.FooterExpanded ? FontAwesomeIcon.ChevronDown : FontAwesomeIcon.ChevronUp,
-                pos, new Vector2(pos.X + size, pos.Y + ButtonHeight), Ink);
+                pos, new Vector2(pos.X + size, pos.Y + ButtonHeight), hot ? new Vector4(1, 1, 1, 1) : PfSlate300);
 
             if (ImGui.IsItemHovered())
                 PaddedTooltip(config.FooterExpanded ? "Hide recruitment settings" : "Show recruitment settings");
@@ -1679,6 +1835,29 @@ namespace PfPresets
         {
             if (pfAutomation.IsRefreshTimerRunning)
             {
+                // What the refresher is doing when it is not simply waiting - reading the
+                // listing's clock or re-posting it takes a few seconds, and a countdown frozen at
+                // 00:00 through it would look stuck.
+                switch (pfAutomation.CurrentRefreshPhase)
+                {
+                    case PfAutomation.RefreshPhase.Idle:
+                    case PfAutomation.RefreshPhase.Reading:
+                        return ("checking", Dim);
+                    case PfAutomation.RefreshPhase.Refreshing:
+                        return ("refreshing", Accent);
+                    case PfAutomation.RefreshPhase.Verifying:
+                    {
+                        // The pause before the check is a real wait of its own, so it gets a real
+                        // countdown rather than a word.
+                        double v = pfAutomation.SecondsUntilVerify;
+                        return v > 0.5 ? ($"check {(int)Math.Ceiling(v)}s", Dim) : ("checking", Dim);
+                    }
+                    case PfAutomation.RefreshPhase.Due:
+                        // Due and not yet running: say what it is waiting on, not a fake clock.
+                        return (pfAutomation.RefreshHoldReason is { } why ? $"due · {why}" : "refreshing",
+                            AccentYellow);
+                }
+
                 double secs = pfAutomation.SecondsUntilNextRefresh;
                 return ($"{(int)(secs / 60):D2}:{(int)(secs % 60):D2}", Accent);
             }
@@ -1706,8 +1885,9 @@ namespace PfPresets
                     config.Save();
                 }
                 SameLineHelpDot("FooterAutoRefresher",
-                    "Re-posts your Party Finder listing on a timer, so it stays near the top of the "
-                    + "list. The countdown starts once your listing is up.");
+                    "Re-posts your Party Finder listing when its time left drops to the number below, "
+                    + "so it never expires. Each refresh is checked against the listing's own clock "
+                    + "and tried again if it didn't take.");
 
                 y += 40f;
 
@@ -1719,24 +1899,27 @@ namespace PfPresets
                     float lblY = y + (chipH - ImGui.GetTextLineHeight()) * 0.5f;
                     uint labelCol = ImGui.ColorConvertFloat4ToU32(Dim);
 
-                    const string everyLabel = "Refresh every";
+                    const string everyLabel = "Refresh at";
                     dl.AddText(new Vector2(winX + 12f, lblY), labelCol, everyLabel);
                     float intervalChipX = winX + 12f + ImGui.CalcTextSize(everyLabel).X + 8f;
 
-                    int interval = Math.Clamp(config.AutoRefresherIntervalMinutes,
-                        PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes);
+                    int atLeft = pfAutomation.RefreshAtMinutesLeft;
                     if (DrawEditableNumberChip(
-                            "interval", ref interval, "min", null,
-                            PfAutomation.MinRefreshMinutes, PfAutomation.MaxRefreshMinutes,
+                            "interval", ref atLeft, "min", null,
+                            PfAutomation.MinRefreshAtMinutesLeft, PfAutomation.MaxRefreshAtMinutesLeft,
                             new Vector2(intervalChipX, y), new Vector2(chipW, chipH),
-                            $"How often to re-post your listing.\nDouble-click to change ({PfAutomation.MinRefreshMinutes}-{PfAutomation.MaxRefreshMinutes} minutes).\nA listing expires after 60 minutes."))
+                            $"Re-post your listing once this many minutes or fewer are left on it.\nA listing lasts 60 minutes, so 30 refreshes it every half hour.\nDouble-click to change ({PfAutomation.MinRefreshAtMinutesLeft}-{PfAutomation.MaxRefreshAtMinutesLeft} minutes)."))
                     {
-                        config.AutoRefresherIntervalMinutes = interval;
+                        config.AutoRefreshAtMinutesLeft = atLeft;
                         config.Save();
                     }
 
+                    const string leftLabel = "left";
+                    float leftLabelX = intervalChipX + chipW + 6f;
+                    dl.AddText(new Vector2(leftLabelX, lblY), labelCol, leftLabel);
+
                     const string stopLabel = "Stop after";
-                    float stopLabelX = intervalChipX + chipW + 14f;
+                    float stopLabelX = leftLabelX + ImGui.CalcTextSize(leftLabel).X + 14f;
                     dl.AddText(new Vector2(stopLabelX, lblY), labelCol, stopLabel);
                     float hoursChipX = stopLabelX + ImGui.CalcTextSize(stopLabel).X + 8f;
 

@@ -342,9 +342,15 @@ namespace PfPresets
                 if (character == null || character->ContentId != leaderId)
                     continue;
 
-                return player.OnlineStatus.RowId == OnlineStatusRecruiting
-                    ? LeaderRecruitState.Recruiting
-                    : LeaderRecruitState.NotRecruiting;
+                // Somebody else's statuses are not ours to read in full, only the one shown. A
+                // status that outranks Recruiting (AFK, Busy, In Duty...) hides it, so it says
+                // nothing either way; only one Recruiting outranks means it is really not set.
+                uint shown = player.OnlineStatus.RowId;
+                if (shown == OnlineStatusRecruiting)
+                    return LeaderRecruitState.Recruiting;
+                return OutrankedByRecruiting(shown)
+                    ? LeaderRecruitState.NotRecruiting
+                    : LeaderRecruitState.Unknown;
             }
 
             return LeaderRecruitState.Unknown;

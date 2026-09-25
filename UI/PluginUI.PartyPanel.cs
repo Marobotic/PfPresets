@@ -8,12 +8,8 @@ using Dalamud.Interface;
 namespace PfPresets
 {
     /// <summary>
-    /// The party member list: everyone currently in your party, with their community rating, and -
-    /// when you are the leader - the actions you can take about them.
-    ///
-    /// This is where ratings surface, rather than over Party Finder listings. A score attached to a
-    /// listing you have not joined is a screening tool for strangers; a score next to someone you
-    /// are actually playing with is context. The difference matters enough to have moved it.
+    /// The party member list: everyone currently in your party, with their progress on the fight,
+    /// and - when you are the leader - the actions you can take about them.
     ///
     /// Drawn with ordinary ImGui widgets in its own panel rather than folded into the status card
     /// above it, because that card is painted straight onto the draw list at absolute coordinates
@@ -40,6 +36,62 @@ namespace PfPresets
         /// from this before drawing, and the moment the two disagree it draws past its bottom
         /// edge and over whatever comes next.
         /// </summary>
+        /// <summary>
+        /// The people who have applied to your coordinated listing and hold (or are waiting for) a
+        /// seat, as party rows - so their progression can be read and fetched before they arrive,
+        /// the same as anybody already in. Empty unless you are hosting.
+        ///
+        /// NOT PARTY MEMBERS. They carry a made-up content id (high bit set, so it can never match a
+        /// real one) purely to key their row, and their rows never offer Kick.
+        /// </summary>
+        private List<PartyMemberInfo> ApplicantMembers()
+        {
+            var result = new List<PartyMemberInfo>();
+            var applicants = Coordination?.Host?.Last?.Applicants;
+            if (applicants == null || Worlds == null)
+                return result;
+
+            foreach (var a in applicants)
+            {
+                if (a.Status is not ("interested" or "joining"))
+                    continue;
+                uint world = Worlds.GetWorldId(a.World);
+                if (world == 0)
+                    continue;
+                ulong key = 0x8000000000000000UL | (ulong)(uint)StringComparer.OrdinalIgnoreCase.GetHashCode($"{a.Name}@{a.World}");
+                result.Add(new PartyMemberInfo(key, (uint)Math.Max(0, a.Job), a.Name, world, string.Empty, 0, false));
+            }
+
+            return result;
+        }
+
+        private static bool IsApplicantRow(PartyMemberInfo m) => (m.ContentId & 0x8000000000000000UL) != 0;
+
+        /// <summary>The roomier Dancing Mad layout: the duty is Dancing Mad (Ultimate) and its
+        /// mechanic approximation is on.</summary>
+        private bool DmuLayout(string? dutyName, uint dutyRowId)
+            => config.DmuProgressMechanicsEnabled && DmuMechanics.IsDancingMad(dutyRowId, dutyName);
+
+        /// <summary>A party row's height - taller in the Dancing Mad layout, where the name and the
+        /// progress each take two lines.</summary>
+        private float PartyRowHeight(string? dutyName, uint dutyRowId)
+            => HoverRowHeight() + (DmuLayout(dutyName, dutyRowId) ? 4f : 0f);
+
+        /// <summary>
+        /// While a listing is up - yours, or the one you joined - the seats nobody is in: each open
+        /// seat's accepted jobs, and how many closed seats are left once the ones held for
+        /// applicants are counted. Drawn so the list always shows every seat the listing has.
+        /// </summary>
+        private (List<ulong> Vacant, int Omitted)? EmptySeatRows()
+        {
+            var seats = pfAutomation.ListingSeats(pfAutomation.GetSnapshot(ImGui.GetFrameCount()));
+            if (seats == null)
+                return null;
+
+            int held = ApplicantMembers().Count;
+            return (seats.Value.Vacant, Math.Max(0, seats.Value.Closed - held));
+        }
+
         private int PartyMemberCount(string? dutyName = null, uint dutyRowId = 0)
         {
             try
@@ -72,9 +124,16 @@ namespace PfPresets
                 {
                     if (pfAutomation.GetLocalPartyMember() != null)
                         rows++;
+                    rows += ApplicantMembers().Count;
+                    if (EmptySeatRows() is { } empty)
+                        rows += empty.Vacant.Count + empty.Omitted;
                     if (ShowsProgressRow() && DutyHasProgress(dutyRowId) && !cardOwnsProgressAction)
                         rows++;
                 }
+
+                // The Dancing Mad toggle, under the list.
+                if (rows > 0 && DmuMechanics.IsDancingMad(dutyRowId, dutyName) && ShowsProgressRow())
+                    rows++;
 
                 return rows;
             }
@@ -210,6 +269,10 @@ namespace PfPresets
 
                 if (self != null)
                     players.Insert(0, self.Value);
+
+                // Then whoever has applied to your coordinated listing, after the party - read and
+                // fetched like everybody else, so you know where they are before they arrive.
+                players.AddRange(ApplicantMembers());
             }
 
             // One batch request covers the whole party.
@@ -235,7 +298,19 @@ namespace PfPresets
                 // much width the action column reserves, and that has to be the same on every row
                 // or the columns left of it stop lining up. Whether the buttons are actually
                 // drawn is decided per row.
-                DrawPartyMemberRow(member, allowKick, width, originX, isSelf, dutyName, dutyRowId);
+                DrawPartyMemberRow(member, allowKick, width, originX, isSelf, dutyName, dutyRowId,
+                    applicant: IsApplicantRow(member));
+            }
+
+            // Every seat, all the time, while the listing is up: the ones nobody is in, then the
+            // closed ones.
+            if (players.Count > 0 && EmptySeatRows() is { } empty)
+            {
+                int n = 0;
+                foreach (ulong mask in empty.Vacant)
+                    DrawEmptySeatRow(mask, $"vacant{n++}", width, originX, dutyName, dutyRowId);
+                for (int i = 0; i < empty.Omitted; i++)
+                    DrawEmptySeatRow(0, $"omitted{i}", width, originX, dutyName, dutyRowId);
             }
 
             // Jobs observed above are written down at most every twenty seconds, not per frame.
@@ -250,6 +325,10 @@ namespace PfPresets
             if (players.Count > 0 && ShowsProgressRow() && DutyHasProgress(dutyRowId)
                 && !cardOwnsProgressAction && !panelOwnsProgressAction)
                 DrawProgressRow(players, dutyName, width, originX);
+
+            // Dancing Mad only: the mechanic approximation's switch, under the list.
+            if (players.Count > 0 && DmuMechanics.IsDancingMad(dutyRowId, dutyName) && ShowsProgressRow())
+                DrawDmuToggleRow(width, originX, dutyName, dutyRowId);
 
             return ImGui.GetCursorScreenPos().Y - start;
         }
@@ -369,7 +448,7 @@ namespace PfPresets
         /// Works out the progress column for one character, without drawing it.
         ///
         /// Separated from the drawing because the row has to know how wide this is *before* it
-        /// fits the name: the cell sits left of the rating chip, so a name measured against the
+        /// fits the name: the cell sits left of the row's menu, so a name measured against the
         /// chip alone simply runs underneath it.
         ///
         /// Only ever states what the data supports. A logged clear is a fact and is named as one;
@@ -380,9 +459,17 @@ namespace PfPresets
         /// (roulette, frontline, casual content) nothing is shown at all, so stale data from a
         /// previous session can never bleed through.
         /// </summary>
+        /// <summary>Progression fetched longer ago than this is shown as old.</summary>
+        private static readonly TimeSpan ProgressStaleAfter = TimeSpan.FromHours(24);
+
         private ProgressCell? ProgressCellFor(CharacterIdentity who, string? dutyName, uint dutyRowId)
         {
             if (Ratings == null || !ShowsProgressRow() || !DutyHasProgress(dutyRowId))
+                return null;
+
+            // Somebody who has opted out has asked not to be looked up, and the server will not
+            // answer about them - a Fetch beside "Opted out" offered a lookup that cannot happen.
+            if (Ratings.Get(who) is { } rating && (rating.OptedOut || rating.Hidden))
                 return null;
 
             // NAMED ONCE AND USED FOR EVERY QUESTION BELOW. Progress is stored per fight as well
@@ -414,10 +501,24 @@ namespace PfPresets
                                 + "exist for kills somebody uploaded them with."));
 
                 case "progging":
+                {
+                    // OLD PROGRESS IS SAID TO BE OLD. Somebody progging moves a phase in an evening,
+                    // so a reading from yesterday is a claim about who they were, not who they are
+                    // - greyed, with the time it is from and how to get a current one.
+                    var fetched = p.FetchedAt;
+                    if (DateTime.UtcNow - fetched > ProgressStaleAfter)
+                    {
+                        return new ProgressCell(p.ProgLabel, TextMuted,
+                            $"This is their progress at {fetched.ToLocalTime():MMM d, HH:mm}.\n"
+                            + "Please update their progress to see current progress\n"
+                            + "(Update progress).");
+                    }
+
                     return new ProgressCell(p.ProgLabel, AccentYellow,
                         "Furthest logged pull: " + p.ProgLabel
                         + "\n\nPercentage is the boss's remaining HP in that phase,\nso lower is further in."
                         + (p.LastSeenMs > 0 ? $"\nLast logged pull {AgoFromUnixMs(p.LastSeenMs)}." : string.Empty));
+                }
 
                 case "hidden":
                     // A settled answer, and the player's own decision. Asking again returns the
@@ -543,7 +644,18 @@ namespace PfPresets
         private static float ProgressCellWidth(ProgressCell cell)
             => cell.IsButton
                 ? Math.Max(46f, ImGui.CalcTextSize(cell.Text).X + 16f)
-                : ImGui.CalcTextSize(cell.Text).X;
+                : ImGui.CalcTextSize(cell.Text).X + ProgressPillPad * 2f;
+
+        /// <summary>Room either side of the text inside a progress pill.</summary>
+        private const float ProgressPillPad = 8f;
+
+        /// <summary>The dashboard mockup's progress pill: the colour at 15% behind, 30% round it.</summary>
+        private static void DrawProgressPillBg(ImDrawListPtr dl, Vector2 min, Vector2 max, Vector4 colour)
+        {
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(colour with { W = colour.W * 0.15f }), Radius.Control);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(colour with { W = colour.W * 0.3f }), Radius.Control,
+                ImDrawFlags.None, 1f);
+        }
 
         /// <summary>Draws the cell at a left edge the row has already worked out.</summary>
         private void DrawProgressCell(ProgressCell cell, CharacterIdentity who, string? dutyName,
@@ -553,7 +665,12 @@ namespace PfPresets
 
             if (!cell.IsButton)
             {
-                ImGui.SetCursorScreenPos(new Vector2(left, rowY));
+                // In a pill, as the dashboard mockup shows progress.
+                float textY = rowY + ImGui.GetStyle().FramePadding.Y;
+                float lh = ImGui.GetTextLineHeight();
+                DrawProgressPillBg(ImGui.GetWindowDrawList(), new Vector2(left, textY - 3f),
+                    new Vector2(left + width, textY + lh + 3f), cell.Colour);
+                ImGui.SetCursorScreenPos(new Vector2(left + ProgressPillPad, rowY));
                 ImGui.AlignTextToFramePadding();
                 ImGui.TextColored(cell.Colour, cell.Text);
 
@@ -567,9 +684,10 @@ namespace PfPresets
             // beside it.
             ImGui.SetCursorScreenPos(new Vector2(left, rowY + 2f));
 
-            ImGui.PushStyleColor(ImGuiCol.Button, BgCardExpanded);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, BorderHover);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Chip);
+            // The mockup's Fetch: neutral-800, a faint border, rounded-xl.
+            ImGui.PushStyleColor(ImGuiCol.Button, FbNeutral800);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, FbNeutral700);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Control);
 
             // THE LABEL IS DRAWN BY HAND, and this is the third attempt at centring it.
             //
@@ -589,6 +707,9 @@ namespace PfPresets
 
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(2);
+
+            ImGui.GetWindowDrawList().AddRect(at, at + new Vector2(width, chipH),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), Radius.Control, ImDrawFlags.None, 1f);
 
             DrawTextCentredOnInk(cell.Text,
                 new Vector2(at.X + width * 0.5f, at.Y + chipH * 0.5f),
@@ -1201,7 +1322,7 @@ namespace PfPresets
                 PaddedTooltip(
                     (shown != label ? label + "\n\n" : string.Empty)
                     + $"{count} of your party {(count == 1 ? "member is" : "members are")} a Square Enix NPC.\n\n"
-                    + "They aren't listed individually because there is nothing to rate,\n"
+                    + "They aren't listed individually because there is nothing to look up,\n"
                     + "report or remember about them.");
             }
 
@@ -1237,21 +1358,30 @@ namespace PfPresets
         /// <summary>One party member. Shares the list-row primitive with Recent players, so the
         /// two lists match in height, padding and hover behaviour by construction.</summary>
         private void DrawPartyMemberRow(PartyMemberInfo member, bool allowKick, float width,
-            float? originX, bool isSelf = false, string? dutyName = null, uint dutyRowId = 0)
+            float? originX, bool isSelf = false, string? dutyName = null, uint dutyRowId = 0,
+            bool applicant = false)
         {
             var identity = ToIdentity(member);
-            bool canKick = allowKick && pfAutomation.IsPartyLeader();
+            bool canKick = allowKick && pfAutomation.IsPartyLeader() && !applicant;
+            bool dmu = DmuLayout(dutyName, dutyRowId);
 
             // The game is telling us what they are on, right now. That beats anything Tomestone can
             // say, so it is written down here and the network lookup stops happening for a week -
             // which is most of the point of caching jobs at all: the people you actually play with
             // never need fetching.
-            if (identity != null && member.JobId != 0)
+            if (identity != null && member.JobId != 0 && !applicant)
                 Ratings?.ObserveJob(identity, member.JobId);
 
             DrawHoverRow($"party{member.ContentId}{member.Name}",
-                rightEdge => DrawPartyMemberBody(member, identity, canKick, rightEdge, isSelf,
-                    dutyName, dutyRowId),
+                rightEdge =>
+                {
+                    if (dmu)
+                        DrawDmuMemberBody(member, identity, rightEdge, isSelf, dutyName, dutyRowId, applicant);
+                    else
+                        DrawPartyMemberBody(member, identity, canKick, rightEdge, isSelf,
+                            dutyName, dutyRowId, applicant);
+                },
+                height: PartyRowHeight(dutyName, dutyRowId),
                 width: width, originX: originX,
 
                 // Same menu as the recent players list, plus the two items that only make sense
@@ -1265,11 +1395,10 @@ namespace PfPresets
                     : () => DrawPlayerMenuItems(identity, dutyName, dutyRowId,
                         kick: isSelf || !canKick ? null : member),
 
-                // A box each. The party list is the one place in the plugin where every row is a
-                // person rather than a fact about one, and a column of names on a flat card read as
-                // a paragraph - Raised sits one step above the card under it, so each of them is
-                // an object you could point at.
-                restColor: Raised);
+                // A box each - the dashboard mockup's roster rows: #2C2C2E at 50%, your own a
+                // little stronger, rounded-2xl, a faint border.
+                restColor: ColorFromHex("#2c2c2e") with { W = isSelf ? 0.7f : 0.5f },
+                borderColor: new Vector4(1, 1, 1, 0.05f), rounding: Radius.Card);
         }
 
         /// <summary>Room reserved at the end of every row for the menu button. Constant whether or
@@ -1278,7 +1407,7 @@ namespace PfPresets
 
         private void DrawPartyMemberBody(PartyMemberInfo member, CharacterIdentity? identity,
             bool isLeader, float rightEdge, bool isSelf = false, string? dutyName = null,
-            uint dutyRowId = 0)
+            uint dutyRowId = 0, bool applicant = false)
         {
             float iconSize = ImGui.GetTextLineHeight() + 4f;
             const float btnH = 22f;
@@ -1288,11 +1417,12 @@ namespace PfPresets
             // the same distance from the border no matter how long a name is.
             //
             // Your own row reserves the same width as everyone else's even though it has no menu to
-            // draw. Collapsing it instead pushed your rating and prog point right, out of line with
+            // draw. Collapsing it instead pushed your prog point right, out of line with
             // the column they belong to - one row disagreeing with the rest is more distracting
             // than an empty space at the end of it.
             float blockLeft = rightEdge - PartyMenuWidth;
-            float chipLeft = blockLeft - gap - RatingChipWidth;
+            // No score column any more - ratings are retired - so progress sits beside the menu.
+            float chipLeft = blockLeft - gap;
 
             Vector2 start = ImGui.GetCursorScreenPos();
 
@@ -1313,9 +1443,8 @@ namespace PfPresets
             ImGui.SameLine(0, 7);
 
             // The progress column is measured before the name is fitted rather than drawn after
-            // it. It lands left of the rating chip either way, so a name fitted against the chip
-            // alone ran straight underneath it - which is what put "@Gilgamesh" through the
-            // middle of "P3 29.8%".
+            // it. A name fitted against the row's edge alone ran straight underneath it - which is
+            // what put "@Gilgamesh" through the middle of "P3 29.8%".
             ProgressCell? cell = identity == null
                 ? null
                 : ProgressCellFor(identity, dutyName, dutyRowId);
@@ -1325,22 +1454,18 @@ namespace PfPresets
 
             string world = Worlds?.GetWorldName(member.HomeWorldId) ?? string.Empty;
             string shownName = DisplayName(member.Name);
-            string suffix = isSelf ? "  (you)" : string.Empty;
+            string suffix = isSelf ? "  (you)" : applicant ? "  · applied" : string.Empty;
             string label = (string.IsNullOrEmpty(world) ? shownName : $"{shownName}  @{world}") + suffix;
 
             ImGui.AlignTextToFramePadding();
             string shown = FitPlayerLabel(shownName, world, suffix,
                 cellLeft - (start.X + iconSize + 7f) - 8f);
-            ImGui.TextColored(member.IsOffline ? TextMuted : TextPrimary, shown);
+            ImGui.TextColored(member.IsOffline ? TextMuted : applicant ? Accent : TextPrimary, shown);
             if (shown != label && ImGui.IsItemHovered())
                 PaddedTooltip(label);
 
             if (identity != null)
             {
-                ImGui.SameLine();
-                ImGui.SetCursorScreenPos(new Vector2(chipLeft, start.Y));
-                DrawRatingChip(identity);
-
                 if (cell != null)
                     DrawProgressCell(cell.Value, identity, dutyName, cellLeft, start.Y, cellW);
             }
@@ -1353,6 +1478,193 @@ namespace PfPresets
             ImGui.SameLine();
             ImGui.SetCursorScreenPos(new Vector2(blockLeft, start.Y));
             DrawRowKebab(rightEdge, btnH, "Report, kick");
+        }
+
+        /// <summary>A seat nobody is in: just its role icon (its jobs on hovering the icon), or,
+        /// for a closed seat, the omit mark and "Omitted".</summary>
+        private void DrawEmptySeatRow(ulong gameMask, string id, float width, float? originX,
+            string? dutyName, uint dutyRowId)
+        {
+            float rowH = PartyRowHeight(dutyName, dutyRowId);
+            bool dmu = DmuLayout(dutyName, dutyRowId);
+            DrawHoverRow($"seat{id}", _ =>
+            {
+                float icon = ImGui.GetTextLineHeight() + 4f;
+                Vector2 start = ImGui.GetCursorScreenPos();
+                float mid = start.Y + 11f;
+                var iconPos = new Vector2(start.X, mid - icon * 0.5f);
+
+                var jobs = new List<uint>();
+                for (int bit = 0; bit < 64; bit++)
+                {
+                    if ((gameMask & (1UL << bit)) != 0 && JobMasks.GetJobIdFromGameBit(bit) is var job && job != 0)
+                        jobs.Add(job);
+                }
+
+                if (gameMask == 0)
+                {
+                    if (!DrawPfTile(PfSlotTile.Omit, iconPos, icon))
+                        DrawGlyphAt(OmitGlyph, iconPos, icon, TextMuted);
+                }
+                else
+                    DrawSlotMiniIcon(SeatAsSlot(jobs), iconPos, icon);
+
+                // The tooltip lives on the icon itself; an open seat has no label, only its icon.
+                if (ImGui.IsMouseHoveringRect(iconPos, iconPos + new Vector2(icon, icon)))
+                    PaddedTooltip(gameMask == 0 ? "A seat this listing is not recruiting for." : PfJobList(jobs));
+
+                if (gameMask == 0)
+                {
+                    ImGui.SetCursorScreenPos(new Vector2(start.X + icon + 8f, mid - ImGui.GetTextLineHeight() * 0.5f));
+                    ImGui.TextColored(new Vector4(1, 1, 1, 1), "Omitted");
+                }
+                else
+                {
+                    // An open seat says it is waiting - in italics, with a soft light sweeping
+                    // through the words, the way a phone says something is still loading.
+                    using (UiBodyFont.Push())
+                        DrawShimmerText(ImGui.GetWindowDrawList(),
+                            new Vector2(start.X + icon + 8f, mid - ImGui.GetTextLineHeight() * 0.5f),
+                            "Waiting for slot to fill...", FbSlate500, PfSlate300, italic: true);
+                }
+            }, width: width, originX: originX, height: rowH,
+                // The dashboard mockup's seats: an open one dashed and nearly empty, an omitted one
+                // quieter still with a solid hairline.
+                restColor: ColorFromHex("#1c1c1e") with { W = gameMask == 0 ? 0.3f : 0.4f },
+                borderColor: new Vector4(1, 1, 1, gameMask == 0 ? 0.05f : 0.1f),
+                dashedBorder: gameMask != 0, rounding: Radius.Card);
+        }
+
+        /// <summary>
+        /// The Dancing Mad row, at the ordinary row's size and fonts: the job, the name with the
+        /// world under it in the smaller face, and on the right one line - "P4 58% - Grand Cross 3
+        /// - Kefka Says" - fitted to the room there is, so the list never grows or scrolls. No
+        /// menu button, for that room; right-click still opens the menu.
+        /// </summary>
+        private void DrawDmuMemberBody(PartyMemberInfo member, CharacterIdentity? identity, float rightEdge,
+            bool isSelf, string? dutyName, uint dutyRowId, bool applicant)
+        {
+            float icon = ImGui.GetTextLineHeight() + 4f;
+            Vector2 start = ImGui.GetCursorScreenPos();
+            float mid = start.Y + 11f;
+
+            uint jobId = member.JobId;
+            bool rememberedJob = false;
+            if (jobId == 0 && identity != null)
+            {
+                jobId = Players?.JobFor(identity) ?? 0;
+                rememberedJob = jobId != 0;
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(start.X, mid - icon * 0.5f));
+            DrawJobIconInline(jobId, icon, member.IsOffline, rememberedJob);
+
+            ProgressCell? cell = identity == null ? null : ProgressCellFor(identity, dutyName, dutyRowId);
+            var progress = identity == null ? null : Ratings?.ProgressFor(dutyName ?? string.Empty, identity);
+            (string Boss, string Mechanic, string Detail)? mech = progress?.Status == "progging" && progress.Phase > 0
+                ? DmuMechanics.Lookup(progress.Phase, progress.Percent)
+                : null;
+
+            // The progress line, and how much of the row it gets: at most 60%, so the name keeps
+            // its share. What does not fit is cut, never wrapped.
+            float textLeft = start.X + icon + 7f;
+            float rowRoom = rightEdge - textLeft;
+            string line = cell == null ? string.Empty
+                : mech is { } m && !cell.Value.IsButton ? $"{cell.Value.Text} - {m.Mechanic} - {m.Boss}"
+                : cell.Value.Text;
+            // The pill's padding is on top of the text, not taken out of it - taking it out cut
+            // every line short by that much, room or no room: "(Cle…", "P4 58.5% - … - Kefk…".
+            float lineW = cell == null ? 0f
+                : cell.Value.IsButton ? ProgressCellWidth(cell.Value)
+                : Math.Min(ImGui.CalcTextSize(line).X + ProgressPillPad * 2f, rowRoom * 0.66f);
+
+            float nameRoom = rowRoom - lineW - 12f;
+            float nameH = ImGui.GetTextLineHeight();
+            float subH;
+            using (UiHelpFont.Push()) subH = ImGui.GetTextLineHeight();
+            float top = mid - (nameH + subH) * 0.5f;
+
+            string world = Worlds?.GetWorldName(member.HomeWorldId) ?? string.Empty;
+            string name = DisplayName(member.Name) + (isSelf ? "  (you)" : applicant ? "  · applied" : string.Empty);
+
+            ImGui.SetCursorScreenPos(new Vector2(textLeft, top));
+            ImGui.TextColored(member.IsOffline ? TextMuted : applicant ? Accent : TextPrimary, Fit(name, nameRoom));
+            if (world.Length > 0)
+            {
+                ImGui.SetCursorScreenPos(new Vector2(textLeft, top + nameH));
+                using (UiHelpFont.Push())
+                    ImGui.TextColored(Faint, Fit($"@{world}", nameRoom));
+            }
+
+            if (cell == null || identity == null)
+                return;
+
+            if (cell.Value.IsButton)
+            {
+                DrawProgressCell(cell.Value, identity, dutyName, rightEdge - lineW, start.Y, lineW);
+                return;
+            }
+
+            // In a pill, as the dashboard mockup shows it.
+            string shown = Fit(line, lineW - ProgressPillPad * 2f);
+            float w = ImGui.CalcTextSize(shown).X;
+            var pillMin = new Vector2(rightEdge - w - ProgressPillPad * 2f, mid - nameH * 0.5f - 3f);
+            DrawProgressPillBg(ImGui.GetWindowDrawList(), pillMin, new Vector2(rightEdge, mid + nameH * 0.5f + 3f),
+                cell.Value.Colour);
+            ImGui.SetCursorScreenPos(new Vector2(rightEdge - ProgressPillPad - w, mid - nameH * 0.5f));
+            ImGui.TextColored(cell.Value.Colour, shown);
+
+            if (ImGui.IsItemHovered())
+            {
+                string tip = cell.Value.Tip;
+                if (mech is { } mm)
+                    tip += $"\n\nMost likely on: {mm.Mechanic} ({mm.Boss})\n{mm.Detail}\n\n"
+                        + "An approximation from the phase and boss HP - gear, deaths and\n"
+                        + "Limit Breaks move these ranges.";
+                PaddedTooltip(tip);
+            }
+        }
+
+        /// <summary>The Dancing Mad switch, as the last row under the list.</summary>
+        private float dmuSwitchT = 1f;
+
+        /// <summary>The Dancing Mad switch, as the dashboard mockup ends the roster: a hairline over
+        /// the setting's sentence and an iOS switch at the right. The whole row toggles.</summary>
+        private void DrawDmuToggleRow(float width, float? originX, string? dutyName, uint dutyRowId)
+        {
+            Vector2 cursor = ImGui.GetCursorScreenPos();
+            float rowH = PartyRowHeight(dutyName, dutyRowId);
+            float left = (originX ?? cursor.X) + 6f;
+            float right = (originX ?? cursor.X) + width - 6f;
+            var dl = ImGui.GetWindowDrawList();
+
+            dl.AddRectFilled(new Vector2(left, cursor.Y), new Vector2(right, cursor.Y + 1f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
+
+            ImGui.SetCursorScreenPos(new Vector2(left, cursor.Y + 1f));
+            if (ImGui.InvisibleButton("##dmumechrow", new Vector2(right - left, rowH - 1f)))
+            {
+                config.DmuProgressMechanicsEnabled = !config.DmuProgressMechanicsEnabled;
+                config.Save();
+            }
+            bool hot = ImGui.IsItemHovered();
+            if (hot)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                PaddedTooltip("Dancing Mad (Ultimate) only: names the mechanic a player's progress most\n"
+                    + "likely means - \"P4 58%\" as \"P4 58% - Grand Cross 3 - Kefka Says\".");
+            }
+
+            float cy = cursor.Y + 1f + (rowH - 1f) * 0.5f;
+            using (UiHelpFont.Push())
+            {
+                float lh = ImGui.GetTextLineHeight();
+                dl.AddText(new Vector2(left + 2f, cy - lh * 0.5f), ImGui.ColorConvertFloat4ToU32(PfSlate300),
+                    Fit("Enable progress approximation mechanic by phase / percentage", right - left - FbSwitchW - 14f));
+            }
+            DrawFbSwitch(dl, new Vector2(right - FbSwitchW, cy - FbSwitchH * 0.5f), config.DmuProgressMechanicsEnabled, ref dmuSwitchT);
+
+            ImGui.SetCursorScreenPos(new Vector2(originX ?? cursor.X, cursor.Y + rowH + HoverRowGap));
         }
     }
 }

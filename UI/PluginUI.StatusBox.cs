@@ -59,7 +59,7 @@ namespace PfPresets
         {
 #if PFP_RATINGS
             if (ShowsEmbeddedParty(snap))
-                return PartyMemberCount(snap.DutyName, snap.DutyRowId) * (HoverRowHeight() + HoverRowGap);
+                return PartyMemberCount(snap.DutyName, snap.DutyRowId) * (PartyRowHeight(snap.DutyName, snap.DutyRowId) + HoverRowGap);
 #endif
             return 0f;
         }
@@ -88,7 +88,25 @@ namespace PfPresets
             if (string.IsNullOrWhiteSpace(comment) || width <= 0f || maxLines <= 0)
                 return lines;
 
-            string rest = comment.Trim();
+            // A LINE BREAK THE AUTHOR TYPED IS A LINE. Each paragraph is wrapped on its own. The
+            // whole comment used to be wrapped as one run, so "…your GIL" + newline + "We're at
+            // 58%…" counted as one line while the drawing honoured the break and drew two - and
+            // every panel sized from the count came out a line short.
+            var paragraphs = comment.Replace("\r", string.Empty).Trim().Split('\n');
+            for (int p = 0; p < paragraphs.Length && lines.Count < maxLines; p++)
+                WrapParagraph(paragraphs[p].Trim(), width, maxLines, lines);
+
+            return lines;
+        }
+
+        private static void WrapParagraph(string paragraph, float width, int maxLines, List<string> lines)
+        {
+            string rest = paragraph;
+            if (rest.Length == 0)
+            {
+                lines.Add(string.Empty);
+                return;
+            }
 
             while (rest.Length > 0 && lines.Count < maxLines)
             {
@@ -117,8 +135,6 @@ namespace PfPresets
                 lines.Add(rest.Substring(0, brk).TrimEnd());
                 rest = rest.Substring(brk).TrimStart();
             }
-
-            return lines;
         }
 
         /// <summary>Space the card needs this frame, or 0 when there's nothing to report.</summary>
@@ -294,13 +310,19 @@ namespace PfPresets
                 if (!snap.TimeLeftIsExact)
                     time = "~" + time;
 
+                // The mockup's orange clock pill.
+                var orange = ColorFromHex("#ff9f0a");
                 Vector2 ts = ImGui.CalcTextSize(time);
-                var timeAt = new Vector2(cursor - ts.X, y);
-                dl.AddText(timeAt, ImGui.ColorConvertFloat4ToU32(TextMuted), time);
+                const float clock = 11f;
+                float pillW = 8f + clock + 5f + ts.X + 8f;
+                var pMin = new Vector2(cursor - pillW, y - 3f);
+                var pMax = new Vector2(cursor, y + line + 3f);
+                dl.AddRectFilled(pMin, pMax, ImGui.ColorConvertFloat4ToU32(orange with { W = 0.15f }), Radius.Control);
+                dl.AddRect(pMin, pMax, ImGui.ColorConvertFloat4ToU32(orange with { W = 0.3f }), Radius.Control, ImDrawFlags.None, 1f);
+                DrawGlyphAtOn(dl, FontAwesomeIcon.Clock, new Vector2(pMin.X + 8f, y + (line - clock) * 0.5f), clock, orange, UiIconSmall);
+                dl.AddText(new Vector2(cursor - 8f - ts.X, y), ImGui.ColorConvertFloat4ToU32(orange), time);
 
-                float iconX = cursor - ts.X - 17f;
-                DrawGlyphAt(FontAwesomeIcon.Clock, new Vector2(iconX, y + (line - 12f) * 0.5f),
-                    12f, TextMuted);
+                float iconX = pMin.X;
 
                 if (IsMouseOver(new Vector2(iconX, y), new Vector2(cursor, y + line)))
                 {
@@ -312,7 +334,7 @@ namespace PfPresets
                             + "a reading. A listing expires an hour after it goes up.");
                 }
 
-                cursor = iconX - 16f;
+                cursor = iconX - 8f;
             }
 
             if (snap.IsRecruiting && !snap.DetailsUnavailable && snap.SlotsTotal > 0)
@@ -322,10 +344,16 @@ namespace PfPresets
                 bool full = snap.IsPartyFull;
                 string filled = full ? "Party filled" : $"{snap.SlotsFilled} of {snap.SlotsTotal}";
 
+                // A quiet pill: white/5 behind, white/10 round it.
                 Vector2 fs = ImGui.CalcTextSize(filled);
-                dl.AddText(new Vector2(cursor - fs.X, y),
-                    ImGui.ColorConvertFloat4ToU32(full ? AccentGreen : TextSecondary), filled);
-                cursor = cursor - fs.X - 14f;
+                var fMin = new Vector2(cursor - fs.X - 16f, y - 3f);
+                var fMax = new Vector2(cursor, y + line + 3f);
+                Vector4 tone = full ? AccentGreen : new Vector4(1, 1, 1, 1);
+                dl.AddRectFilled(fMin, fMax, ImGui.ColorConvertFloat4ToU32(tone with { W = full ? 0.15f : 0.05f }), Radius.Control);
+                dl.AddRect(fMin, fMax, ImGui.ColorConvertFloat4ToU32(tone with { W = full ? 0.3f : 0.1f }), Radius.Control, ImDrawFlags.None, 1f);
+                dl.AddText(new Vector2(cursor - 8f - fs.X, y),
+                    ImGui.ColorConvertFloat4ToU32(full ? AccentGreen : PfSlate300), filled);
+                cursor = fMin.X - 12f;
             }
 
             ClippedText(dl, title, left + 21f, cursor, y, line, accent);
@@ -656,16 +684,6 @@ namespace PfPresets
             }
         }
 
-        /// <summary>
-        /// The card's footer action. Full width, because a right-aligned button was a fifth
-        /// alignment on a card that already had four and never looked deliberate.
-        ///
-        /// An optional secondary sits beside it, sized to its own label, for the one state that
-        /// has two reasonable things to do.
-        /// </summary>
-        /// <summary>Width of a card action, matching Apply preset in the list below it, and the
-        /// gap between two of them.</summary>
-        private const float CardActionWidth = 150f;
         private const float CardActionGap = 8f;
 
         /// <summary>
@@ -767,25 +785,6 @@ namespace PfPresets
         }
 
         /// <summary>
-        /// The card's border colour, which is how state is signalled: a full party reads green,
-        /// active recruiting a deep blue, queueing a brighter blue, and anything blocking you amber.
-        /// </summary>
-        private static Vector4 StateBorderColor(RecruitmentSnapshot snap)
-        {
-            if (snap.IsRecruiting)
-                return snap.IsPartyFull ? AccentGreen : StatusBorderRecruiting;
-
-            return snap.Activity switch
-            {
-                PfActivity.InQueue => AccentBlue,
-                PfActivity.InDuty => AccentYellow,
-                PfActivity.InPartyNotLeader => StatusBorderParty,
-                PfActivity.NotLoggedIn => TextMuted,
-                _ => snap.BlockedReason.Length > 0 ? AccentYellow : BorderHover,
-            };
-        }
-
-        /// <summary>
         /// The card surface.
         ///
         /// A raised sheet rather than an outlined box: elevation carries the grouping, and state
@@ -796,7 +795,7 @@ namespace PfPresets
         private static void DrawRaisedCard(ImDrawListPtr dl, Vector2 min, Vector2 max,
             RecruitmentSnapshot snap)
         {
-            const float radius = Radius.Card;
+            const float radius = 16f;
 
             // Soft drop shadow, approximated with stacked translucent rects - no blurred texture
             // needed and it costs a handful of quads.
@@ -812,12 +811,9 @@ namespace PfPresets
                     radius + spread);
             }
 
-            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(BgCard), radius);
-
-            // The whole edge, not just the top one. A lit top hairline was the old way of saying
-            // "raised surface" and it only reads as that from directly above; the same white at the
-            // same weight all the way round is what every other card in the plugin wears now.
-            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(CardBorder),
+            // The dashboard mockup's card: rounded-3xl, border white/10.
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Field), radius);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)),
                 radius, ImDrawFlags.None, 1f);
         }
 

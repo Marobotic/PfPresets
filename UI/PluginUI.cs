@@ -34,10 +34,23 @@ namespace PfPresets
 
         /// <summary>The listing reader, or null in a build without it.</summary>
         internal ListingXray? Listings { get; set; }
+        internal WorldHelper? Worlds { get; set; }
 
 #if PFP_RATINGS
         /// <summary>Who has published themselves into the listing on screen.</summary>
         internal PfCrowdsource? Crowd { get; set; }
+
+        /// <summary>The Party Finder tab's board.</summary>
+        internal PfBoard? Board { get; set; }
+
+        /// <summary>Coordinated joining: the board's Join button and the PF Coordination window.</summary>
+        internal PfCoordination? Coordination { get; set; }
+
+        /// <summary>Joining a listing on this data centre from the board. Set by Plugin.</summary>
+        internal PfDirectJoin? DirectJoin { get; set; }
+
+        /// <summary>When the Party Finder is read for the board.</summary>
+        internal PfBoardFetch? BoardFetch { get; set; }
 #endif
 
         // ── Window Visibility ─────────────────────────────────────
@@ -167,9 +180,9 @@ namespace PfPresets
                 DrawPartyFinderOpenButton();
                 ReportOverlayDiagnostic();
 #if PFP_RATINGS
-                DrawRatingPrompt();
-                DrawListingLeaderRatingOverlay();
                 DrawVoteNudge();
+                DrawCoordinationOverlay();
+                DrawWatchedListings();
 
                 // AFTER the main window, because the settings section inside it is what arms the
                 // placement preview - drawn before it, the sample would always be one frame stale
@@ -523,6 +536,14 @@ namespace PfPresets
         private void DrawSplitRolePerson(Vector2 topLeft, float size, Vector4[] colors)
         {
             var dl = ImGui.GetWindowDrawList();
+
+            // The game's own tile, when its sheet is loaded. The colours say which roles.
+            bool hasTank = System.Array.IndexOf(colors, SplitTank) >= 0;
+            bool hasHealer = System.Array.IndexOf(colors, SplitHealer) >= 0;
+            bool hasDps = System.Array.IndexOf(colors, SplitDPS) >= 0;
+            if (DrawPfTile(dl, SplitTileFor(hasTank, hasHealer, hasDps), topLeft, size))
+                return;
+
             uint Col(Vector4 v) => ImGui.ColorConvertFloat4ToU32(v);
 
             Vector2 tl = topLeft;
@@ -570,8 +591,18 @@ namespace PfPresets
         /// <summary>Draws a slot's composition icon (role/job/split-person/free/omit) at a screen position.</summary>
         private void DrawSlotMiniIcon(RoleSlot slot, Vector2 topLeft, float size)
         {
-            if (slot.Role == RoleType.Omit) { DrawGlyphAt(OmitGlyph, topLeft, size, TextMuted); return; }
-            if (IsFreeAnySlot(slot)) { DrawGlyphAt(FreeGlyph, topLeft, size, TextSecondary); return; }
+            if (slot.Role == RoleType.Omit)
+            {
+                if (!DrawPfTile(PfSlotTile.Omit, topLeft, size))
+                    DrawGlyphAt(OmitGlyph, topLeft, size, TextMuted);
+                return;
+            }
+            if (IsFreeAnySlot(slot))
+            {
+                if (!DrawPfTile(PfSlotTile.Any, topLeft, size))
+                    DrawGlyphAt(FreeGlyph, topLeft, size, TextSecondary);
+                return;
+            }
             var split = GetSplitRoleColors(slot);
             if (split != null) { DrawSplitRolePerson(topLeft, size, split); return; }
             uint? gi = GetSlotDisplayIcon(slot);

@@ -93,13 +93,15 @@ namespace PfPresets
         /// either way, so it carries one heart count between the two appearances; see
         /// RatingService.SyncReaction for the one thing that costs on this side.
         ///
-        /// The order is the order of how much a reader wants them, left to right.
+        /// Left to right: Ultimate, First clears, Savage, then your own. The numbers are the tab
+        /// positions - the segmented control selects by index - so the order lives here and in the
+        /// labels below, and nowhere else. The tab still opens on First clears.
         /// </summary>
         private enum ClearsView
         {
-            First = 0,
-            Savage = 1,
-            Ultimate = 2,
+            Ultimate = 0,
+            First = 1,
+            Savage = 2,
             Mine = 3,
         }
 
@@ -108,12 +110,12 @@ namespace PfPresets
         /// <summary>In <see cref="ClearsView"/>'s own order, and held rather than built - this is
         /// read on every frame the tab is open.</summary>
         private static readonly string[] ClearsViewLabels =
-            { "First clears", "Savage", "Ultimates", "My clears" };
+            { "Ultimates", "First clears", "Savage", "My clears" };
 
         /// <summary>Without "My clears", for somebody who has not had one yet. A separate array
         /// rather than a slice, so neither can be built wrong at a call site.</summary>
         private static readonly string[] ClearsViewLabelsNoMine =
-            { "First clears", "Savage", "Ultimates" };
+            { "Ultimates", "First clears", "Savage" };
 
         /// <summary>
         /// Where one of the two lists had got to, and what to do about it on the next frame.
@@ -269,7 +271,8 @@ namespace PfPresets
             // marooned in three enormous boxes - the strip stops reading as one group of related
             // choices and starts reading as three separate buttons that happen to be adjacent.
             // Sized to its own labels, it is a control; `width` is only the ceiling.
-            if (DrawSegmentedControl("clearsview", labels, ref selected, width, fit: true))
+            // The Party Finder tab's segmented picker, so the two tabs' pills match.
+            if (DrawIosSegmented("clearsview", labels, ref selected, IosSegmentedFitWidth(labels, width)))
             {
                 clearsView = (ClearsView)selected;
 

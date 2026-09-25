@@ -106,8 +106,8 @@ namespace PfPresets
             {
                 leadLh = ImGui.GetTextLineHeight() * 1.5f;
                 leadH = OnbWrap(
-                    "Ratings, presets, clears and party progression. Two minutes to set up, or "
-                    + "none at all.", OnbNarrowW).Count * leadLh;
+                    "Presets, the Party Finder board, clears and party progression. Two minutes to "
+                    + "set up, or none at all.", OnbNarrowW).Count * leadLh;
             }
 
             float total = titleH + 14f + leadH + 30f + cardOneH + 10f + cardTwoH;
@@ -125,8 +125,8 @@ namespace PfPresets
             using (OnbLead.Push())
             {
                 y += OnbWrapped(dl,
-                    "Ratings, presets, clears and party progression. Two minutes to set up, or "
-                    + "none at all.",
+                    "Presets, the Party Finder board, clears and party progression. Two minutes to "
+                    + "set up, or none at all.",
                     new Vector2(left, y), OnbNarrowW, Dim, leadLh);
             }
 
@@ -278,7 +278,7 @@ namespace PfPresets
                 $"Landscape - {DeviceMetrics.SizeLabel(DeviceLayout.Landscape)}",
             };
 
-            if (DrawSegmentedControl("onbdevice", labels, ref device, OnbColW))
+            if (DrawIosSegmented("onbdevice", labels, ref device, OnbColW))
             {
                 config.Device = (DeviceLayout)device;
                 config.Save();
@@ -450,7 +450,7 @@ namespace PfPresets
             {
                 y += OnbWrapped(dl,
                     "It colours the primary action, the active tab and the refresh countdown. Role "
-                    + "and vote colours never change.",
+                    + "colours never change.",
                     new Vector2(box.X, y), OnbColW, Dim, ImGui.GetTextLineHeight() * 1.5f);
             }
 
@@ -764,7 +764,7 @@ namespace PfPresets
                 ImGui.SetCursorPos(
                     new Vector2(box.X + 14f, y + 12f + 16f + 8f) - ImGui.GetWindowPos());
 
-                if (DrawSegmentedControl("onbface", OnbFaceLabels, ref face, OnbColW - 28f))
+                if (DrawIosSegmented("onbface", OnbFaceLabels, ref face, OnbColW - 28f))
                 {
                     config.ClearAnnouncementFont = face;
                     config.Save();
@@ -1011,8 +1011,8 @@ namespace PfPresets
                 float lh = ImGui.GetTextLineHeight() * 1.5f;
 
                 y += OnbWrapped(dl,
-                    "One number for how the community reads you, everything you have killed "
-                    + "underneath it, and the parse you earned doing it.",
+                    "Everything you have killed, and the parse you earned doing it, on one card "
+                    + "with your Lodestone, Tomestone and FFLogs a click away.",
                     new Vector2(box.X, y), OnbColW, Dim, lh) + 12f;
 
                 y += OnbWrapped(dl,
@@ -1117,9 +1117,6 @@ namespace PfPresets
                 50f                    // top padding and the row of site tiles
                 + 30f                  // the job mark and the name
                 + smallLineH + 16f     // world and job line
-                + 54f + 10f            // the weighted score
-                + 10f + 10f            // the bar under it
-                + smallLineH + 14f     // the up and down counts
                 + 12f;                 // the rule, and the air under it
 
             float cardH = MathF.Round(aboveBands + bandOneH + 12f + bandTwoH + 14f);
@@ -1164,36 +1161,6 @@ namespace PfPresets
             {
                 OnbText(dl, new Vector2(cardX + 14f, ny), Dim, "@Cerberus - Level 100 Gunbreaker");
                 ny += ImGui.GetTextLineHeight() + 16f;
-            }
-
-            using (OnbScore.Push())
-                OnbText(dl, new Vector2(cardX + 14f, ny), Positive, "127");
-
-            using (OnbTiny.Push())
-            {
-                OnbText(dl, new Vector2(cardX + 104f, ny + 12f), Faint, "WEIGHTED");
-                OnbText(dl, new Vector2(cardX + 104f, ny + 28f), Faint, "SCORE");
-            }
-
-            ny += 54f + 10f;
-
-            // The bar is what the number means: the score against the ceiling it is measured on,
-            // which a bare figure never says.
-            dl.AddRectFilled(new Vector2(cardX + 14f, ny), new Vector2(cardX + cardW - 14f, ny + 10f),
-                ImGui.ColorConvertFloat4ToU32(Raised), Radius.Pill);
-            dl.AddRectFilled(new Vector2(cardX + 14f, ny),
-                new Vector2(cardX + 14f + (cardW - 28f) * 0.88f, ny + 10f),
-                ImGui.ColorConvertFloat4ToU32(Positive), Radius.Pill);
-
-            ny += 10f + 10f;
-            OnbTriangle(dl, new Vector2(cardX + 20f, ny + 7f), 11f, true, Positive);
-            OnbTriangle(dl, new Vector2(cardX + 66f, ny + 7f), 11f, false, Negative);
-
-            using (OnbSmall.Push())
-            {
-                OnbText(dl, new Vector2(cardX + 30f, ny), Dim, "142");
-                OnbText(dl, new Vector2(cardX + 76f, ny), Dim, "15");
-                ny += ImGui.GetTextLineHeight() + 14f;
             }
 
             dl.AddLine(new Vector2(cardX + 14f, ny), new Vector2(cardX + cardW - 14f, ny),
@@ -1386,108 +1353,6 @@ namespace PfPresets
         // ══════════════════════════════════════════════════════════
         //  ONE PLAYER, ONE VOTE
         // ══════════════════════════════════════════════════════════
-
-        private void DrawOnbVoting(ImDrawListPtr dl, Vector2 box)
-        {
-            float y = box.Y;
-            y += OnbStepLabel(dl, new Vector2(box.X, y)) + 10f;
-
-            using (OnbTitle.Push())
-            {
-                float lh = ImGui.GetTextLineHeight() * 1.12f;
-                uint ink = ImGui.ColorConvertFloat4ToU32(Ink);
-                OnbText(dl, new Vector2(box.X, y), ink, "One player,");
-                OnbText(dl, new Vector2(box.X, y + lh), ink, "one vote");
-                y += lh * 2f + 20f;
-            }
-
-            (string Lead, string Tail)[] points =
-            {
-                ("A score is a number of people, not a number of clicks.",
-                 "Pressing the same arrow twice changes nothing."),
-                ("Change your mind whenever.",
-                 "The last thing you said is what counts."),
-                ("Every vote weighs the same, from anybody.",
-                 "The score is just the ups minus the downs."),
-            };
-
-            foreach (var (lead, tail) in points)
-            {
-                dl.AddCircleFilled(new Vector2(box.X + 3f, y + 8f), 3f,
-                    ImGui.ColorConvertFloat4ToU32(Accent));
-                y += OnbLeadIn(dl, new Vector2(box.X + 16f, y), OnbColW - 16f, lead, tail) + 12f;
-            }
-
-            y += 8f;
-
-            using (OnbTiny.Push())
-                OnbWrapped(dl, "You can only vote on someone whose duty you actually shared.",
-                    new Vector2(box.X, y), OnbColW, Faint, ImGui.GetTextLineHeight() * 1.4f);
-
-            // ── the party list, mid-vote ──
-            OnbPanel(dl, box, out Vector2 pMin, out _);
-
-            const float listW = 380f, rowH = 42f;
-            float listX = MathF.Round(pMin.X + (OnbPanelW - listW) * 0.5f);
-            const float listH = rowH * 3f + 24f;
-            float listY = MathF.Round(pMin.Y + (OnbContentH - listH - 28f) * 0.5f);
-
-            OnbCardRect(dl, new Vector2(listX, listY), new Vector2(listX + listW, listY + listH),
-                Field, CardBorder, Radius.Card);
-
-            // Job icons, not role squares - the real party list draws the game's own marks, and a
-            // figure of a party list that does not is a figure of something else.
-            (uint Job, Vector4 Role, string Score, Vector4 Tint, bool Rating)[] rows =
-            {
-                (OnbJobWhm, RoleHealer, "+12", Positive, false),
-                (OnbJobBlm, RoleDPS, string.Empty, Dim, true),
-                (OnbJobPld, RoleTank, "-3", Negative, false),
-            };
-
-            for (int i = 0; i < rows.Length; i++)
-            {
-                float top = listY + 12f + i * rowH;
-                float mid = top + rowH * 0.5f;
-
-                // The row being voted on is lifted and marked down its left edge - the same
-                // treatment the real list gives it, so the pair of buttons reads as belonging to
-                // that person rather than floating at the end of a list.
-                if (rows[i].Rating)
-                {
-                    dl.AddRectFilled(new Vector2(listX + 1f, top),
-                        new Vector2(listX + listW - 1f, top + rowH),
-                        ImGui.ColorConvertFloat4ToU32(Raised), Radius.Small);
-                    dl.AddRectFilled(new Vector2(listX + 1f, top), new Vector2(listX + 3f, top + rowH),
-                        ImGui.ColorConvertFloat4ToU32(Accent), Radius.Pill);
-                }
-
-                OnbJobIcon(dl, rows[i].Job, new Vector2(listX + 18f, mid - 9f), 18f,
-                    rows[i].Role);
-
-                Vector4 bar = rows[i].Rating ? BorderControl : Raised;
-                dl.AddRectFilled(new Vector2(listX + 46f, mid - 8f), new Vector2(listX + 150f, mid - 2f),
-                    ImGui.ColorConvertFloat4ToU32(bar), Radius.Pill);
-                dl.AddRectFilled(new Vector2(listX + 46f, mid + 2f), new Vector2(listX + 108f, mid + 7f),
-                    ImGui.ColorConvertFloat4ToU32(bar with { W = 0.7f }), Radius.Pill);
-
-                if (!rows[i].Rating)
-                {
-                    using (OnbSmallBold.Push())
-                    {
-                        Vector2 ts = ImGui.CalcTextSize(rows[i].Score);
-                        OnbText(dl, new Vector2(listX + listW - 18f - ts.X, mid - ts.Y * 0.5f), rows[i].Tint, rows[i].Score);
-                    }
-                    continue;
-                }
-
-                OnbVoteButton(dl, new Vector2(listX + listW - 78f, mid - 13f), true, Positive);
-                OnbVoteButton(dl, new Vector2(listX + listW - 44f, mid - 13f), false, BorderControl);
-            }
-
-            using (UiLabelFont.Push())
-                OnbTracked(dl, "AFTER THE DUTY, ONE CLICK EACH",
-                    new Vector2(listX, listY + listH + 14f), Faint, 1.1f);
-        }
 
         /// <summary>
         /// A bullet whose first sentence carries the weight and the rest does not, wrapped as one

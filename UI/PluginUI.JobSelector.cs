@@ -325,7 +325,8 @@ namespace PfPresets
 
             // Person glyph (gold) with "Free" label to its right, then a muted description.
             ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelLabelX, midY - 9f));
-            DrawGlyph(FreeGlyph, AccentYellow);
+            if (!DrawPfTile(drawList, PfSlotTile.Any, new Vector2(p0.X + JobSelLabelX, midY - JobSelRoleIcon * 0.5f), JobSelRoleIcon))
+                DrawGlyph(FreeGlyph, AccentYellow);
             Vector2 ts = ImGui.CalcTextSize("Free");
             drawList.AddText(new Vector2(p0.X + JobSelLabelX + JobSelRoleIcon + 8f, midY - ts.Y * 0.5f),
                 ImGui.ColorConvertFloat4ToU32(AccentYellow), "Free");
@@ -374,7 +375,8 @@ namespace PfPresets
 
             // Ban glyph at the left, "Omit" text to its right.
             ImGui.SetCursorScreenPos(new Vector2(p0.X + JobSelLabelX, midY - 9f));
-            DrawGlyph(OmitGlyph, tint);
+            if (!DrawPfTile(dl, PfSlotTile.Omit, new Vector2(p0.X + JobSelLabelX, midY - JobSelRoleIcon * 0.5f), JobSelRoleIcon))
+                DrawGlyph(OmitGlyph, tint);
             Vector2 ts = ImGui.CalcTextSize("Omit");
             dl.AddText(new Vector2(p0.X + JobSelLabelX + JobSelRoleIcon + 8f, midY - ts.Y * 0.5f),
                 ImGui.ColorConvertFloat4ToU32(selected ? AccentRed : JsText), "Omit");

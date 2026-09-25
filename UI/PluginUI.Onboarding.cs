@@ -54,6 +54,7 @@ namespace PfPresets
             Colour = 2,
             Announce = 3,
             Profile = 4,
+            /// <summary>Retired with ratings. Kept so the other steps keep their numbers.</summary>
             Voting = 5,
             Clears = 6,
             Preset = 7,
@@ -206,7 +207,7 @@ namespace PfPresets
 #if PFP_RATINGS
         {
             OnbStep.Window, OnbStep.Colour, OnbStep.Announce,
-            OnbStep.Profile, OnbStep.Voting, OnbStep.Clears, OnbStep.Preset, OnbStep.Done,
+            OnbStep.Profile, OnbStep.Clears, OnbStep.Preset, OnbStep.Done,
         };
 #else
         {
@@ -217,7 +218,7 @@ namespace PfPresets
         private static readonly OnbStep[] OnboardingTour =
 #if PFP_RATINGS
         {
-            OnbStep.Profile, OnbStep.Voting, OnbStep.Clears, OnbStep.Preset, OnbStep.Done,
+            OnbStep.Profile, OnbStep.Clears, OnbStep.Preset, OnbStep.Done,
         };
 #else
         {
@@ -282,7 +283,9 @@ namespace PfPresets
             config.OnboardingSeenVersion = OnboardingVersion;
             config.Save();
 
+#if PFP_RATINGS
             activeTab = MainTab.Settings;
+#endif
             isMainWindowVisible = true;
         }
 
@@ -416,8 +419,8 @@ namespace PfPresets
         {
             DrawOnboardingHeader(o, dl);
 
-            dl.AddLine(new Vector2(o.X, o.Y + OnbHeaderH), new Vector2(o.X + OnbW, o.Y + OnbHeaderH),
-                ImGui.ColorConvertFloat4ToU32(Field), 1f);
+            dl.AddRectFilled(new Vector2(o.X, o.Y + OnbHeaderH), new Vector2(o.X + OnbW, o.Y + OnbHeaderH + 1f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)));
 
             float ease = Ease(onboardingAnim);
 
@@ -440,7 +443,6 @@ namespace PfPresets
 #if PFP_RATINGS
                     case OnbStep.Announce: DrawOnbAnnounce(dl, box); break;
                     case OnbStep.Profile: DrawOnbProfile(dl, box); break;
-                    case OnbStep.Voting: DrawOnbVoting(dl, box); break;
                     case OnbStep.Clears: DrawOnbClears(dl, box); break;
 #endif
                     case OnbStep.Preset: DrawOnbPreset(dl, box); break;
@@ -458,9 +460,14 @@ namespace PfPresets
         /// <summary>The strip along the top: the mark, the name, the version, and the way out.</summary>
         private void DrawOnboardingHeader(Vector2 o, ImDrawListPtr dl)
         {
+            // The sidebar's brand mark: the accent, lit a little toward the top, with a soft shadow.
             var tile = OnbSnap(new Vector2(o.X + 24f, o.Y + (OnbHeaderH - 28f) * 0.5f));
+            dl.AddRectFilled(tile + new Vector2(0, 2f), tile + new Vector2(28f, 30f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0.35f)), Radius.Control);
             dl.AddRectFilled(tile, tile + new Vector2(28f, 28f),
-                ImGui.ColorConvertFloat4ToU32(Accent), Radius.Small);
+                ImGui.ColorConvertFloat4ToU32(Darken(Accent, 0.12f)), Radius.Control);
+            dl.AddRectFilled(tile, tile + new Vector2(28f, 15f),
+                ImGui.ColorConvertFloat4ToU32(Accent), Radius.Control, ImDrawFlags.RoundCornersTop);
 
             // LogoIcon, not a glyph chosen here. It is the plugin's mark - the same one on the
             // sidebar's brand, on the applying-preset checklist and on the button added to the
@@ -483,7 +490,12 @@ namespace PfPresets
             using (UiLabelFont.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(VersionLabel);
-                OnbText(dl, new Vector2(x, o.Y + (OnbHeaderH - ts.Y) * 0.5f + 1f), Faint, VersionLabel);
+                // The sidebar's version pill.
+                var vMin = new Vector2(x, o.Y + (OnbHeaderH - ts.Y) * 0.5f - 1f);
+                var vMax = vMin + new Vector2(ts.X + 10f, ts.Y + 3f);
+                dl.AddRectFilled(vMin, vMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f);
+                dl.AddRect(vMin, vMax, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.05f)), 4f, ImDrawFlags.None, 1f);
+                OnbText(dl, vMin + new Vector2(5f, 1.5f), FbSlate400, VersionLabel);
             }
 
             DrawOnboardingSkip(o, dl);
@@ -512,15 +524,17 @@ namespace PfPresets
             if (ImGui.IsItemClicked())
                 GoToOnboardingStep(OnbStep.Done);
 
-            dl.AddRectFilled(at, at + size, ImGui.ColorConvertFloat4ToU32(
-                hot ? new Vector4(1f, 1f, 1f, 1f) : new Vector4(0.96f, 0.96f, 0.97f, 1f)),
-                Radius.Pill);
+            // The redesign's secondary button: neutral grey, a faint border, slate text going white.
+            if (hot)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            dl.AddRectFilled(at, at + size, ImGui.ColorConvertFloat4ToU32(hot ? FbNeutral700 : FbNeutral800), Radius.Pill);
+            dl.AddRect(at, at + size, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), Radius.Pill, ImDrawFlags.None, 1f);
 
             using (OnbSmallBold.Push())
             {
                 const string label = "Skip";
                 Vector2 ts = ImGui.CalcTextSize(label);
-                OnbText(dl, at + (size - ts) * 0.5f, Ground, label);
+                OnbText(dl, at + (size - ts) * 0.5f, hot ? new Vector4(1, 1, 1, 1) : PfSlate300, label);
             }
         }
 
@@ -546,7 +560,7 @@ namespace PfPresets
                 var min = OnbSnap(new Vector2(o.X + OnbPadX + i * (segW + segGap),
                     midY - segH * 0.5f));
                 dl.AddRectFilled(min, min + new Vector2(segW, segH),
-                    ImGui.ColorConvertFloat4ToU32(i <= at ? Accent : RuleStrong), Radius.Pill);
+                    ImGui.ColorConvertFloat4ToU32(i <= at ? Accent : new Vector4(1, 1, 1, 0.12f)), Radius.Pill);
             }
 
             bool last = onboardingStep == OnbStep.Done;
@@ -569,7 +583,7 @@ namespace PfPresets
             float backX = nextX - 10f - backW;
 
             if (OnbPill("Back##OnbBack", new Vector2(backX, midY - btnH * 0.5f - o.Y),
-                    new Vector2(backW, btnH), Raised, ColorFromHex("#3a3a3c"), Ink))
+                    new Vector2(backW, btnH), FbNeutral800, FbNeutral700, PfSlate300, glass: true))
                 StepOnboarding(-1);
         }
 
@@ -612,7 +626,7 @@ namespace PfPresets
         /// <summary>A capsule button. The id suffix is stripped before the label is drawn, the way
         /// every other button helper in the plugin does it.</summary>
         private bool OnbPill(string label, Vector2 pos, Vector2 size, Vector4 fill, Vector4 hover,
-            Vector4 ink)
+            Vector4 ink, bool glass = false)
         {
             int marker = label.IndexOf("##", StringComparison.Ordinal);
             string shown = marker >= 0 ? label.Substring(0, marker) : label;
@@ -624,13 +638,24 @@ namespace PfPresets
 
             Vector2 at = OnbSnap(ImGui.GetWindowPos() + pos);
             var dl = ImGui.GetWindowDrawList();
+            if (hot)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+            // The redesign's buttons: a filled one glows softly in its own colour; a glass one
+            // carries a faint border and its text brightens under the cursor.
+            if (!glass)
+                for (int i = 1; i <= 3; i++)
+                    dl.AddRectFilled(at + new Vector2(-i, 3f - i * 0.5f), at + size + new Vector2(i, 2f + i),
+                        ImGui.ColorConvertFloat4ToU32(fill with { W = 0.08f }), Radius.Pill);
             dl.AddRectFilled(at, at + size, ImGui.ColorConvertFloat4ToU32(hot ? hover : fill),
                 Radius.Pill);
+            if (glass)
+                dl.AddRect(at, at + size, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.1f)), Radius.Pill, ImDrawFlags.None, 1f);
 
             using (OnbBodyBold.Push())
             {
                 Vector2 ts = ImGui.CalcTextSize(shown);
-                OnbText(dl, at + (size - ts) * 0.5f, ink, shown);
+                OnbText(dl, at + (size - ts) * 0.5f, glass && hot ? new Vector4(1, 1, 1, 1) : ink, shown);
             }
 
             return clicked;
@@ -642,8 +667,8 @@ namespace PfPresets
             min = OnbSnap(new Vector2(box.X + OnbPanelX - OnbPadX, box.Y));
             max = min + new Vector2(OnbPanelW, OnbContentH);
 
-            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(Panel), 22f);
-            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(ColorFromHex("#ffffff14")), 22f,
+            dl.AddRectFilled(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(0.11f, 0.11f, 0.125f, 0.85f)), 20f);
+            dl.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.08f)), 20f,
                 ImDrawFlags.None, 1f);
         }
 

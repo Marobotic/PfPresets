@@ -812,7 +812,12 @@ namespace PfPresets
                 if (isSlot1)
                 {
                     Vector2 pos = ImGui.GetCursorScreenPos();
-                    if (glyph.HasValue)
+                    if (glyph.HasValue && TryGetLfgSheet(out _))
+                    {
+                        ImGui.InvisibleButton("Slot1Icon", new Vector2(slotSize, slotSize));
+                        DrawPfTile(glyph.Value == OmitGlyph ? PfSlotTile.Omit : PfSlotTile.Any, pos, slotSize);
+                    }
+                    else if (glyph.HasValue)
                     {
                         DrawGlyphButton(glyph.Value, "Slot1Icon", new Vector2(slotSize, slotSize), TextSecondary);
                     }
@@ -824,17 +829,16 @@ namespace PfPresets
                     {
                         ImGui.Button("US", new Vector2(slotSize, slotSize));
                     }
-                    ImGui.GetWindowDrawList().AddRect(pos, new Vector2(pos.X + slotSize, pos.Y + slotSize), ImGui.ColorConvertFloat4ToU32(AccentBlue), 0f, ImDrawFlags.None, 1.5f);
 
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(tooltip);
                 }
                 else
                 {
-                    Vector4 slotBg = new Vector4(slotColor.X, slotColor.Y, slotColor.Z, 0.3f);
-                    ImGui.PushStyleColor(ImGuiCol.Button, slotBg);
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, slotColor);
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, slotColor);
+                    // Bare icons - no role-coloured tile behind a seat. Hover is a faint wash only.
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.08f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.12f));
                     ImGui.PushStyleColor(ImGuiCol.Text, TextPrimary);
                     ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, Radius.Tile);
 
@@ -844,6 +848,12 @@ namespace PfPresets
                         Vector2 sp = ImGui.GetCursorScreenPos();
                         clicked = ImGui.InvisibleButton($"Slot_{i}", new Vector2(slotSize, slotSize));
                         DrawSplitRolePerson(sp, slotSize, splitColors);
+                    }
+                    else if (glyph.HasValue && TryGetLfgSheet(out _))
+                    {
+                        Vector2 sp = ImGui.GetCursorScreenPos();
+                        clicked = ImGui.InvisibleButton($"Slot_{i}", new Vector2(slotSize, slotSize));
+                        DrawPfTile(glyph.Value == OmitGlyph ? PfSlotTile.Omit : PfSlotTile.Any, sp, slotSize);
                     }
                     else if (glyph.HasValue)
                     {
