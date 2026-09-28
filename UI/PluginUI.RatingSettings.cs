@@ -811,7 +811,7 @@ namespace PfPresets
 
             // The Party Finder tab's two options, moved here from the top of the tab: they are
             // decisions made once, and the tab is for the board.
-            DrawSetting("Share my party finder data actively",
+            DrawSetting("Collect Party Finder data all night",
                 () => config.PfActiveShareEnabled,
                 v =>
                 {
@@ -821,10 +821,9 @@ namespace PfPresets
                 },
                 "On: PF Analysis reads the Party Finder every 10 minutes and shares what it finds, "
                 + "whether or not you are at the keyboard.\n\n"
-                + "Off (the default): it only does so once you have been away (no mouse or keyboard) "
-                + "for an hour, then every 10 minutes until you are back.\n\n"
-                + "Either way, never in an instance, in combat, or while you have the Party Finder "
-                + "open, and a read never holds the window for more than a few seconds.");
+                + "Off (the default): it only reads after an hour with no mouse or keyboard, when you "
+                + "press Refresh on your own data centre, or when you open the Party Finder yourself.\n\n"
+                + "Never in an instance or in combat.");
 
             DrawSetting("Coordinated joining",
                 () => config.PfCoordinationEnabled,

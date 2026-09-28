@@ -119,9 +119,9 @@ namespace PfPresets
             if (built == null)
             {
                 // Usually the listing id, which the game only hands over in the listing's own
-                // detail window. Read it once, the way the Auto Refresher reads the clock.
+                // detail window. Not opened for it: learned the next time the player or the Auto
+                // Refresher opens the listing.
                 SetStatus("Waiting to learn the listing's id.");
-                automation.ProbeOwnListingIfUnknown();
                 return;
             }
 

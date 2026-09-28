@@ -57,14 +57,11 @@ namespace PfPresets
             addonLifecycle = lifecycle;
             lifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PostSetup, "LookingForGroup", HideIfReading);
             lifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreDraw, "LookingForGroup", HideIfReading);
-            lifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PostSetup, "LookingForGroupDetail", HideDetailIfReading);
-            lifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreDraw, "LookingForGroupDetail", HideDetailIfReading);
         }
 
         public void DetachAddonLifecycle()
         {
             addonLifecycle?.UnregisterListener(HideIfReading);
-            addonLifecycle?.UnregisterListener(HideDetailIfReading);
             addonLifecycle = null;
         }
 
@@ -88,165 +85,6 @@ namespace PfPresets
             addon->SetAlpha(0);
             if (addon->X != -30000 || addon->Y != -30000)
                 addon->SetPosition(-30000, -30000);
-        }
-
-        // ── An alliance read in full, out of sight ────────────────
-        //
-        // THE LIST ONLY SAYS "ANY JOB" FOR AN ALLIANCE. It carries one entry per party, and nothing
-        // about the eight seats inside each - which jobs they take, who is in them. That lives only
-        // in the listing's own window, so after the pages are read, each alliance the board does
-        // not know in full (or whose count has moved since) is opened there, read, and shared.
-        // The window is kept out of sight the same way the list is, and put back where the player
-        // had it before it closes, so that is what the game saves.
-
-        private volatile bool hideDetailWindow;
-        private bool detailWindowMoved;
-        private short savedDetailX, savedDetailY;
-
-        /// <summary>At most this many alliances are read in full per read of the list.</summary>
-        private const int MaxDetailReads = 6;
-
-        private unsafe void HideDetailIfReading(Dalamud.Game.Addon.Lifecycle.AddonEvent type,
-            Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonArgs args)
-        {
-            if (!hideDetailWindow)
-                return;
-            var addon = (AtkUnitBase*)args.Addon.Address;
-            if (addon == null)
-                return;
-            if (!detailWindowMoved)
-            {
-                savedDetailX = addon->X;
-                savedDetailY = addon->Y;
-                detailWindowMoved = true;
-            }
-            addon->SetAlpha(0);
-            if (addon->X != -30000 || addon->Y != -30000)
-                addon->SetPosition(-30000, -30000);
-        }
-
-        /// <summary>
-        /// Opens each listing in turn in the hidden detail window, reads it in full, and hands it to
-        /// <paramref name="onDetail"/> on the framework thread. Stops early if the player comes back.
-        /// Returns how many were read.
-        /// </summary>
-        private async Task<int> ReadDetailsHiddenAsync(IReadOnlyList<ulong> ids, Action<FreshListing> onDetail)
-        {
-            if (ids.Count == 0)
-                return 0;
-
-            int read = 0;
-            hideDetailWindow = true;
-            try
-            {
-                foreach (ulong id in ids.Take(MaxDetailReads))
-                {
-                    if (disposed || fetchAbort?.Invoke() == true)
-                        break;
-
-                    bool opened = await framework.RunOnFrameworkThread(() =>
-                    {
-                        unsafe
-                        {
-                            var agent = AgentLookingForGroup.Instance();
-                            return agent != null && agent->OpenListing(id);
-                        }
-                    });
-                    if (!opened)
-                        continue;
-
-                    FreshListing? fresh = null;
-                    for (int i = 0; i < 30 && fresh == null && !disposed; i++)
-                    {
-                        await Task.Delay(100);
-                        fresh = await framework.RunOnFrameworkThread(() =>
-                            ListingDetailIsOpen() ? ReadFreshListing(id) : null);
-                    }
-                    if (fresh == null)
-                        continue;
-
-                    await framework.RunOnFrameworkThread(() => onDetail(fresh));
-                    read++;
-                }
-            }
-            catch (Exception ex)
-            {
-                pluginLog.Warning(ex, "[PF Board] Reading an alliance in full failed.");
-            }
-            finally
-            {
-                // Put back where the player had it, then shut, so the game saves the real position.
-                await framework.RunOnFrameworkThread(() =>
-                {
-                    unsafe
-                    {
-                        var detail = (AtkUnitBase*)(nint)gameGui.GetAddonByName("LookingForGroupDetail");
-                        hideDetailWindow = false;
-                        if (detail != null)
-                        {
-                            if (detailWindowMoved)
-                            {
-                                detail->SetPosition(savedDetailX, savedDetailY);
-                                detail->SetAlpha(255);
-                            }
-                            detail->Close(true);
-                        }
-                        detailWindowMoved = false;
-                    }
-                });
-            }
-            return read;
-        }
-
-        /// <summary>
-        /// Reads listings in full on their own, without reading the list - the alliances the board
-        /// is missing seats for, between reads. Refused (0) whenever a read of the list could not
-        /// run either. Stops the moment <paramref name="playerBack"/> says the player is back.
-        /// </summary>
-        public async Task<int> ReadListingsInFullAsync(IReadOnlyList<ulong> ids, Action<FreshListing> onDetail,
-            Func<bool>? playerBack = null)
-        {
-            if (ids.Count == 0 || disposed)
-                return 0;
-            // Opening a listing can bring the list up with it; if the player did not have it open,
-            // it is kept out of sight like a read's, and shut again afterwards.
-            bool listWasOpen = false;
-            bool go = await framework.RunOnFrameworkThread(() =>
-            {
-                if (!CanFetchBoardNow(out _))
-                    return false;
-                unsafe { listWasOpen = GetBoardAddon() != null; }
-                isFetchingBoard = true;
-                hideBoardWindow = !listWasOpen;
-                return true;
-            });
-            if (!go)
-                return 0;
-
-            fetchAbort = playerBack;
-            try
-            {
-                return await ReadDetailsHiddenAsync(ids, onDetail);
-            }
-            finally
-            {
-                fetchAbort = null;
-                if (!listWasOpen)
-                {
-                    await framework.RunOnFrameworkThread(() =>
-                    {
-                        unsafe
-                        {
-                            RestoreBoardWindow(GetBoardAddon());
-                            var agent = AgentLookingForGroup.Instance();
-                            if (agent != null && GetBoardAddon() != null)
-                                agent->Hide();
-                        }
-                    });
-                }
-                hideBoardWindow = false;
-                isFetchingBoard = false;
-            }
         }
 
         /// <summary>Puts a read's window back where the player had it, visible, so that is what
@@ -339,6 +177,8 @@ namespace PfPresets
                 if (PastFetchDeadline)
                     return false;
                 var step = until - DateTime.UtcNow;
+                if (step <= TimeSpan.Zero)
+                    break;
                 await Task.Delay(step < TimeSpan.FromMilliseconds(100) ? step : TimeSpan.FromMilliseconds(100));
             }
             return !PastFetchDeadline;
@@ -419,8 +259,7 @@ namespace PfPresets
         public bool LastReadComplete { get; private set; }
 
         public async Task<(int Pages, string Note)> FetchPartyFinderAsync(Func<int> received,
-            Func<bool>? playerBack = null, Func<int>? seenSoFar = null,
-            Func<IReadOnlyList<ulong>>? detailWanted = null, Action<FreshListing>? onDetail = null)
+            Func<bool>? playerBack = null, Func<int>? seenSoFar = null)
         {
             LastReadTotal = 0;
             LastReadComplete = false;
@@ -576,15 +415,6 @@ namespace PfPresets
                     }
 
                     pages++;
-                }
-
-                // The alliances, in full - while the window is still open and still hidden.
-                if (detailWanted != null && onDetail != null && !disposed && fetchAbort?.Invoke() != true)
-                {
-                    var wanted = await framework.RunOnFrameworkThread(detailWanted);
-                    int full = await ReadDetailsHiddenAsync(wanted, onDetail);
-                    if (full > 0)
-                        note += $", {full} alliance{(full == 1 ? "" : "s")} read in full";
                 }
 
                 return (pages, note);

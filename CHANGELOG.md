@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.2
+
+- PF Analysis no longer opens the Party Finder on its own while you play. It reads it after an hour away, when you press Refresh on your own data centre, or when you open it yourself.
+- Alliance raids are no longer opened in the background, which ends the "Could not retrieve party recruitment information" messages.
+- New setting: Collect Party Finder data all night. It is off for everyone after this update; turn it back on under Settings, Party Finder.
+- The refresh button just says Refresh.
+- Fixed an error that could stop Party Finder reads.
+
 ## 4.0.1
 
 - Alliance raids fill in by themselves. Any plugin user on a data centre now reads its alliance listings in full whenever they are idle for a moment, so every party's seats and who is in them show up for everybody - not only after a full Party Finder read.

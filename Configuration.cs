@@ -16,7 +16,7 @@ namespace PfPresets
         /// <summary>The schema this build writes. Bump alongside a new case in <see cref="Migrate"/>.
         /// Deliberately the same number in the ratings and non-ratings builds: the v2 and v3 fields
         /// are inert data, so a config written by one build must load cleanly in the other.</summary>
-        public const int CurrentVersion = 8;
+        public const int CurrentVersion = 9;
 
         // ── Preset Storage ────────────────────────────────────────
         public List<PfPresetData> Presets { get; set; } = new();
@@ -556,7 +556,7 @@ namespace PfPresets
         public bool PfBoardBackgroundPollingEnabled { get; set; } = true;
 
         /// <summary>
-        /// "Share my party finder data actively". On: PF Analysis reads the Party Finder every 10
+        /// "Collect Party Finder data all night". On: PF Analysis reads the Party Finder every 10
         /// minutes and shares it, whether or not the player is at the keyboard. Off (the default):
         /// only after an hour with no input, then every 10 minutes until the player is back. Never
         /// in an instance or in combat. See PfBoardFetch.
@@ -787,6 +787,17 @@ namespace PfPresets
                 }
 #endif
                 Version = 8;
+            }
+
+            // 4.0.2: all-night Party Finder collection starts off for everyone; it can be turned
+            // back on in Settings.
+            if (Version < 9)
+            {
+#if PFP_RATINGS
+                PfActiveShareEnabled = false;
+                log.Information("[Migration] v8 -> v9: all-night Party Finder collection off.");
+#endif
+                Version = 9;
             }
 
             log.Information($"[Migration] Configuration upgraded from v{startVersion} to v{Version}.");

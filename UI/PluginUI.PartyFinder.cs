@@ -422,8 +422,7 @@ namespace PfPresets
             bool ownDc = here.Length > 0 && string.Equals(here, viewing, StringComparison.OrdinalIgnoreCase);
             bool reading = BoardFetch?.Reading == true;
             bool busy = board.Loading || reading;
-            string why = string.Empty;
-            bool canRead = ownDc && BoardFetch != null && BoardFetch.WouldRead(here, out why);
+            bool canRead = ownDc && BoardFetch != null && BoardFetch.WouldRead(here, out _);
 
             if (ImGui.InvisibleButton("##PfBoardRefresh", size) && !busy)
             {
@@ -435,11 +434,7 @@ namespace PfPresets
             if (hot)
             {
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-                PaddedTooltip(reading ? "Reading the Party Finder..."
-                    : board.Loading ? "Refreshing..."
-                    : canRead ? "Refresh from the game: read the Party Finder now and match it exactly"
-                    : ownDc && why.Length > 0 ? $"Refresh from the board ({why})"
-                    : "Refresh");
+                PaddedTooltip("Refresh");
             }
 
             Vector2 bMin = min, bMax = min + size;
