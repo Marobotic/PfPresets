@@ -173,5 +173,33 @@
         "DownloadLinkInstall": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/OrangeJuice.Host.zip",
         "DownloadLinkUpdate": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/OrangeJuice.Host.zip",
         "DownloadLinkTesting": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/OrangeJuice.Host.zip"
+    },
+    {
+        "Author": "Mayo Botic, UnknownX",
+        "Name": "Extreme Clipping",
+        "InternalName": "ExtremeClipping",
+        "AssemblyVersion": "1.0.0.0",
+        "Description": "Alpha.\n\nA fork of UnknownX's NoClippy. Reduces the effects of lag on certain aspects of the game, such as weaving and statuses, and can show GCD clips. Pick the ping the animation lock simulates (0 to 100 ms, 8 ms by default) from the Overview tab; logging, dry run and encounter stats live under Settings.\n\n/xclip opens the window. Turn off NoClippy while you use it: both change the same animation lock.",
+        "ApplicableVersion": "any",
+        "RepoUrl": "https://github.com/Marobotic/ExtremeClipping",
+        "Tags": [
+            "animation-lock",
+            "weaving",
+            "ping",
+            "latency",
+            "gcd",
+            "clipping"
+        ],
+        "DalamudApiLevel": 15,
+        "LoadRequiredState": 0,
+        "LoadSync": false,
+        "CanUnloadAsync": false,
+        "LoadPriority": 0,
+        "Punchline": "Reduces the effects of lag on weaving and statuses, with a ping you choose.",
+        "Changelog": "First alpha release.",
+        "AcceptsFeedback": false,
+        "DownloadLinkInstall": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/ExtremeClipping.zip",
+        "DownloadLinkUpdate": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/ExtremeClipping.zip",
+        "DownloadLinkTesting": "https://raw.githubusercontent.com/Marobotic/PfPresets/main/repo/ExtremeClipping.zip"
     }
 ]
